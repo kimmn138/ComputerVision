@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+results/
+data/provided/*
+data/own/*
+data/pairs/*
+!data/provided/.gitkeep
+!data/own/.gitkeep
+!data/pairs/.gitkeep
+.DS_Store
+Thumbs.db
