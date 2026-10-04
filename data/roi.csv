@@ -1,5 +1,4 @@
-
-filename,top,bottom,condition
+file,roi_top,roi_bottom,condition
 dataset_crack_normal.jpg,0.35,1.0,normal
 dataset_crack_shadow.jpg,0.40,1.0,shadow
 dataset_pothole_low.jpg,0.45,1.0,low
