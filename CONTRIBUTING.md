@@ -55,7 +55,7 @@ row의 열은 edges, harris, n_crack, area_crack, n_pothole, area_pothole, roi_p
 ## 4. 구현 규칙
 
 환경
-- Python 3.10 이상을 세 명이 같은 버전으로 쓰고, 패키지는 requirements.txt로만 설치한다.
+- Python 3.12 이상을 세 명이 같은 버전으로 쓰고, 패키지는 requirements.txt로만 설치한다.
 - 라이브러리는 opencv-python, numpy, matplotlib, pandas 네 가지다. 다른 것은 먼저 합의한다. opencv-contrib-python이나 opencv-python-headless와 섞어 설치하지 않는다.
 - 가상환경(.venv)은 각자 만들고 Git에 올리지 않는다.
 
@@ -80,18 +80,18 @@ row의 열은 edges, harris, n_crack, area_crack, n_pothole, area_pothole, roi_p
 
 ## 5. Git 작업 순서
 
-- 브랜치: A는 a-preprocess, B는 b-detect, C는 c-integrate. main에 직접 push하지 않는다.
+- 브랜치: A는 feat/전처리, B는 feat/후보검출평가, C는 feat/측정실행통합. main에 직접 push하지 않는다.
 - 처음 한 번: git config --global pull.rebase false
 
 ```bash
-git switch a-preprocess            # 내 브랜치로
+git switch feat/전처리             # 내 브랜치로
 git pull origin main               # 다른 사람이 합친 최신 main 받기
 # ... 내 파일만 수정 ...
 python tests/check_contract.py     # 약속 검사
 python tests/test_a.py             # 내 시험
 git add src/analyze.py             # 내 파일만 골라서 (git add . 금지)
 git commit -m "[A] 무엇을 바꿨는지"
-git push -u origin a-preprocess
+git push -u origin feat/전처리
 ```
 
 - PR: GitHub에서 내 브랜치 → main. 제목 앞에 [A]·[B]·[C], 양식을 채우고 전·후 그림을 붙인다.

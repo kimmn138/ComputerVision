@@ -7,8 +7,8 @@ PBL 모듈 1 · 저품질 도로 영상을 전처리한 뒤 균열·포트홀 �
 ```bash
 git config --global pull.rebase false     # 처음 한 번만
 git clone <저장소 주소>
-cd pbl1_road
-git switch a-preprocess                   # 자기 브랜치 (B: b-detect, C: c-integrate)
+cd ComputerVision
+git switch feat/전처리                    # 자기 브랜치 (B: feat/후보검출평가, C: feat/측정실행통합)
 python -m venv .venv                      # 윈도: .venv\Scripts\activate   맥: source .venv/bin/activate
 pip install -r requirements.txt
 python tests/check_contract.py            # "약속 검사 통과"가 나오면 준비 끝
