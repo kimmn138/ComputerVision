@@ -1,6 +1,8 @@
 """파트 C 시험: features의 에지·해리스 점 세기와 SIFT 매칭, visualize의 후보 그리기·비교 그림 저장,
-run_experiment의 좌표 변환·시간 중앙값·요약 계산이 경계 입력에서도 약속대로 동작하는지 확인한다.
+run_experiment의 좌표 변환·시간 중앙값·요약 계산, demo의 ROI 선택·화면 맞춤·제목 띠가 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
+import contextlib
+import io
 import math
 import os
 import sys
@@ -12,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import demo  # noqa: E402
 import run_experiment as rx  # noqa: E402
 from src import features, visualize  # noqa: E402
 from src import config as C  # noqa: E402
@@ -262,10 +265,54 @@ def test_summary_tables():
           "요약 표: 0장일 때 머리글이나 all 행이 없음")
 
 
+def test_demo_args_roi():
+    """ROI는 명령행 → roi.csv → config 기본값 순서. 비율이 1개이거나 top >= bottom이면 멈춤."""
+    table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": ""}}
+    check(demo.choose_roi("x/a.jpg", [0.4, 1.0], table) == (0.4, 1.0, "명령행"), "choose_roi: 명령행 비율을 쓰지 않음")
+    check(demo.choose_roi("x/a.jpg", [], table) == (0.3, 0.9, "roi.csv"), "choose_roi: roi.csv 값을 쓰지 않음")
+    check(demo.choose_roi("x/b.jpg", [], table) == (C.ROI_TOP_DEFAULT, C.ROI_BOTTOM_DEFAULT, "config 기본값"),
+          "choose_roi: 없는 사진에 config 기본값을 쓰지 않음")
+    check(demo.parse_args(["a.jpg", "0.4", "1"]).roi == [0.4, 1.0], "demo.parse_args: ROI 비율 2개를 읽지 못함")
+    for bad in (["a.jpg", "0.4"], ["a.jpg", "0.7", "0.3"], ["a.jpg", "0.2", "1.5"]):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                demo.parse_args(bad)
+            check(False, f"demo.parse_args: 잘못된 인자 {bad[1:]}를 받아들임")
+        except SystemExit:
+            pass
+
+
+def test_demo_view():
+    """세로 사진도 화면 안에 들어가게 같은 비율로 줄이고, 작은 영상은 키우지 않으며, 받은 영상은 그대로."""
+    tall = np.full((1138, 640, 3), 128, np.uint8)
+    small = demo.fit_to_screen(tall, 576, 824)
+    check(small.shape == (824, 463, 3), f"fit_to_screen: 640×1138을 576×824 안에 맞추지 못함 ({small.shape})")
+    same = demo.fit_to_screen(tall, 2000, 2000)
+    check(same.shape == tall.shape and same is not tall, "fit_to_screen: 들어가는 영상을 키우거나 복사하지 않음")
+    labeled = demo.add_label(tall, "전처리 켬", demo.has_unicode_text())
+    check(labeled.shape == (1138 + C.DEMO_LABEL_HEIGHT, 640, 3), f"add_label: 제목 띠 높이가 틀림 ({labeled.shape})")
+    check(labeled[:C.DEMO_LABEL_HEIGHT].any() and (labeled[C.DEMO_LABEL_HEIGHT:] == 128).all(),
+          "add_label: 글자가 띠에 없거나 영상을 덮어 씀")
+    check((tall == 128).all(), "add_label·fit_to_screen이 받은 영상을 바꿈")
+    view = demo.build_view(tall, tall, ("끔", "켬"), (1707, 960), False)
+    check(view.shape[1] <= 1707 * C.DEMO_SCREEN_MARGIN and view.shape[0] <= 960 * C.DEMO_SCREEN_MARGIN,
+          f"build_view: 화면 1707×960의 {C.DEMO_SCREEN_MARGIN}배를 넘음 ({view.shape})")
+    check(view.shape[1] % 2 == 0, "build_view: 끔·켬 두 장의 폭이 다름")
+
+
+def test_demo_report():
+    """콘솔 표는 약속된 9열 순서, 끔·켬·차이(켬 − 끔) 3줄."""
+    off = {k: 1 for k in rx.ROW_COLUMNS}
+    on = {**off, "edges": 4, "extra": 9}
+    t = demo.report_table(off, on)
+    check(list(t.columns) == rx.ROW_COLUMNS and list(t.index) == ["끔", "켬", "차이"], "report_table: 열·줄이 틀림")
+    check(t.loc["차이", "edges"] == 3 and t.loc["차이", "n_crack"] == 0, "report_table: 차이가 켬 − 끔이 아님")
+
+
 def main():
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
-               test_summary_tables):
+               test_summary_tables, test_demo_args_roi, test_demo_view, test_demo_report):
         try:
             fn()
         except Exception as e:
