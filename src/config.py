@@ -43,4 +43,4 @@ HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
 SIFT_RATIO = 0.7
 RANSAC_THRESH = 5.0
 HARRIS_NMS = 3              # 픽셀, 3×3 이웃 중 최댓값인 곳만 점 하나로 셈
-RANSAC_MIN_GOOD = 10        # 개, good이 이보다 적으면 RANSAC 생략(4~9개면 inlier 비율이 1.0 가까이 부풀려짐)
+RANSAC_MIN_GOOD = 4         # 개, 호모그래피 계산에 필요한 최소 대응점 수. 이보다 적으면 RANSAC 생략

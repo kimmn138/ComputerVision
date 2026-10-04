@@ -51,16 +51,23 @@ def test_match_blank():
 
 
 def test_match_few():
-    """특징점이 RANSAC_MIN_GOOD보다 적으면 RANSAC을 건너뛰고 inliers 0, good은 그대로 남김."""
+    """good이 RANSAC_MIN_GOOD 미만이면 RANSAC을 건너뛰고 inliers 0, mask None."""
+    img = square(40, 128)
+    m = features.match_pair(img, np.zeros_like(img))
+    check(m["good"] < C.RANSAC_MIN_GOOD, f"시험 영상의 good이 기준보다 많음 ({m['good']})")
+    check(m["kp2"] == 0 and m["inliers"] == 0 and m["inlier_ratio"] == 0.0 and m["mask"] is None,
+          "match_pair: good이 기준 미만인데 inlier가 0이 아님")
+    check(m["good"] == len(m["matches"]), "match_pair: good 수와 matches 길이가 다름")
+
+
+def test_match_boundary():
+    """good이 정확히 RANSAC_MIN_GOOD이면 RANSAC을 돌려 mask가 good 길이의 list가 된다."""
     img = square(40, 128)
     m = features.match_pair(img, img)
-    check(m["kp1"] < C.RANSAC_MIN_GOOD, f"시험 영상의 특징점이 너무 많음 ({m['kp1']})")
-    check(m["inliers"] == 0 and m["inlier_ratio"] == 0.0 and m["mask"] is None,
-          "match_pair: good이 적은데 inlier가 0이 아님")
-    check(m["good"] == len(m["matches"]), "match_pair: good 수와 matches 길이가 다름")
-    m0 = features.match_pair(img, np.zeros_like(img))
-    check(m0["kp2"] == 0 and m0["good"] == 0 and m0["inliers"] == 0,
-          "match_pair: 한쪽만 빈 영상일 때 0이 아님")
+    check(m["good"] == C.RANSAC_MIN_GOOD, f"시험 영상의 good이 기준과 같지 않음 ({m['good']})")
+    check(isinstance(m["mask"], list) and len(m["mask"]) == m["good"],
+          "match_pair: good이 기준과 같은데 RANSAC을 건너뜀")
+    check(0 <= m["inlier_ratio"] <= 1, "match_pair: inlier_ratio가 0~1 밖")
 
 
 def test_match_texture():
@@ -83,7 +90,7 @@ def test_no_inplace():
 
 
 def main():
-    for fn in (test_harris, test_match_blank, test_match_few, test_match_texture, test_no_inplace):
+    for fn in (test_harris, test_match_blank, test_match_few, test_match_boundary, test_match_texture, test_no_inplace):
         try:
             fn()
         except Exception as e:
