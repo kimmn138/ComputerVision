@@ -64,13 +64,13 @@ def load_roi_table(path):
 
     roi_dict = {}
     try:
-        # utf-8-sig를 사용하여 BOM(Byte Order Mark) 문제 해결
+        # utf-8-sig를 사용하여 BOM 문제 해결
         with open(path, mode="r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                filename = row["filename"].strip()
-                top_val = float(row["top"])
-                bottom_val = float(row["bottom"])
+                filename = row["file"].strip()
+                top_val = float(row["roi_top"])
+                bottom_val = float(row["roi_bottom"])
                 condition = row.get("condition", "").strip()
                 
                 roi_dict[filename] = {
