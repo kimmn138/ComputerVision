@@ -1,0 +1,129 @@
+"""(파트 A) 전처리 파이프라인(io_utils, analyze, preprocess) 통합 및 단위 테스트"""
+import pytest
+import numpy as np
+import cv2 as cv
+
+from src import io_utils, analyze, preprocess
+from src import config as C
+
+# ==========================================
+# 1. io_utils.py 테스트
+# ==========================================
+def test_resize_width():
+    """가로 크기 정규화 테스트 (비율 유지 확인)"""
+    # 가로 100, 세로 200인 가상 컬러 이미지 생성
+    dummy_img = np.zeros((200, 100, 3), dtype=np.uint8)
+    
+    # 설정된 TARGET_WIDTH(예: 640)로 변환
+    target_w = getattr(C, 'TARGET_WIDTH', 640)
+    resized = io_utils.resize_width(dummy_img, width=target_w)
+    
+    h, w = resized.shape[:2]
+    assert w == target_w
+    # 가로가 6.4배 커졌으므로 세로도 6.4배(1280) 커져야 함
+    assert h == int(round(200 * (target_w / 100)))
+
+def test_crop_roi():
+    """관심 영역(ROI) 크롭 테스트"""
+    dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+    # 상위 35%에서 하단 100%까지 자르기
+    cropped, y0 = io_utils.crop_roi(dummy_img, top=0.35, bottom=1.0)
+    
+    assert y0 == 35
+    assert cropped.shape[0] == 65  # 100 - 35 = 65
+
+def test_parse_name():
+    """파일명 분석 규칙 테스트"""
+    # 1. 일반 제공 데이터
+    res1 = io_utils.parse_name("dataset_crack_low.jpg")
+    assert res1 == {"source": "dataset", "damage": "crack", "condition": "low"}
+    
+    # 2. own 규칙
+    res2 = io_utils.parse_name("own_01_crack_day.jpg")
+    assert res2 == {"source": "own", "pair": "01", "role": "crack", "condition": "day"}
+    
+    # 3. pair 규칙
+    res3 = io_utils.parse_name("pair01_A_day.jpg")
+    assert res3 == {"source": "pair", "pair": "01", "role": "A", "condition": "day"}
+    
+    # 4. 예외 처리 (잘못된 own 규칙)
+    with pytest.raises(ValueError):
+        io_utils.parse_name("own_01_crack.jpg")  # 토큰 부족
+
+# ==========================================
+# 2. analyze.py 테스트
+# ==========================================
+def test_measure_quality():
+    """품질 측정 지표 반환 테스트"""
+    # 밝기 100으로 채워진 가상 흑백 이미지
+    dummy_gray = np.full((50, 50), 100, dtype=np.uint8)
+    q = analyze.measure_quality(dummy_gray)
+    
+    assert "mean" in q and "std" in q and "lap_var" in q and "noise" in q
+    assert q["mean"] == 100.0
+    assert q["std"] == 0.0  # 모두 같은 색이므로 표준편차는 0
+
+def test_choose_steps():
+    """진단 결과에 따른 전처리 단계 선택 테스트"""
+    # 1. 정상 (아무 처리 필요 없음)
+    q_normal = {"mean": 120.0, "std": 50.0, "lap_var": 200.0, "noise": 2.0}
+    steps1 = analyze.choose_steps(q_normal)
+    assert steps1 == analyze.NO_STEPS
+    
+    # 2. 저조도 (감마 보정 적용)
+    q_dark = {"mean": 50.0, "std": 50.0, "lap_var": 200.0, "noise": 2.0}
+    steps2 = analyze.choose_steps(q_dark)
+    assert steps2["tone"] == "gamma"
+    assert steps2["gamma"] > 1.0  # 밝게 만드는 감마(예: 1.0 초과 계산값)
+    
+    # 3. 흐림 + 노이즈
+    q_blur_noise = {"mean": 120.0, "std": 50.0, "lap_var": 50.0, "noise": 10.0}
+    steps3 = analyze.choose_steps(q_blur_noise)
+    assert steps3["sharpen"] is True
+    assert steps3["denoise"] is True
+
+def test_steps_to_text():
+    """텍스트 변환 테스트"""
+    steps = {"denoise": True, "tone": "gamma", "gamma": 0.53, "sharpen": True}
+    text = analyze.steps_to_text(steps)
+    assert "가우시안" in text and "감마 0.53" in text and "샤프닝" in text
+
+# ==========================================
+# 3. preprocess.py 및 통합 연동 테스트
+# ==========================================
+def test_preprocess_no_steps():
+    """NO_STEPS 시 원본 동일 반환 테스트"""
+    dummy_gray = np.random.randint(0, 256, (50, 50), dtype=np.uint8)
+    out = preprocess.preprocess(dummy_gray, analyze.NO_STEPS)
+    # 배열이 완전히 동일한지 확인
+    np.testing.assert_array_equal(dummy_gray, out)
+
+def test_pipeline_integration():
+    """io_utils -> analyze -> preprocess 전체 파이프라인 흐름 연동 테스트"""
+    # 1. 이미지 로드 대용 (임의의 3채널 노이즈 이미지 생성)
+    dummy_img = np.random.randint(0, 256, (200, 300, 3), dtype=np.uint8)
+    
+    # 2. 리사이즈 및 크롭
+    resized = io_utils.resize_width(dummy_img, width=150)
+    cropped, y0 = io_utils.crop_roi(resized, top=0.3, bottom=0.9)
+    
+    # 3. 흑백 변환 및 상태 측정
+    gray = cv.cvtColor(cropped, cv.COLOR_BGR2GRAY)
+    quality = analyze.measure_quality(gray)
+    
+    # 4. 스텝 선택 (강제로 모든 스텝을 켜서 오류가 안 나는지 테스트)
+    steps = {
+        "denoise": True, 
+        "tone": "clahe", 
+        "gamma": 1.0, 
+        "sharpen": True
+    }
+    
+    # 5. 전처리 적용
+    processed = preprocess.preprocess(gray, steps)
+    
+    # 6. 결과 검증
+    assert processed.shape == gray.shape
+    assert processed.dtype == np.uint8
+    # 필터가 적용되었으므로 원본 gray와는 값이 달라져야 함
+    assert not np.array_equal(gray, processed)
