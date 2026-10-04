@@ -1,1 +1,10 @@
 file,date,time,place,damage,condition,view,phone,memo
+own_01_crack_day.jpg,2026-10-01,14:00,추후 수정,crack,day,tilted,Galaxy_S24,기준(낮) 촬영; HDR ON; 개인정보/Exif 삭제 완료
+own_01_crack_night.jpg,2026-10-01,19:30,추후 수정,crack,night,tilted,Galaxy_S24,저조도(일몰 후)
+own_01_crack_blur.jpg,2026-10-01,14:05,추후 수정,crack,blur,tilted,Galaxy_S24,흔들림(걸으며 촬영); HDR OFF
+own_02_pothole_day.jpg,2026-10-02,11:00,추후 수정,pothole,day,tilted,iPhone_15,기준(낮) 촬영; 맑은 날씨
+own_03_normal_day.jpg,2026-10-02,11:15,추후 수정,normal,day,tilted,iPhone_15,정상 노면(손상 없음) 대조군
+pair01_A_day.jpg,2026-10-03,15:00,추후 수정,pothole,day,tilted,Galaxy_S24,SIFT 매칭용 원본(정지 상태)
+pair01_B_blur.jpg,2026-10-03,15:01,추후 수정,pothole,blur,tilted,Galaxy_S24,SIFT 매칭용 비교(보행 중 흔들림 유도)
+pair02_A_night.jpg,2026-10-03,20:00,추후 수정,crack,night,tilted,Galaxy_S24,SIFT 매칭용 원본(야간 정지 상태)
+pair02_B_night.jpg,2026-10-03,20:01,추후 수정,crack,blur,tilted,Galaxy_S24,SIFT 매칭용 비교(야간 흔들림 유도)

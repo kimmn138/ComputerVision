@@ -1,1 +1,14 @@
 file,roi_top,roi_bottom,condition
+dataset_crack_normal.jpg,0.35,1.0,normal
+dataset_crack_shadow.jpg,0.40,1.0,shadow
+dataset_pothole_low.jpg,0.45,1.0,low
+dataset_pothole_wet.jpg,0.30,1.0,wet
+own_01_crack_day.jpg,0.35,1.0,day
+own_01_crack_night.jpg,0.35,1.0,night
+own_01_crack_blur.jpg,0.35,1.0,blur
+own_02_pothole_day.jpg,0.40,1.0,day
+own_03_normal_day.jpg,0.45,1.0,day
+pair01_A_day.jpg,0.35,1.0,day
+pair01_B_blur.jpg,0.35,1.0,blur
+pair02_A_night.jpg,0.30,1.0,night
+pair02_B_night.jpg,0.30,1.0,blur
