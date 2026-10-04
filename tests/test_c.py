@@ -1,5 +1,7 @@
-"""파트 C 시험: features의 해리스 점 세기와 SIFT 매칭, visualize의 비교 그림 저장이 경계 입력에서도 약속대로 동작하는지 확인한다.
+"""파트 C 시험: features의 해리스 점 세기와 SIFT 매칭, visualize의 비교 그림 저장,
+run_experiment의 좌표 변환·시간 중앙값·요약 계산이 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
+import math
 import os
 import sys
 import tempfile
@@ -10,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import run_experiment as rx  # noqa: E402
 from src import features, visualize  # noqa: E402
 from src import config as C  # noqa: E402
 
@@ -117,9 +120,109 @@ def test_save_comparison():
         pass
 
 
+def fake_pr(c):
+    """evaluate.precision_recall 대신 쓰는 시험용 계산(분모가 0이면 NaN)."""
+    p = c["tp"] / (c["tp"] + c["fp"]) if c["tp"] + c["fp"] else math.nan
+    r = c["found"] / (c["found"] + c["fn"]) if c["found"] + c["fn"] else math.nan
+    return p, r
+
+
+def metric_row(file, source, condition, pre, edges, area_crack, roi, counts=None):
+    """metrics.csv 한 행 모양의 시험용 dict. counts가 없으면 정답 열은 NaN(정답 없음)."""
+    row = {"file": file, "source": source, "condition": condition, "preprocess": pre, "steps": "없음",
+           "mean": 100.0, "std": 10.0, "lap_var": 0.0, "noise": 0.0,
+           "edges": edges, "harris": 0, "n_crack": 1, "area_crack": area_crack, "n_pothole": 0, "area_pothole": 0,
+           "roi_pixels": roi, "t_pre_ms": 1.0, "t_detect_ms": 2.0}
+    row.update({col: math.nan for col in rx.GT_COLUMNS})
+    if counts:
+        row.update({f"crack_{k}": v for k, v in zip(rx.COUNT_KEYS, counts)})
+        row.update({f"pothole_{k}": 0 for k in rx.COUNT_KEYS})
+    return row
+
+
+def test_get_roi():
+    """roi.csv에 있으면 그 값, 없으면 config 기본 ROI와 '기본값 씀' 표시."""
+    table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": "dark"}}
+    check(rx.get_roi("a.jpg", table) == (table["a.jpg"], False), "get_roi: roi.csv 값을 쓰지 않음")
+    roi, used = rx.get_roi("b.jpg", table)
+    check(used and (roi["top"], roi["bottom"]) == (C.ROI_TOP_DEFAULT, C.ROI_BOTTOM_DEFAULT),
+          "get_roi: 없는 사진에 기본 ROI를 쓰지 않음")
+
+
+def test_median_times():
+    """시간 두 열만 중앙값, 나머지는 첫 결과. 받은 결과는 그대로."""
+    outs = [{"row": {"edges": e, "t_pre_ms": t, "t_detect_ms": d}} for e, t, d in ((10, 5.0, 9.0), (10, 1.0, 1.0), (10, 3.0, 4.0))]
+    out = rx.median_times(outs)
+    check(out["row"] == {"edges": 10, "t_pre_ms": 3.0, "t_detect_ms": 4.0}, f"median_times: 중앙값이 틀림 ({out['row']})")
+    check(outs[0]["row"]["t_pre_ms"] == 5.0, "median_times가 받은 결과를 직접 바꿈")
+    outs[1]["row"]["edges"] = 11
+    check(rx.unstable_keys(outs) == ["edges"], "unstable_keys: 반복마다 달라진 열을 찾지 못함")
+
+
+def test_gt_counts():
+    """후보 bbox는 y + y0로 옮겨 종류별로 비교하고, 정답이 없으면 0이 아닌 NaN."""
+    out = {"cracks": [{"bbox": (1, 2, 3, 4)}], "potholes": [], "y0": 100}
+    check(rx.to_full_boxes(out["cracks"], 100) == [(1, 102, 3, 4)], "to_full_boxes: y0를 더하지 않음")
+    calls = []
+
+    def fake_count(pred, truth, thr):
+        calls.append((pred, truth, thr))
+        return {"tp": len(pred), "fp": 0, "found": len(truth), "fn": 0}
+
+    gt = [(1, 102, 3, 4, "crack"), (5, 5, 5, 5, "pothole")]
+    c = rx.gt_counts(out, gt, fake_count, 0.3)
+    check(calls == [([(1, 102, 3, 4)], [(1, 102, 3, 4)], 0.3), ([], [(5, 5, 5, 5)], 0.3)],
+          f"gt_counts: 종류별 좌표 변환·비교가 틀림 ({calls})")
+    check(c["crack_tp"] == 1 and c["pothole_found"] == 1 and len(c) == 8, f"gt_counts: 개수 열이 틀림 ({c})")
+    none = rx.gt_counts(out, None, fake_count, 0.3)
+    check(all(math.isnan(v) for v in none.values()), "gt_counts: 정답이 없는데 NaN이 아님")
+
+
+def test_ratios_and_pr():
+    """면적 %는 노면 0픽셀이면 빈칸, 정밀도·재현율은 개수를 합한 뒤 한 번 계산(영상별 평균이 아님)."""
+    rows = [metric_row("a.jpg", "own", "dark", "on", 10, 50, 1000, (1, 1, 1, 0)),
+            metric_row("b.jpg", "own", "dark", "on", 10, 5, 0, (3, 0, 1, 1)),
+            metric_row("c.jpg", "own", "dark", "on", 10, 5, 100)]
+    df = rx.metrics_frame(rows)
+    pct = rx.add_ratios(df)["area_crack_pct"]
+    check(pct[0] == 5.0 and math.isnan(pct[1]) and pct[2] == 5.0, f"add_ratios: % 계산이 틀림 ({list(pct)})")
+    check("area_crack_pct" not in df.columns, "add_ratios가 받은 표를 직접 바꿈")
+    p, r = rx.pr_from_counts(df, "crack", fake_pr)
+    check((p, r) == (4 / 5, 2 / 3), f"pr_from_counts: 합계 방식이 아님 ({p}, {r})")   # 영상별 평균이면 p = 0.75
+    check(all(math.isnan(v) for v in rx.pr_from_counts(df.iloc[2:], "crack", fake_pr)),
+          "pr_from_counts: 정답이 없는 묶음이 NaN이 아님")
+    check(all(math.isnan(v) for v in rx.pr_from_counts(df, "crack", None)), "pr_from_counts: 계산 함수가 없는데 NaN이 아님")
+
+
+def test_summary_tables():
+    """요약 표 3개: 지표_off·_on·_diff 열, 빈 조건은 unknown, 끝에 all 행, 0장이어도 머리글."""
+    rows = [metric_row("a.jpg", "provided", "", "off", 10, 50, 1000), metric_row("a.jpg", "provided", "", "on", 16, 80, 1000),
+            metric_row("b.jpg", "own", "dark", "off", 20, 0, 500, (0, 0, 0, 1)),
+            metric_row("b.jpg", "own", "dark", "on", 30, 10, 500, (1, 0, 1, 0))]
+    df = rx.metrics_frame(rows)
+    img = rx.table_by_image(df, fake_pr)
+    check(list(img["file"]) == ["a.jpg", "b.jpg"] and list(img["edges_diff"]) == [6, 10],
+          "table_by_image: 영상별 끔·켬 차이가 틀림")
+    check(math.isnan(img["crack_recall_off"][0]) and img["crack_recall_diff"][1] == 1.0,
+          "table_by_image: 정답 없는 영상이 빈칸이 아니거나 재현율 차이가 틀림")
+    src = rx.table_by_group(df, "source", fake_pr)
+    check(list(src["source"]) == ["provided", "own", "all"], f"table_by_source: 행이 틀림 ({list(src['source'])})")
+    total = src.iloc[2]
+    check(total["n_images"] == 2 and total["n_gt"] == 1 and total["edges_on"] == 23 and total["area_crack_pct_on"] == 5.0,
+          "table_by_source: all 행의 평균·개수가 틀림")
+    cond = rx.table_by_group(df, "condition", fake_pr)
+    check(list(cond["condition"]) == ["unknown", "dark", "all"], f"table_by_condition: 행이 틀림 ({list(cond['condition'])})")
+    empty = rx.metrics_frame([])
+    check("crack_tp" in empty.columns and "mean" in empty.columns, "metrics_frame: 0장일 때 머리글이 없음")
+    check("edges_diff" in rx.table_by_image(empty, fake_pr).columns
+          and list(rx.table_by_group(empty, "source", fake_pr)["source"]) == ["all"],
+          "요약 표: 0장일 때 머리글이나 all 행이 없음")
+
+
 def main():
     for fn in (test_harris, test_match_blank, test_match_few, test_match_boundary, test_match_texture, test_no_inplace,
-               test_save_comparison):
+               test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
+               test_summary_tables):
         try:
             fn()
         except Exception as e:
