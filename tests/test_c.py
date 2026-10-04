@@ -1,5 +1,5 @@
 """파트 C 시험: features의 에지·해리스 점 세기와 SIFT 매칭, visualize의 후보 그리기·비교 그림 저장,
-run_experiment의 좌표 변환·시간 중앙값·요약 계산, demo의 ROI 선택·화면 맞춤·제목 띠가 경계 입력에서도 약속대로 동작하는지 확인한다.
+run_experiment의 좌표 변환·시간 중앙값·요약 계산, run_matching의 쌍 묶기·inlier 그림·결과 저장, demo의 ROI 선택·화면 맞춤·제목 띠가 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
 import contextlib
 import io
@@ -12,10 +12,12 @@ import warnings
 import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import demo  # noqa: E402
 import run_experiment as rx  # noqa: E402
+import run_matching as rm  # noqa: E402
 from src import features, visualize  # noqa: E402
 from src import config as C  # noqa: E402
 
@@ -309,10 +311,73 @@ def test_demo_report():
     check(t.loc["차이", "edges"] == 3 and t.loc["차이", "n_crack"] == 0, "report_table: 차이가 켬 − 끔이 아님")
 
 
+def fake_pair_name(path):
+    """A의 parse_name이 들어오기 전 시험용: pair01_B_dark.jpg → {source, pair, role, condition}, 그 밖은 쌍 정보 없음."""
+    parts = os.path.splitext(os.path.basename(path))[0].split("_")
+    if len(parts) == 3 and parts[0].startswith("pair"):
+        if parts[1] not in C.PAIR_ROLES:
+            raise ValueError(f"기호가 틀림: {parts[1]}")
+        return {"source": "pair", "pair": parts[0][4:], "role": parts[1], "condition": parts[2]}
+    return {"source": "provided", "damage": "", "condition": ""}
+
+
+def test_match_group():
+    """A가 없는 쌍·쌍 정보 없음·규칙 위반·같은 기호 두 장은 경고하고 건너뛰고, 나머지는 pair로 묶임."""
+    paths = ["d/pair01_A_ref.jpg", "d/pair01_B_dark.jpg", "d/pair01_B_blur.jpg", "d/pair02_C_view.jpg",
+             "d/Japan_1.jpg", "d/pair03_Z_ref.jpg"]
+    groups, warns = rm.group_pairs(paths, fake_pair_name)
+    check(list(groups) == ["01"] and groups["01"] == {"A": ("d/pair01_A_ref.jpg", "ref"), "B": ("d/pair01_B_dark.jpg", "dark")},
+          f"group_pairs: 묶음이 틀림 ({groups})")
+    check(len(warns) == 4, f"group_pairs: 경고가 4건(중복·쌍 정보 없음·규칙 위반·A 없음)이 아님 ({warns})")
+    groups, warns = rm.group_pairs(["d/a.jpg"], lambda p: {"source": "provided", "damage": "", "condition": ""})
+    check(groups == {} and len(warns) == 1, "group_pairs: 지금의 임시 parse_name 결과를 건너뛰지 않음")
+
+
+def test_match_row_and_figure():
+    """RANSAC을 못 하면 inlier_ratio는 NaN이고 선을 그리지 않음. 무늬 쌍은 inlier만 초록 선."""
+    blank = np.zeros((240, 640), np.uint8)
+    m, t = rm.timed_match(blank, blank, repeat=3)
+    row = rm.make_row("01", "B", "dark", True, m, t)
+    check(list(row) == rm.MATCH_COLUMNS and row["preprocess"] == "on", f"make_row: 열이 약속과 다름 ({list(row)})")
+    check(math.isnan(row["inlier_ratio"]) and row["inliers"] == 0 and t >= 0, "make_row: 매칭 실패의 inlier_ratio가 NaN이 아님")
+    green = lambda img: int(np.count_nonzero((img[:, :, 1] == 255) & (img[:, :, 0] == 0) & (img[:, :, 2] == 0)))
+    check(green(rm.draw_inliers(blank, blank, m)) == 0, "draw_inliers: 매칭 실패인데 선이 그려짐")
+    a, b = texture()
+    m, _ = rm.timed_match(a, b, repeat=1)
+    pic = rm.draw_inliers(a, b, m)
+    check(m["inliers"] > 0 and pic.shape == (240, 1280, 3) and green(pic) > 0, "draw_inliers: 무늬 쌍의 inlier 선이 없음")
+    none = rm.draw_inliers(a, b, {**m, "mask": [0] * len(m["matches"])})
+    check(green(none) == 0, "draw_inliers: mask가 0인 매칭도 그려짐")
+
+
+def test_match_main():
+    """쌍 사진이 없으면 0쌍·머리글만·종료 코드 0. 합성 쌍 1개면 끔·켬 2행과 그림 2장."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pair_dir, res = os.path.join(tmp, "pairs"), os.path.join(tmp, "results")
+        os.makedirs(pair_dir)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = rm.main(["--name", "t0"], pair_dir, res)
+        df = pd.read_csv(os.path.join(res, "t0", "matching.csv"), encoding="utf-8-sig")
+        check(code == 0 and df.empty and list(df.columns) == rm.MATCH_COLUMNS, "run_matching: 0쌍일 때 머리글만 있는 csv와 0이 아님")
+        check(os.path.exists(os.path.join(res, "t0", "config_used_matching.txt")), "run_matching: config_used_matching.txt가 없음")
+
+        a, b = texture()
+        cv.imwrite(os.path.join(pair_dir, "pair01_A_ref.jpg"), cv.cvtColor(a, cv.COLOR_GRAY2BGR))
+        cv.imwrite(os.path.join(pair_dir, "pair01_B_view.jpg"), cv.cvtColor(b, cv.COLOR_GRAY2BGR))
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = rm.main(["--name", "t1"], pair_dir, res, fake_pair_name)
+        df = pd.read_csv(os.path.join(res, "t1", "matching.csv"), encoding="utf-8-sig")
+        check(code == 0 and list(df["preprocess"]) == ["off", "on"] and list(df["target"]) == ["B", "B"]
+              and (df["inliers"] > 0).all(), f"run_matching: 합성 쌍의 끔·켬 행이 틀림 ({df.to_dict('list')})")
+        figs = sorted(os.listdir(os.path.join(res, "t1", "matches")))
+        check(figs == ["pair01_B_view_off.png", "pair01_B_view_on.png"], f"run_matching: 그림 이름이 틀림 ({figs})")
+
+
 def main():
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
-               test_summary_tables, test_demo_args_roi, test_demo_view, test_demo_report):
+               test_summary_tables, test_demo_args_roi, test_demo_view, test_demo_report,
+               test_match_group, test_match_row_and_figure, test_match_main):
         try:
             fn()
         except Exception as e:
