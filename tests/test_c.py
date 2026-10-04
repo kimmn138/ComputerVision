@@ -1,4 +1,4 @@
-"""파트 C 시험: features의 해리스 점 세기와 SIFT 매칭, visualize의 비교 그림 저장,
+"""파트 C 시험: features의 에지·해리스 점 세기와 SIFT 매칭, visualize의 후보 그리기·비교 그림 저장,
 run_experiment의 좌표 변환·시간 중앙값·요약 계산이 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
 import math
@@ -47,6 +47,33 @@ def test_harris():
     check(n == 4, f"count_harris: 사각형 하나에서 4가 아님 ({n})")
 
 
+def test_count_edges():
+    """에지가 없으면 0, 가로 10픽셀 흰 선이면 10."""
+    blank = np.zeros((240, 640), np.uint8)
+    n = features.count_edges(blank)
+    check(n == 0, f"count_edges: 빈 에지 영상이 0이 아님 ({n})")
+    line = blank.copy()
+    line[100, 50:60] = 255
+    n = features.count_edges(line)
+    check(n == 10, f"count_edges: 가로 10픽셀 흰 선이 10이 아님 ({n})")
+    check(not blank.any(), "count_edges가 입력 배열을 직접 바꿈")
+
+
+def test_draw_candidates():
+    """균열 윤곽은 y0만큼 내려 빨강으로, 노면 시작선은 y0 줄에 노랑으로 그리고, 받은 영상은 그대로."""
+    gray = np.full((300, 640, 3), 128, np.uint8)
+    contour = np.array([[[10, 20]], [[200, 20]], [[200, 60]]], np.int32)
+    out = visualize.draw_candidates(gray, [{"contour": contour, "bbox": (10, 20, 191, 41)}], [], 100)
+    check((gray == 128).all(), "draw_candidates가 입력 영상을 직접 바꿈")
+    for x, y in contour.reshape(-1, 2):
+        check(out[y + 100, x].tolist() == [0, 0, 255],
+              f"draw_candidates: 윤곽 점 ({x}, {y})이 (x, y + y0)에 빨강으로 그려지지 않음 ({out[y + 100, x].tolist()})")
+        check(out[y, x].tolist() != [0, 0, 255],
+              f"draw_candidates: 윤곽 점 ({x}, {y})이 y0를 더하지 않은 자리에 그려짐")
+    check(out[100, 320].tolist() == [0, 255, 255],
+          f"draw_candidates: y0 줄의 노면 시작선이 노랑이 아님 ({out[100, 320].tolist()})")
+
+
 def test_match_blank():
     """빈 영상끼리: 특징점이 없어도 오류 없이 모두 0."""
     blank = np.zeros((240, 640), np.uint8)
@@ -84,6 +111,16 @@ def test_match_texture():
     check(isinstance(m["inliers"], int) and 0 <= m["inlier_ratio"] <= 1, "match_pair: inlier 형식 오류")
     check(isinstance(m["mask"], list) and len(m["mask"]) == m["good"],
           "match_pair: mask가 good 길이의 list가 아님")
+
+
+def test_match_self():
+    """무늬 영상과 그 자신: 모든 good이 inlier라 inlier_ratio 1.0."""
+    a, _ = texture()
+    m = features.match_pair(a, a)
+    check(m["good"] >= C.RANSAC_MIN_GOOD, f"match_pair: 자기 자신과의 good이 기준보다 적음 ({m['good']})")
+    check(m["inliers"] == m["good"] and m["inlier_ratio"] == 1.0,
+          f"match_pair: 자기 자신과의 매칭에서 inlier가 good과 다름 (good {m['good']}, inliers {m['inliers']}, "
+          f"inlier_ratio {m['inlier_ratio']})")
 
 
 def test_no_inplace():
@@ -163,6 +200,8 @@ def test_gt_counts():
     """후보 bbox는 y + y0로 옮겨 종류별로 비교하고, 정답이 없으면 0이 아닌 NaN."""
     out = {"cracks": [{"bbox": (1, 2, 3, 4)}], "potholes": [], "y0": 100}
     check(rx.to_full_boxes(out["cracks"], 100) == [(1, 102, 3, 4)], "to_full_boxes: y0를 더하지 않음")
+    full = rx.to_full_boxes([{"bbox": (10, 20, 30, 40)}], 100)
+    check(full == [(10, 120, 30, 40)], f"to_full_boxes: (10, 20, 30, 40), y0 100이 (10, 120, 30, 40)이 아님 ({full})")
     calls = []
 
     def fake_count(pred, truth, thr):
@@ -192,6 +231,10 @@ def test_ratios_and_pr():
     check(all(math.isnan(v) for v in rx.pr_from_counts(df.iloc[2:], "crack", fake_pr)),
           "pr_from_counts: 정답이 없는 묶음이 NaN이 아님")
     check(all(math.isnan(v) for v in rx.pr_from_counts(df, "crack", None)), "pr_from_counts: 계산 함수가 없는데 NaN이 아님")
+    two = rx.metrics_frame([metric_row("d.jpg", "own", "dark", "on", 10, 5, 100, (1, 0, 1, 0)),
+                            metric_row("e.jpg", "own", "dark", "on", 10, 5, 100, (0, 9, 0, 1))])
+    p, _ = rx.pr_from_counts(two, "crack", fake_pr)
+    check(p == 0.1, f"pr_from_counts: tp 1·fp 0 + tp 0·fp 9의 합계 정밀도가 0.1이 아님 ({p}, 영상별 평균이면 0.5)")
 
 
 def test_summary_tables():
@@ -220,8 +263,8 @@ def test_summary_tables():
 
 
 def main():
-    for fn in (test_harris, test_match_blank, test_match_few, test_match_boundary, test_match_texture, test_no_inplace,
-               test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
+    for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
+               test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
                test_summary_tables):
         try:
             fn()
