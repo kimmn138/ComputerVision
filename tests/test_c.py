@@ -1,0 +1,100 @@
+"""파트 C 시험: features의 해리스 점 세기와 SIFT 매칭이 경계 입력에서도 약속대로 동작하는지 확인한다.
+사용법: 맨 위 폴더에서  python tests/test_c.py"""
+import os
+import sys
+
+import cv2 as cv
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src import features  # noqa: E402
+from src import config as C  # noqa: E402
+
+FAILS = []
+
+
+def check(ok, msg):
+    if not ok:
+        FAILS.append(msg)
+
+
+def square(size, value):
+    """검은 바탕에 회색 사각형 하나: 해리스 코너 4개, SIFT 특징점이 아주 적은 영상."""
+    img = np.zeros((240, 640), np.uint8)
+    y, x = 120 - size // 2, 320 - size // 2
+    img[y:y + size, x:x + size] = value
+    return img
+
+
+def texture():
+    """무늬가 많은 영상과 그것을 (5, 12)픽셀 민 영상: 매칭이 잘 되는 쌍."""
+    rng = np.random.default_rng(0)
+    t = cv.GaussianBlur(rng.integers(0, 256, (240, 640), dtype=np.uint8), (0, 0), 2)
+    return t, np.roll(t, (5, 12), axis=(0, 1))
+
+
+def test_harris():
+    """빈 영상은 0, 사각형 하나는 모서리 4개."""
+    blank = np.zeros((240, 640), np.uint8)
+    check(features.count_harris(blank) == 0, "count_harris: 빈 영상이 0이 아님")
+    n = features.count_harris(square(80, 255))
+    check(n == 4, f"count_harris: 사각형 하나에서 4가 아님 ({n})")
+
+
+def test_match_blank():
+    """빈 영상끼리: 특징점이 없어도 오류 없이 모두 0."""
+    blank = np.zeros((240, 640), np.uint8)
+    m = features.match_pair(blank, blank)
+    check(m == {"kp1": 0, "kp2": 0, "good": 0, "inliers": 0, "inlier_ratio": 0.0,
+                "k1": [], "k2": [], "matches": [], "mask": None},
+          f"match_pair: 빈 영상 결과가 모두 0이 아님 ({m})")
+
+
+def test_match_few():
+    """특징점이 RANSAC_MIN_GOOD보다 적으면 RANSAC을 건너뛰고 inliers 0, good은 그대로 남김."""
+    img = square(40, 128)
+    m = features.match_pair(img, img)
+    check(m["kp1"] < C.RANSAC_MIN_GOOD, f"시험 영상의 특징점이 너무 많음 ({m['kp1']})")
+    check(m["inliers"] == 0 and m["inlier_ratio"] == 0.0 and m["mask"] is None,
+          "match_pair: good이 적은데 inlier가 0이 아님")
+    check(m["good"] == len(m["matches"]), "match_pair: good 수와 matches 길이가 다름")
+    m0 = features.match_pair(img, np.zeros_like(img))
+    check(m0["kp2"] == 0 and m0["good"] == 0 and m0["inliers"] == 0,
+          "match_pair: 한쪽만 빈 영상일 때 0이 아님")
+
+
+def test_match_texture():
+    """무늬 영상과 민 영상: inlier가 생기고 mask 길이는 good과 같다."""
+    a, b = texture()
+    m = features.match_pair(a, b)
+    check(m["good"] >= C.RANSAC_MIN_GOOD and m["inliers"] > 0, f"match_pair: 민 영상 매칭 실패 ({m['good']})")
+    check(isinstance(m["inliers"], int) and 0 <= m["inlier_ratio"] <= 1, "match_pair: inlier 형식 오류")
+    check(isinstance(m["mask"], list) and len(m["mask"]) == m["good"],
+          "match_pair: mask가 good 길이의 list가 아님")
+
+
+def test_no_inplace():
+    """받은 영상을 바꾸지 않는다."""
+    a, b = texture()
+    a0, b0 = a.copy(), b.copy()
+    features.count_harris(a)
+    features.match_pair(a, b)
+    check(np.array_equal(a, a0) and np.array_equal(b, b0), "features가 입력 배열을 직접 바꿈")
+
+
+def main():
+    for fn in (test_harris, test_match_blank, test_match_few, test_match_texture, test_no_inplace):
+        try:
+            fn()
+        except Exception as e:
+            FAILS.append(f"{fn.__name__}: 실행 중 오류 {type(e).__name__}: {e}")
+    if FAILS:
+        print(f"C 시험 실패 {len(FAILS)}건")
+        for f in FAILS:
+            print("  -", f)
+        sys.exit(1)
+    print("C 시험 통과")
+
+
+if __name__ == "__main__":
+    main()
