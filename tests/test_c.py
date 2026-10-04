@@ -1,13 +1,16 @@
-"""파트 C 시험: features의 해리스 점 세기와 SIFT 매칭이 경계 입력에서도 약속대로 동작하는지 확인한다.
+"""파트 C 시험: features의 해리스 점 세기와 SIFT 매칭, visualize의 비교 그림 저장이 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
 import os
 import sys
+import tempfile
+import warnings
 
 import cv2 as cv
+import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src import features  # noqa: E402
+from src import features, visualize  # noqa: E402
 from src import config as C  # noqa: E402
 
 FAILS = []
@@ -89,8 +92,33 @@ def test_no_inplace():
     check(np.array_equal(a, a0) and np.array_equal(b, b0), "features가 입력 배열을 직접 바꿈")
 
 
+def test_save_comparison():
+    """흑백 4장·컬러 2장을 한글 제목으로 저장: 파일 생성, 입력 그대로, 전역 그림 없음, 글꼴 경고 없음, 6장 아니면 ValueError."""
+    a, b = texture()
+    color = cv.cvtColor(a, cv.COLOR_GRAY2BGR)
+    imgs = [a, np.zeros_like(a), color, b, (b > 128).astype(np.uint8) * 255, color.copy()]
+    names = ["끔: 노면", "끔: 에지", "끔: 후보", "켬: 노면", "켬: 에지", "켬: 후보"]
+    before = [im.copy() for im in imgs]
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "sub", "cmp.png")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            visualize.save_comparison(path, "전처리 전·후 비교", list(zip(names, imgs)))
+        check(os.path.isfile(path) and os.path.getsize(path) > 0, "save_comparison: 파일이 저장되지 않음")
+        glyph = [str(x.message) for x in w if "missing from font" in str(x.message)]
+        check(not glyph, f"save_comparison: 한글 글꼴 경고 {len(glyph)}건 (예: {glyph[:1]})")
+    check(all(np.array_equal(x, y) for x, y in zip(imgs, before)), "save_comparison이 입력 영상을 직접 바꿈")
+    check(not plt.get_fignums(), "save_comparison: pyplot 전역 그림이 남음")
+    try:
+        visualize.save_comparison(os.path.join(tempfile.gettempdir(), "x.png"), "t", list(zip(names, imgs))[:5])
+        check(False, "save_comparison: 5장인데 ValueError가 나지 않음")
+    except ValueError:
+        pass
+
+
 def main():
-    for fn in (test_harris, test_match_blank, test_match_few, test_match_boundary, test_match_texture, test_no_inplace):
+    for fn in (test_harris, test_match_blank, test_match_few, test_match_boundary, test_match_texture, test_no_inplace,
+               test_save_comparison):
         try:
             fn()
         except Exception as e:

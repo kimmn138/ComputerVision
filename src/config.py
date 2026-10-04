@@ -44,3 +44,6 @@ SIFT_RATIO = 0.7
 RANSAC_THRESH = 5.0
 HARRIS_NMS = 3              # 픽셀, 3×3 이웃 중 최댓값인 곳만 점 하나로 셈
 RANSAC_MIN_GOOD = 4         # 개, 호모그래피 계산에 필요한 최소 대응점 수. 이보다 적으면 RANSAC 생략
+COMPARE_FIGSIZE = (19.2, 9.0)   # 인치, 비교 그림 크기. 3열 × 640px을 dpi 100에서 거의 1:1로 보여 1px 에지가 뭉개지지 않게
+COMPARE_DPI = 100               # 점/인치, 19.2 × 100 = 가로 1920px
+FONT_CANDIDATES = ("Malgun Gothic", "AppleGothic", "NanumGothic")  # 한글 제목용 글꼴 후보(윈도·맥·리눅스). 설치된 것만 씀
