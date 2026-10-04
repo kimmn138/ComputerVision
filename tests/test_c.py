@@ -93,7 +93,7 @@ def test_no_inplace():
 
 
 def test_save_comparison():
-    """흑백 4장·컬러 2장을 한글 제목으로 저장: 파일 생성, 입력 그대로, 전역 그림 없음, 글꼴 경고 없음, 6장 아니면 ValueError."""
+    """흑백 4장·컬러 2장을 한글 제목으로 저장: 파일 생성, 입력 그대로, 그림 닫힘·Agg, 글꼴 경고 없음, 6장 아니면 ValueError."""
     a, b = texture()
     color = cv.cvtColor(a, cv.COLOR_GRAY2BGR)
     imgs = [a, np.zeros_like(a), color, b, (b > 128).astype(np.uint8) * 255, color.copy()]
@@ -108,7 +108,8 @@ def test_save_comparison():
         glyph = [str(x.message) for x in w if "missing from font" in str(x.message)]
         check(not glyph, f"save_comparison: 한글 글꼴 경고 {len(glyph)}건 (예: {glyph[:1]})")
     check(all(np.array_equal(x, y) for x, y in zip(imgs, before)), "save_comparison이 입력 영상을 직접 바꿈")
-    check(not plt.get_fignums(), "save_comparison: pyplot 전역 그림이 남음")
+    check(not plt.get_fignums(), "save_comparison: 저장 뒤 plt.close로 닫지 않아 그림이 남음")
+    check(plt.get_backend().lower() == "agg", f"save_comparison: 백엔드가 Agg가 아님 ({plt.get_backend()})")
     try:
         visualize.save_comparison(os.path.join(tempfile.gettempdir(), "x.png"), "t", list(zip(names, imgs))[:5])
         check(False, "save_comparison: 5장인데 ValueError가 나지 않음")

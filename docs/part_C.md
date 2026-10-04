@@ -9,5 +9,6 @@
 | 2026-10-04 | RANSAC_MIN_GOOD | 10 | 4 | 호모그래피는 최소 4쌍이면 계산되므로 수학적 최소값으로 맞춤(발표 설명과 일치). 4~9쌍이면 비율이 1.0에 가깝게 나오므로 결과 표에서 good 열을 같이 봄 | 합성 사각형(good 0 → inliers 0, good 4 → RANSAC 실행) |
 | 2026-10-04 | COMPARE_FIGSIZE, COMPARE_DPI | (없음) | (19.2, 9.0), 100 | 비교 그림 가로 1920px = 3열 × 640px, 축소 보간으로 1px 캐니 에지가 뭉개지지 않게 | 합성 어두운 노면 6칸(에지 선 끊김 없음) |
 | 2026-10-04 | FONT_CANDIDATES | (없음) | Malgun Gothic, AppleGothic, NanumGothic | 한글 제목이 □로 깨지지 않게 윈도·맥·리눅스 글꼴 후보. 설치된 것만 씀 | 윈도(맑은 고딕): 글꼴 경고 0건 |
+| 2026-10-04 | FONT_CANDIDATES → FONT_BY_PLATFORM, FONT_DEFAULT | Malgun Gothic, AppleGothic, NanumGothic | win32: Malgun Gothic, darwin: AppleGothic, 그 밖: DejaVu Sans | 팀 기준: sys.platform으로 글꼴을 하나로 정함(그 밖 OS는 한글이 □로 나옴) | 윈도: 30장 연속 저장, 글꼴 경고 0건 |
 
 ## 알고리즘 설명과 설정 근거 (보고서·발표용)
