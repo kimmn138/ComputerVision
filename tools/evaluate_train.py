@@ -1,14 +1,17 @@
-"""(파트 B) 교수 제공 훈련 데이터 전체에서 검출 파라미터 후보를 정량 평가한다."""
+"""(파트 B) 교수 제공 훈련 데이터 전체에서 검출 파라미터 후보를 정량 평가한다.
+사용법: 맨 위 폴더에서  python tools/evaluate_train.py"""
 
 import csv
+import sys
 from pathlib import Path
 
 import cv2 as cv
 import numpy as np
 
-from src import config as C
-from src.detect import detect_cracks, detect_potholes
-from src.evaluate import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src import config as C  # noqa: E402
+from src.detect import detect_cracks, detect_potholes  # noqa: E402
+from src.evaluate import (  # noqa: E402
     count_matches,
     load_gt,
     precision_recall,

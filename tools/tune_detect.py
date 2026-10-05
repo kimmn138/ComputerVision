@@ -1,12 +1,15 @@
-"""(파트 B) 튜닝 세트에서 검출 파라미터 후보를 반복 비교하고 결과를 저장한다."""
+"""(파트 B) 튜닝 세트에서 검출 파라미터 후보를 반복 비교하고 결과를 저장한다.
+사용법: 맨 위 폴더에서  python tools/tune_detect.py"""
 
 import csv
+import sys
 from pathlib import Path
 
 import cv2 as cv
 
-from src import config as C
-from src.detect import detect_cracks, detect_potholes
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src import config as C  # noqa: E402
+from src.detect import detect_cracks, detect_potholes  # noqa: E402
 
 
 PROVIDED_DIR = Path("data/provided")

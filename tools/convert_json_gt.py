@@ -1,12 +1,15 @@
-"""(파트 B) 제공된 JSON annotation을 프로젝트 GT CSV 형식으로 변환한다."""
+"""(파트 B) 제공된 JSON annotation을 프로젝트 GT CSV 형식으로 변환한다.
+사용법: 맨 위 폴더에서  python tools/convert_json_gt.py"""
 
 import csv
 import json
+import sys
 from pathlib import Path
 
 import cv2 as cv
 
-from src import config as C
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src import config as C  # noqa: E402
 
 
 # ---------------------------------------------------------

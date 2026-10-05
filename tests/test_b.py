@@ -1,13 +1,17 @@
-"""파트 B의 후보 검출과 평가 함수를 검사한다."""
-import cv2 as cv
-import numpy as np
+"""파트 B의 후보 검출과 평가 함수를 검사한다.
+사용법: 맨 위 폴더에서  python tests/test_b.py   (pytest로 돌려도 됨)"""
+import sys
 import tempfile
+import traceback
 from pathlib import Path
 
+import cv2 as cv
+import numpy as np
 
-from src import config as C
-from src.detect import describe_regions, detect_cracks, detect_potholes
-from src.evaluate import load_gt, iou, count_matches, precision_recall
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src import config as C  # noqa: E402
+from src.detect import describe_regions, detect_cracks, detect_potholes  # noqa: E402
+from src.evaluate import load_gt, iou, count_matches, precision_recall  # noqa: E402
 
 def test_synthetic_crack():
     """합성 선에서 균열이 검출되고 포트홀은 검출되지 않는지 확인한다."""
@@ -140,23 +144,25 @@ def test_load_gt():
 
         assert load_gt(missing_path) is None
 
-def test_load_gt_missing(tmp_path):
+def test_load_gt_missing():
     """정답 CSV가 없으면 None인지 확인한다."""
-    path = tmp_path / "missing.csv"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "missing.csv"
 
-    assert load_gt(path) is None
+        assert load_gt(path) is None
 
 
-def test_load_gt_empty(tmp_path):
+def test_load_gt_empty():
     """헤더만 있는 CSV는 빈 리스트인지 확인한다."""
-    path = tmp_path / "empty.csv"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "empty.csv"
 
-    path.write_text(
-        "x,y,w,h,kind\n",
-        encoding="utf-8-sig",
-    )
+        path.write_text(
+            "x,y,w,h,kind\n",
+            encoding="utf-8-sig",
+        )
 
-    assert load_gt(path) == []
+        assert load_gt(path) == []
 
 def test_iou():
     """동일·비중첩 박스의 IoU를 확인한다."""
@@ -202,13 +208,31 @@ def test_nan():
     assert np.isnan(recall)
 
 
-if __name__ == "__main__":
-    test_synthetic_crack()
-    test_synthetic_pothole()
-    test_blank_image()
-    test_load_gt()
-    test_iou()
-    test_count_matches()
-    test_nan()
+def main():
+    """이 파일의 test_ 함수를 모두 돌려 실패를 모아 보여 준다. 실패가 있으면 종료 코드 1."""
+    fails = []
+
+    for name, fn in list(globals().items()):
+        if not (name.startswith("test_") and callable(fn)):
+            continue
+
+        try:
+            fn()
+        except Exception as e:
+            # 메시지 없는 assert도 어느 줄인지 보이게
+            line = traceback.extract_tb(e.__traceback__)[-1].line
+            fails.append(f"{name}: {type(e).__name__} {e} | {line}")
+
+    if fails:
+        print(f"파트 B 테스트 실패 {len(fails)}건")
+
+        for f in fails:
+            print("  -", f)
+
+        sys.exit(1)
 
     print("파트 B 테스트 통과")
+
+
+if __name__ == "__main__":
+    main()

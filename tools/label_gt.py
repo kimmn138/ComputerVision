@@ -1,14 +1,31 @@
-"""(파트 B) 도로 손상 정답 박스를 지정하여 GT CSV로 저장한다."""
+"""(파트 B) 도로 손상 정답 박스를 지정하여 GT CSV로 저장한다.
+사용법: 맨 위 폴더에서  python tools/label_gt.py <영상 경로>
+예: python tools/label_gt.py data/provided/United_States_004830.jpg  -> gt/United_States_004830.csv
+세 명이 영상을 나눠 표시하므로 이 파일은 고치지 않고 영상 경로만 바꿔 실행한다."""
 
+import argparse
 import csv
 from pathlib import Path
 
 import cv2 as cv
 
 
-IMAGE_PATH = "data/provided/United_States_004830.jpg"
 GT_DIR = Path("gt")
 DISPLAY_WIDTH = 640
+
+
+def parse_args(argv=None):
+    """정답 박스를 표시할 영상 경로를 명령행에서 읽는다."""
+    parser = argparse.ArgumentParser(
+        description="정답 박스(GT) 표시 도구: 가로 640px 전체 영상 좌표로 gt/<영상 이름>.csv에 저장",
+    )
+
+    parser.add_argument(
+        "image",
+        help="영상 경로 (예: data/provided/United_States_004830.jpg)",
+    )
+
+    return parser.parse_args(argv)
 
 
 def resize_width(img, width=DISPLAY_WIDTH):
@@ -149,8 +166,9 @@ def select_kind():
         print("c, p, q 중 하나를 입력하세요.")
 
 
-def main():
-    image_path = Path(IMAGE_PATH)
+def main(argv=None):
+    """명령행으로 받은 영상에 정답 박스를 하나씩 표시하고, 박스를 더할 때마다 GT CSV에 저장한다."""
+    image_path = Path(parse_args(argv).image)
 
     bgr = cv.imread(str(image_path))
 
