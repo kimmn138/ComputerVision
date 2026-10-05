@@ -22,7 +22,7 @@ python run_experiment.py --name check
 | 경로 | 내용 | 주인 |
 |---|---|---|
 | src/ | 파이프라인 모듈 (io_utils·analyze·preprocess = A, detect = B, config·features·visualize·pipeline = C) | 파일별 |
-| data/ | 사진 폴더(Git 제외), roi.csv, shot_log.csv | A |
+| data/ | 사진 폴더(provided·own·pairs·train, Git 제외), roi.csv, shot_log.csv | A |
 | gt/ | 정답 박스 CSV | B |
 | tools/ | 파트별 도구 스크립트 | A·B |
 | tests/ | 약속 검사(check_contract.py)와 파트별 시험 | C·각자 |
@@ -32,4 +32,4 @@ python run_experiment.py --name check
 ## 규칙
 
 협업 규칙은 CONTRIBUTING.md, AI 코딩 도구(Claude Code 등)에 주는 규칙은 CLAUDE.md에 있다.
-지금 TODO가 붙은 함수는 형식만 맞춘 임시 버전이며, 각 파트가 자기 브랜치에서 구현한다.
+시험과 도구는 모두 맨 위 폴더에서 파일 이름으로 실행한다. 예: python tests/test_a.py, python tools/check_data.py, python tools/label_gt.py <영상 경로>

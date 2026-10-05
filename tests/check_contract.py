@@ -57,6 +57,52 @@ def gray_of(bgr):
     return cv.cvtColor(small[small.shape[0] // 2:], cv.COLOR_BGR2GRAY)
 
 
+def check_a_names():
+    """parse_name이 약속 표대로 own·pair·제공 영상 이름을 읽고, 규칙을 어긴 own·pair 이름에 ValueError를 내는지 본다.
+    태그는 config A 구역에서 가져와 A가 태그를 바꿔도 검사가 따라간다."""
+    damage, cond = C.DAMAGE_TAGS[0], C.CONDITION_TAGS[0]
+    role, pcond = C.PAIR_ROLES[0], C.PAIR_CONDITIONS[0]
+    own = io_utils.parse_name(f"data/own/own_01_{damage}_{cond}.jpg")
+    check("A", isinstance(own, dict) and own.get("source") == "own" and own.get("damage") == damage
+          and own.get("condition") == cond,
+          f"parse_name: own_01_{damage}_{cond}.jpg에서 {{source: own, damage, condition}}을 읽지 못함 ({own})")
+    pair = io_utils.parse_name(f"data/pairs/pair01_{role}_{pcond}.jpg")
+    check("A", isinstance(pair, dict) and pair.get("source") == "pair" and pair.get("pair") not in (None, "")
+          and pair.get("role") == role and pair.get("condition") == pcond,
+          f"parse_name: pair01_{role}_{pcond}.jpg에서 {{source: pair, pair, role, condition}}을 읽지 못함 ({pair})")
+    multi = io_utils.parse_name("data/provided/United_States_004830.jpg")
+    check("A", isinstance(multi, dict) and multi.get("source") == "provided" and "damage" in multi
+          and isinstance(multi.get("condition"), str),
+          f"parse_name: 밑줄이 여러 개인 제공 영상(United_States_004830.jpg)이 source provided가 아님 ({multi})")
+    bad = [f"own_01_{damage}.jpg", f"own_01_{damage}_{cond}_x.jpg", f"own_01_nosuchtag_{cond}.jpg",
+           f"own_01_{damage}_nosuchtag.jpg", f"pair01_{role}.jpg", f"pair01_nosuchrole_{pcond}.jpg",
+           f"pair01_{role}_nosuchtag.jpg"]
+    accepted = []
+    for n in bad:
+        try:
+            io_utils.parse_name(n)
+            accepted.append(n)
+        except ValueError:
+            pass
+    check("A", not accepted, f"parse_name: 규칙을 어긴 own·pair 이름에 ValueError가 나지 않음 ({', '.join(accepted)})")
+
+
+def check_a_tone(gray):
+    """어두운·밝은 노면에서 choose_steps가 감마를 고르면, preprocess가 그 감마로 영상을 밝게·어둡게 하는지(방향) 본다.
+    형식 검사만으로는 감마를 계산하는 쪽(analyze)과 적용하는 쪽(preprocess)의 방향이 엇갈려도 통과하므로 따로 확인한다."""
+    dark = (gray * 0.3).astype(np.uint8)
+    bright = (255 - (255 - gray.astype(np.float32)) * 0.3).astype(np.uint8)
+    for img, what, brighter in ((dark, "어두운", True), (bright, "밝은", False)):
+        s = analyze.choose_steps(analyze.measure_quality(img))
+        if s["tone"] != "gamma":
+            continue
+        out = preprocess.preprocess(img, {**analyze.NO_STEPS, "tone": "gamma", "gamma": s["gamma"]})
+        ok = out.mean() > img.mean() if brighter else out.mean() < img.mean()
+        check("A", ok, f"choose_steps·preprocess: {what} 노면(평균 {img.mean():.0f})에 고른 감마({s['gamma']:.2f})를 "
+                       f"적용해도 {'밝아지지' if brighter else '어두워지지'} 않음 (결과 평균 {out.mean():.0f}). "
+                       "감마를 계산하는 식과 적용하는 식의 방향을 맞출 것")
+
+
 def check_a(name, bgr):
     files = sorted(glob.glob("data/provided/*.jpg"))
     if files:
@@ -93,6 +139,8 @@ def check_a(name, bgr):
         check("A", is_gray(out) and out.shape == gray.shape,
               f"preprocess: 결과가 같은 크기 흑백 uint8이 아님 ({analyze.steps_to_text(steps)})")
     check("A", np.array_equal(gray, before), "analyze/preprocess가 입력 배열을 직접 바꿈")
+    check_a_names()
+    check_a_tone(gray)
 
 
 def check_b(name, bgr):

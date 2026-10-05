@@ -4,6 +4,7 @@ results/
 data/provided/*
 data/own/*
 data/pairs/*
+data/train/
 !data/provided/.gitkeep
 !data/own/.gitkeep
 !data/pairs/.gitkeep

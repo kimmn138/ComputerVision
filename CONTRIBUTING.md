@@ -8,7 +8,7 @@
 | 파트 | 담당 파일 |
 |---|---|
 | A · 데이터·전처리 | src/io_utils.py, src/analyze.py, src/preprocess.py, data/roi.csv, data/shot_log.csv, tools/check_data.py, tools/show_preprocess.py, tests/test_a.py, docs/part_A.md, docs/ai_log_A.md |
-| B · 후보 검출·평가 | src/detect.py, src/evaluate.py, tools/tune_detect.py, tools/label_gt.py, gt/, tests/test_b.py, docs/part_B.md, docs/ai_log_B.md |
+| B · 후보 검출·평가 | src/detect.py, src/evaluate.py, tools/tune_detect.py, tools/label_gt.py, tools/convert_json_gt.py, tools/evaluate_train.py, gt/, tests/test_b.py, docs/part_B.md, docs/ai_log_B.md |
 | C · 측정·실행·통합 | src/config.py(공통 구역과 파일 관리), src/features.py, src/visualize.py, src/pipeline.py, run_experiment.py, run_matching.py, demo.py, tests/check_contract.py, tests/test_c.py, README.md, CONTRIBUTING.md, CLAUDE.md, requirements.txt, .gitignore, .github/, docs/part_C.md, docs/ai_log_C.md |
 
 - src/config.py는 구역(공통·A·B·C)마다 주인이 있다. 자기 구역 안에서만 고치고, 새 값은 자기 구역 맨 아래에 추가한다.
