@@ -31,12 +31,12 @@ own_11_pothole_normal.jpg,0.08,1.0,normal
 own_12_crack_normal.jpg,0.30,1.0,normal
 own_13_none_normal.jpg,0.00,0.85,normal
 own_14_none_blur.jpg,0.30,1.0,blur
-own_15_pothole_night.jpg,0.20,1.0,night
+own_15_pothole_dark.jpg,0.20,1.0,dark
 own_16_pothole_blur.jpg,0.32,1.0,blur
 own_17_crack_blur.jpg,0.42,1.0,blur
-own_18_pothole_night.jpg,0.42,1.0,night
+own_18_pothole_dark.jpg,0.42,1.0,dark
 own_19_none_blur.jpg,0.05,1.0,blur
-own_19_none_night.jpg,0.05,1.0,night
+own_19_none_dark.jpg,0.05,1.0,dark
 own_19_none_normal.jpg,0.05,1.0,normal
 pair01_A_ref.jpg,0.35,1.0,ref
 pair01_B_blur.jpg,0.35,1.0,blur
