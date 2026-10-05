@@ -1,5 +1,6 @@
 """(파트 A) 전처리 파이프라인(io_utils, analyze, preprocess) 통합 및 단위 테스트
 사용법: 맨 위 폴더에서  python tests/test_a.py   (pytest 없이 실행되고, pytest로 돌려도 됨)"""
+import contextlib
 import os
 import sys
 import traceback
@@ -90,24 +91,67 @@ def test_measure_quality():
     assert q["mean"] == 100.0
     assert q["std"] == 0.0  # 모두 같은 색이므로 표준편차는 0
 
+@contextlib.contextmanager
+def config_values(**values):
+    """config 값을 잠시 바꿨다가 시험이 끝나면(실패해도) 되돌린다."""
+    old = {k: getattr(C, k) for k in values}
+    for k, v in values.items():
+        setattr(C, k, v)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            setattr(C, k, v)
+
+
+def good_quality(**changes):
+    """config 기준값을 모두 넉넉히 통과하는 상태 지표(전처리가 필요 없는 영상)에서 일부만 바꾼 dict."""
+    q = {"mean": (C.DARK_MEAN_MAX + C.BRIGHT_MEAN_MIN) / 2, "std": C.CONTRAST_STD_MIN * 2,
+         "lap_var": C.BLUR_VAR_MAX * 2, "noise": C.NOISE_SIGMA_MAX / 2}
+    q.update(changes)
+    return q
+
+
 def test_choose_steps():
-    """진단 결과에 따른 전처리 단계 선택 테스트"""
+    """진단 결과에 따른 전처리 단계 선택 테스트 (기준값은 config A 구역에서 읽음)"""
     # 1. 정상 (아무 처리 필요 없음)
-    q_normal = {"mean": 120.0, "std": 50.0, "lap_var": 200.0, "noise": 2.0}
-    steps1 = analyze.choose_steps(q_normal)
+    steps1 = analyze.choose_steps(good_quality())
     assert steps1 == analyze.NO_STEPS
-    
-    # 2. 저조도 (감마 보정 적용)
-    q_dark = {"mean": 50.0, "std": 50.0, "lap_var": 200.0, "noise": 2.0}
-    steps2 = analyze.choose_steps(q_dark)
+
+    # 2. 저조도 → 밝게 하는 감마(< 1), 고조도 → 어둡게 하는 감마(> 1)
+    steps2 = analyze.choose_steps(good_quality(mean=C.DARK_MEAN_MAX - 30))
     assert steps2["tone"] == "gamma"
-    assert steps2["gamma"] > 1.0  # 밝게 만드는 감마(예: 1.0 초과 계산값)
-    
-    # 3. 흐림 + 노이즈
-    q_blur_noise = {"mean": 120.0, "std": 50.0, "lap_var": 50.0, "noise": 10.0}
-    steps3 = analyze.choose_steps(q_blur_noise)
+    assert steps2["gamma"] < 1.0, steps2
+    steps2b = analyze.choose_steps(good_quality(mean=C.BRIGHT_MEAN_MIN + 30))
+    assert steps2b["tone"] == "gamma" and steps2b["gamma"] > 1.0, steps2b
+
+    # 3. 감마는 GAMMA_RANGE 안으로 자름 (평균 0·255여도 오류 없음)
+    lo, hi = C.GAMMA_RANGE
+    assert analyze.choose_steps(good_quality(mean=0.0))["gamma"] == lo
+    assert analyze.choose_steps(good_quality(mean=255.0))["gamma"] == hi
+
+    # 4. 흐림 + 노이즈
+    steps3 = analyze.choose_steps(good_quality(lap_var=C.BLUR_VAR_MAX / 2, noise=C.NOISE_SIGMA_MAX * 2))
     assert steps3["sharpen"] is True
     assert steps3["denoise"] is True
+
+    # 5. 대비 부족 → 평활화, USE_CLAHE면 CLAHE
+    low = good_quality(std=C.CONTRAST_STD_MIN / 2)
+    with config_values(USE_CLAHE=False):
+        assert analyze.choose_steps(low)["tone"] == "equalize"
+    with config_values(USE_CLAHE=True):
+        assert analyze.choose_steps(low)["tone"] == "clahe"
+
+
+def test_choose_steps_follows_config():
+    """config 기준값을 바꾸면 고르는 단계도 바뀐다 (함수 안에 숫자를 두지 않음)."""
+    q = good_quality()
+    with config_values(NOISE_SIGMA_MAX=q["noise"] / 2, BLUR_VAR_MAX=q["lap_var"] * 2,
+                       DARK_MEAN_MAX=q["mean"] + 1, CONTRAST_STD_MIN=q["std"] * 2):
+        s = analyze.choose_steps(q)
+    assert s["denoise"] and s["sharpen"] and s["tone"] == "gamma", s
+    with config_values(GAMMA_RANGE=(0.9, 1.1)):
+        assert analyze.choose_steps(good_quality(mean=10.0))["gamma"] == 0.9
 
 def test_steps_to_text():
     """텍스트 변환 테스트"""
@@ -124,6 +168,34 @@ def test_preprocess_no_steps():
     out = preprocess.preprocess(dummy_gray, analyze.NO_STEPS)
     # 배열이 완전히 동일한지 확인
     np.testing.assert_array_equal(dummy_gray, out)
+
+def test_gamma_direction():
+    """어두운 노면에 고른 감마는 밝게, 밝은 노면에 고른 감마는 어둡게 만든다 (계산과 적용의 방향이 같음)."""
+    rng = np.random.default_rng(0)
+    for mean, brighter in ((40, True), (215, False)):
+        gray = rng.normal(mean, 10, (60, 80)).clip(0, 255).astype(np.uint8)
+        steps = analyze.choose_steps(analyze.measure_quality(gray))
+        assert steps["tone"] == "gamma", steps
+        out = preprocess.preprocess(gray, {**analyze.NO_STEPS, "tone": "gamma", "gamma": steps["gamma"]})
+        moved_to_middle = abs(out.mean() - 127.5) < abs(gray.mean() - 127.5)
+        assert (out.mean() > gray.mean()) == brighter and moved_to_middle, (gray.mean(), steps["gamma"], out.mean())
+
+
+def test_preprocess_follows_config():
+    """preprocess의 가우시안·CLAHE·샤프닝 세기는 config 값을 따른다."""
+    rng = np.random.default_rng(1)
+    # 대비가 낮고 충분히 큰 영상: CLAHE의 실제 한도는 clip × 타일 픽셀 수 / 256(정수)이라 작은 영상에선 clip 값이 같아짐
+    gray = rng.normal(120, 8, (240, 320)).clip(0, 255).astype(np.uint8)
+    for step, key, a, b in (({"denoise": True}, "GAUSS_SIGMA", 0.5, 2.0),
+                            ({"tone": "clahe"}, "CLAHE_CLIP", 1.0, 4.0),
+                            ({"sharpen": True}, "SHARPEN_AMOUNT", 0.5, 3.0)):
+        steps = {**analyze.NO_STEPS, **step}
+        with config_values(**{key: a}):
+            out_a = preprocess.preprocess(gray, steps)
+        with config_values(**{key: b}):
+            out_b = preprocess.preprocess(gray, steps)
+        assert not np.array_equal(out_a, out_b), f"{key}를 바꿔도 결과가 같음"
+
 
 def test_pipeline_integration():
     """io_utils -> analyze -> preprocess 전체 파이프라인 흐름 연동 테스트"""

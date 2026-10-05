@@ -27,30 +27,28 @@ def measure_quality(gray):
 
 
 def choose_steps(q):
-    """상태 지표를 config A 구역의 기준값과 비교해 적용할 전처리 단계를 고른다."""
+    """상태 지표를 config A 구역의 기준값과 비교해 적용할 전처리 단계를 고른다.
+    잡티 > NOISE_SIGMA_MAX → 가우시안, 평균 < DARK_MEAN_MAX 또는 > BRIGHT_MEAN_MIN → 감마,
+    (밝기는 괜찮고) 표준편차 < CONTRAST_STD_MIN → 평활화(USE_CLAHE면 CLAHE), 라플라시안 분산 < BLUR_VAR_MAX → 샤프닝.
+    감마는 평균 밝기를 가운데(0.5)로 옮기는 값 log(0.5) / log(평균/255)이고, preprocess가 결과 = 입력^감마로 적용한다
+    (감마 < 1이면 밝게, > 1이면 어둡게). GAMMA_RANGE 밖이면 끝값으로 자른다."""
     steps = dict(NO_STEPS)
-    
-    # 1. 노이즈 제거 여부 (config에 없으면 기본값 5.0 사용)
-    noise_th = getattr(C, 'NOISE_TH', 5.0)
-    steps["denoise"] = bool(q["noise"] > noise_th)
-    
+
+    # 1. 노이즈 제거 여부
+    steps["denoise"] = bool(q["noise"] > C.NOISE_SIGMA_MAX)
+
     # 2. 톤/조도 보정 (tone)
-    mean_low = getattr(C, 'MEAN_LOW_TH', 80.0)
-    mean_high = getattr(C, 'MEAN_HIGH_TH', 170.0)
-    std_low = getattr(C, 'STD_LOW_TH', 35.0)
-    
-    if q["mean"] < mean_low or q["mean"] > mean_high:
+    if q["mean"] < C.DARK_MEAN_MAX or q["mean"] > C.BRIGHT_MEAN_MIN:
         steps["tone"] = "gamma"
-        # 자동 감마 계산 (0 나누기 예외 처리를 위해 0.05 ~ 0.95 제한)
-        norm_mean = max(0.05, min(0.95, q["mean"] / 255.0))
-        steps["gamma"] = float(np.log(0.5) / np.log(norm_mean))
-    elif q["std"] < std_low:
-        steps["tone"] = "clahe"
-        
-    # 3. 샤프닝 여부 (config에 없으면 기본값 100.0 사용)
-    lap_var_th = getattr(C, 'LAP_VAR_TH', 100.0)
-    steps["sharpen"] = bool(q["lap_var"] < lap_var_th)
-    
+        # 평균이 0이나 255이면 log가 -inf·0이 되므로 한 단계 안쪽(1~254)으로 제한
+        norm_mean = np.clip(q["mean"], 1, 254) / 255.0
+        steps["gamma"] = float(np.clip(np.log(0.5) / np.log(norm_mean), *C.GAMMA_RANGE))
+    elif q["std"] < C.CONTRAST_STD_MIN:
+        steps["tone"] = "clahe" if C.USE_CLAHE else "equalize"
+
+    # 3. 샤프닝 여부
+    steps["sharpen"] = bool(q["lap_var"] < C.BLUR_VAR_MAX)
+
     return steps
 
 

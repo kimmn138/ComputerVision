@@ -18,8 +18,8 @@ CONTRAST_STD_MIN = 20       # 표준편차 < 20 -> 대비 부족 -> 평활화
 DARK_MEAN_MAX = 80          # 평균 < 80 -> 감마(밝게)
 BRIGHT_MEAN_MIN = 170       # 평균 > 170 -> 감마(어둡게)
 GAUSS_KSIZE, GAUSS_SIGMA = (5, 5), 1.0
-GAMMA_RANGE = (0.4, 2.5)
-SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0
+GAMMA_RANGE = (0.4, 2.5)    # 결과 = 입력^감마 (감마 < 1 밝게). 감마 = log0.5 / log(평균/255)를 이 범위로 자름
+SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0    # 언샤프 마스크: 결과 = 입력 + AMOUNT × (입력 − 가우시안(σ px))
 USE_CLAHE = False           # True면 평활화 대신 CLAHE
 CLAHE_CLIP, CLAHE_TILE = 2.0, (8, 8)
 
