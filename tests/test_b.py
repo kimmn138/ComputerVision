@@ -103,6 +103,38 @@ def test_crack_shapes():
     assert not missed, f"균열을 놓침: {missed}"
 
 
+def test_bright_lines_not_crack():
+    """주변보다 밝은 선(가는 흰 선·넓은 흰 차선·횡단보도 점선)은 균열 후보에서 빠지고,
+    진하거나 옅은 어두운 균열은 남는지 확인한다. 후보에는 darkness(주변보다 어두운 정도)가 붙는다."""
+    bright = {}
+
+    gray = asphalt()
+    cv.line(gray, (40, 100), (600, 140), 230, 3)
+    bright["가는 흰 선"] = gray
+
+    gray = asphalt()
+    cv.rectangle(gray, (0, 100), (639, 115), 230, -1)
+    bright["넓은 흰 차선"] = gray
+
+    gray = asphalt()
+    for x in range(40, 600, 40):
+        cv.rectangle(gray, (x, 90), (x + 12, 150), 230, -1)
+    bright["횡단보도 점선"] = gray
+
+    wrong = {name: len(detect_cracks(img)[0]) for name, img in bright.items()}
+
+    assert not any(wrong.values()), f"밝은 선이 균열로 잡힘: {wrong}"
+
+    for value, width in ((60, 2), (90, 1)):            # 진한 균열, 옅은 균열
+        gray = asphalt()
+        cv.line(gray, (40, 100), (600, 140), value, width)
+
+        cracks, _ = detect_cracks(gray)
+
+        assert len(cracks) >= 1, f"밝기 {value} 균열을 놓침"
+        assert all(r["darkness"] >= C.CRACK_MIN_DARKNESS for r in cracks)
+
+
 def test_pothole_not_crack():
     """둥근 포트홀과 무늬만 있는 노면은 균열 후보가 되지 않는지 확인한다."""
     for radius in (40, 90):
