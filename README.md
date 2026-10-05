@@ -32,4 +32,5 @@ python run_experiment.py --name check
 ## 규칙
 
 협업 규칙은 CONTRIBUTING.md, AI 코딩 도구(Claude Code 등)에 주는 규칙은 CLAUDE.md에 있다.
-시험과 도구는 모두 맨 위 폴더에서 파일 이름으로 실행한다. 예: python tests/test_a.py, python tools/check_data.py, python tools/label_gt.py <영상 경로>
+시험과 도구는 모두 맨 위 폴더에서 파일 이름으로 실행한다. 예: python tests/test_a.py, python tools/check_data.py, python tools/label_gt.py [영상 경로]
+영상 경로가 필요한 label_gt·show_preprocess·demo는 경로를 빼면(VS Code ▶ 버튼 포함) data 아래 사진 목록을 번호로 보여 주고 고르게 한다.

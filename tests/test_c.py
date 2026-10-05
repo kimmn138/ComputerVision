@@ -284,6 +284,32 @@ def test_demo_args_roi():
             pass
 
 
+def test_demo_pick_image():
+    """영상 경로를 빼면(VS Code ▶ 버튼) data 아래 사진(훈련 폴더 제외)을 번호로 고르고, 잘못된 번호는 다시 묻고,
+    빈칸·입력 끝이면 None. 경로·ROI를 인자로 주는 방식은 그대로."""
+    with tempfile.TemporaryDirectory() as root:
+        for rel in ("a.jpg", "provided/b.jpg", "own/c.jpg", "train/img/d.jpg", "provided/note.txt"):
+            path = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").close()
+        listed = [os.path.relpath(p, root).replace(os.sep, "/") for p in demo.list_images(root)]
+        check(listed == ["a.jpg", "own/c.jpg", "provided/b.jpg"], f"demo.list_images: 목록이 틀림 ({listed})")
+        answers = iter(["x", "9", "3"])
+
+        def raise_eof(prompt):
+            raise EOFError
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            picked = demo.pick_image(root, lambda prompt: next(answers))
+            quit_empty = demo.pick_image(root, lambda prompt: "")
+            quit_eof = demo.pick_image(root, raise_eof)
+        check(picked == os.path.join(root, "provided", "b.jpg"), f"demo.pick_image: 3번이 provided/b.jpg가 아님 ({picked})")
+        check(quit_empty is None and quit_eof is None, "demo.pick_image: 빈칸·입력 끝인데 None이 아님")
+    check(demo.parse_args([]).path is None and demo.parse_args([]).roi == [], "demo.parse_args: 인자 없이 실행할 수 없음")
+    args = demo.parse_args(["a.jpg", "0.4", "1"])
+    check(args.path == "a.jpg" and args.roi == [0.4, 1.0], "demo.parse_args: 경로·ROI를 주는 방식이 깨짐")
+
+
 def test_demo_view():
     """세로 사진도 화면 안에 들어가게 같은 비율로 줄이고, 작은 영상은 키우지 않으며, 받은 영상은 그대로."""
     tall = np.full((1138, 640, 3), 128, np.uint8)
@@ -376,7 +402,7 @@ def test_match_main():
 def main():
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
-               test_summary_tables, test_demo_args_roi, test_demo_view, test_demo_report,
+               test_summary_tables, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
                test_match_group, test_match_row_and_figure, test_match_main):
         try:
             fn()

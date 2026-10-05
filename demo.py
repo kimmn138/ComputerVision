@@ -1,10 +1,12 @@
 """(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 검출 결과를 한 창에 나란히 띄운다.
-사용법: 맨 위 폴더에서  python demo.py <영상 경로> [roi_top roi_bottom]
+사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]]
+- 영상 경로를 빼면(VS Code ▶ 버튼 등) data 아래 사진 목록을 번호로 보여 주고 고르게 한다.
 - ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다.
 - 콘솔에 고른 전처리와 끔·켬의 row(9열)를 출력하고, 창은 아무 키나 누르거나 X로 닫는다.
 화면 표시는 이 파일에서만 한다(src/ 함수는 창을 띄우지 않음).
 """
 import argparse
+import glob
 import os
 import sys
 
@@ -22,12 +24,15 @@ KEY_POLL_MS = 100               # 키·창 닫힘을 확인하는 간격
 FONT_NAME = "sans"              # OpenCV 5 내장 유니코드 글꼴
 LABEL_COLOR = (255, 255, 255)   # 제목 띠 글자: 흰색 (BGR)
 LABEL_X = 8
+DATA_DIR = "data"
+EXCLUDE_DIRS = ("train",)       # data/train은 B의 훈련 사진 804장이라 고르는 목록에서 뺌
 
 
 def parse_args(argv=None):
-    """영상 경로와 선택 ROI 비율 2개를 읽고, 비율이 1개이거나 0 <= top < bottom <= 1이 아니면 사용법과 함께 멈춘다."""
+    """영상 경로와 선택 ROI 비율 2개를 읽고, 비율이 1개이거나 0 <= top < bottom <= 1이 아니면 사용법과 함께 멈춘다.
+    영상 경로를 빼면 path는 None(main이 목록에서 고르게 함)."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬 검출 결과를 한 창에 띄우는 발표 시연")
-    parser.add_argument("path", help="영상 경로")
+    parser.add_argument("path", nargs="?", help="영상 경로. 빼면 data 아래 사진 목록에서 번호로 고름")
     parser.add_argument("roi", nargs="*", type=float, metavar="roi_top roi_bottom",
                         help="노면 비율 2개(0~1). 빼면 roi.csv, 없으면 config 기본값")
     args = parser.parse_args(argv)
@@ -36,6 +41,33 @@ def parse_args(argv=None):
     if args.roi and not 0 <= args.roi[0] < args.roi[1] <= 1:
         parser.error(f"ROI 비율은 0 <= top < bottom <= 1 이어야 함 ({args.roi[0]}, {args.roi[1]})")
     return args
+
+
+def list_images(root=DATA_DIR):
+    """root 아래 사진(.jpg) 경로를 이름순으로 모은다. EXCLUDE_DIRS 폴더는 뺀다."""
+    paths = glob.glob(os.path.join(root, "**", "*.jpg"), recursive=True)
+    return sorted(p for p in paths if os.path.relpath(p, root).split(os.sep)[0] not in EXCLUDE_DIRS)
+
+
+def pick_image(root=DATA_DIR, input_fn=input):
+    """사진 목록을 번호로 보여 주고 입력받은 번호의 경로를 돌려준다. 빈칸·q·입력 끝이면 None.
+    VS Code ▶ 버튼처럼 인자 없이 실행해도 시연을 시작할 수 있게 한다."""
+    paths = list_images(root)
+    if not paths:
+        print(f"{root} 아래에 사진(.jpg)이 없음. 맨 위 폴더에서 실행했는지 확인")
+        return None
+    for number, path in enumerate(paths, start=1):
+        print(f"{number:3d}. {path.replace(os.sep, '/')}")
+    while True:
+        try:
+            answer = input_fn(f"번호 입력 (1~{len(paths)}, 빈칸이나 q는 종료): ").strip()
+        except EOFError:
+            return None
+        if answer in ("", "q"):
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(paths):
+            return paths[int(answer) - 1]
+        print("목록에 있는 번호를 입력")
 
 
 def choose_roi(path, roi_args, roi_table):
@@ -134,6 +166,11 @@ def show(img):
 def main(argv=None):
     """영상 1장을 끔·켬으로 처리해 콘솔에 전처리와 row를 출력하고 결과 두 장을 한 창에 띄운다. 종료 코드를 돌려준다."""
     args = parse_args(argv)
+    if args.path is None:
+        args.path = pick_image()
+        if args.path is None:
+            print("사진을 고르지 않아 종료")
+            return 0
     try:
         bgr = io_utils.load_image(args.path)
         top, bottom, roi_source = choose_roi(args.path, args.roi, io_utils.load_roi_table(ROI_PATH))
