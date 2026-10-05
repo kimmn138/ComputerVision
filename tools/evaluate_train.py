@@ -1,18 +1,28 @@
 """(파트 B) 교수 제공 훈련 데이터 전체에서 검출 파라미터 후보를 정량 평가한다.
 사용법: 맨 위 폴더에서  python tools/convert_json_gt.py (정답 CSV를 먼저 만듦) → python tools/evaluate_train.py
-훈련 사진과 정답 CSV 폴더는 config B 구역의 TRAIN_IMAGE_DIR·TRAIN_GT_DIR."""
+훈련 사진과 정답 CSV 폴더는 config B 구역의 TRAIN_IMAGE_DIR·TRAIN_GT_DIR.
+
+run_experiment와 같은 조건으로 평가한다:
+- pipeline.run_pipeline(640px → ROI 자르기 → 전처리 끔/켬 → 검출)을 그대로 쓰고, 끔·켬 두 줄을 모두 낸다.
+- ROI는 run_experiment.get_roi와 같이 roi.csv에서 찾고, 없으면 config 기본값(ROI_TOP_DEFAULT·ROI_BOTTOM_DEFAULT).
+- 후보 좌표는 run_experiment.to_full_boxes로 640px 전체 영상 좌표로 옮긴다(y + y0).
+- ROI 밖에 있는 정답도 빼지 않고 놓친 것(FN)으로 센다.
+판정은 두 가지를 함께 낸다:
+- iou: IoU ≥ IOU_THRESH, 정답 하나에 검출 하나(evaluate.count_matches)
+- ctr: 검출 중심이 정답 박스 안(evaluate.count_center_hits). 큰 정답 박스 안의 조각 검출도 맞힘으로 셈"""
 
 import csv
 import sys
 from pathlib import Path
 
-import cv2 as cv
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import run_experiment as rx  # noqa: E402
 from src import config as C  # noqa: E402
-from src.detect import detect_cracks, detect_potholes  # noqa: E402
+from src import io_utils, pipeline  # noqa: E402
 from src.evaluate import (  # noqa: E402
+    count_center_hits,
     count_matches,
     load_gt,
     precision_recall,
@@ -23,6 +33,13 @@ RESULT_DIR = Path("results/tuning")
 
 DETAIL_PATH = RESULT_DIR / "train_detail.csv"
 SUMMARY_PATH = RESULT_DIR / "train_summary.csv"
+
+ROI_PATH = Path("data/roi.csv")
+
+KINDS = ("crack", "pothole")
+MODES = (("off", False), ("on", True))     # 전처리 끔·켬 (run_experiment의 preprocess 열과 같은 이름)
+CRITERIA = ("iou", "ctr")                  # iou: IoU 일대일, ctr: 검출 중심이 정답 박스 안
+COUNT_KEYS = ("tp", "fp", "found", "fn")
 
 
 # ---------------------------------------------------------
@@ -130,31 +147,6 @@ PARAM_SETS = [
 ]
 
 
-def resize_width(img, width=C.TARGET_WIDTH):
-    """영상 비율을 유지하면서 프로젝트 기준 가로 크기로 변환한다."""
-    h, w = img.shape[:2]
-
-    if w == width:
-        return img.copy()
-
-    scale = width / w
-    new_h = round(h * scale)
-
-    return cv.resize(
-        img,
-        (width, new_h),
-        interpolation=cv.INTER_AREA,
-    )
-
-
-def candidate_boxes(candidates):
-    """검출 후보에서 평가에 필요한 bbox만 추출한다."""
-    return [
-        tuple(region["bbox"])
-        for region in candidates
-    ]
-
-
 def split_gt(gt):
     """GT 목록을 균열과 포트홀 박스로 분리한다."""
     cracks = []
@@ -202,77 +194,56 @@ def restore_params(backup):
         setattr(C, key, value)
 
 
-def evaluate_one(image_path):
-    """훈련 영상 한 장의 균열·포트홀 검출 결과를 GT와 비교한다."""
-    bgr = cv.imread(str(image_path))
-
-    if bgr is None:
-        raise FileNotFoundError(image_path)
-
-    bgr = resize_width(bgr)
-
-    gray = cv.cvtColor(
+def evaluate_one(bgr, gt, roi, use_preprocess):
+    """훈련 영상 한 장을 run_experiment와 같은 조건(ROI·전처리)으로 검출해 정답과 두 기준으로 비교한다."""
+    out = pipeline.run_pipeline(
         bgr,
-        cv.COLOR_BGR2GRAY,
+        roi["top"],
+        roi["bottom"],
+        use_preprocess,
     )
 
-    cracks, _ = detect_cracks(gray)
-    potholes, _ = detect_potholes(gray)
-
-    gt_path = Path(C.TRAIN_GT_DIR) / f"{image_path.stem}.csv"
-    gt = load_gt(gt_path)
-
-    if gt is None:
-        return None
-
-    gt_cracks, gt_potholes = split_gt(gt)
-
-    crack_counts = count_matches(
-        candidate_boxes(cracks),
-        gt_cracks,
-        C.IOU_THRESH,
-    )
-
-    pothole_counts = count_matches(
-        candidate_boxes(potholes),
-        gt_potholes,
-        C.IOU_THRESH,
-    )
-
-    return {
-        "gt_crack": len(gt_cracks),
-        "pred_crack": len(cracks),
-
-        "crack_tp": crack_counts["tp"],
-        "crack_fp": crack_counts["fp"],
-        "crack_fn": crack_counts["fn"],
-
-        "gt_pothole": len(gt_potholes),
-        "pred_pothole": len(potholes),
-
-        "pothole_tp": pothole_counts["tp"],
-        "pothole_fp": pothole_counts["fp"],
-        "pothole_fn": pothole_counts["fn"],
+    truth_by_kind = dict(zip(KINDS, split_gt(gt)))
+    regions_by_kind = {
+        "crack": out["cracks"],
+        "pothole": out["potholes"],
     }
 
+    result = {}
 
-def add_counts(total, result, prefix):
-    """영상별 TP/FP/FN을 파라미터 세트 전체 합계에 더한다."""
-    total["tp"] += result[f"{prefix}_tp"]
-    total["fp"] += result[f"{prefix}_fp"]
-    total["fn"] += result[f"{prefix}_fn"]
+    for kind in KINDS:
+        # 후보는 노면(ROI) 기준이므로 정답과 같은 640px 전체 영상 좌표로 옮긴다
+        pred = rx.to_full_boxes(regions_by_kind[kind], out["y0"])
+        truth = truth_by_kind[kind]
+
+        result[f"gt_{kind}"] = len(truth)
+        result[f"pred_{kind}"] = len(pred)
+
+        counts_by_criterion = {
+            "iou": count_matches(pred, truth, C.IOU_THRESH),
+            "ctr": count_center_hits(pred, truth),
+        }
+
+        for criterion, counts in counts_by_criterion.items():
+            for key in COUNT_KEYS:
+                result[f"{kind}_{criterion}_{key}"] = counts[key]
+
+    return result
 
 
-def make_pr(tp, fp, fn):
-    """합산 TP/FP/FN으로 precision과 recall을 계산한다."""
-    counts = {
-        "tp": tp,
-        "fp": fp,
-        "found": tp,
-        "fn": fn,
-    }
+def count_columns():
+    """영상별 결과의 개수 열 이름: gt_·pred_ 개수와 종류·기준별 tp·fp·found·fn."""
+    columns = []
 
-    return precision_recall(counts)
+    for kind in KINDS:
+        columns += [f"gt_{kind}", f"pred_{kind}"]
+        columns += [
+            f"{kind}_{criterion}_{key}"
+            for criterion in CRITERIA
+            for key in COUNT_KEYS
+        ]
+
+    return columns
 
 
 def metric_text(value):
@@ -283,26 +254,43 @@ def metric_text(value):
     return f"{value:.6f}"
 
 
-def save_detail(rows):
-    """영상별 세부 평가 결과를 CSV로 저장한다."""
-    fieldnames = [
-        "params",
-        "image",
+def summarize(param_name, mode, total):
+    """한 파라미터 세트·전처리 조건의 합계로 종류·기준별 정밀도·재현율을 계산한다(영상별 비율의 평균이 아님)."""
+    row = {
+        "params": param_name,
+        "preprocess": mode,
+        "images": total["images"],
+    }
 
-        "gt_crack",
-        "pred_crack",
-        "crack_tp",
-        "crack_fp",
-        "crack_fn",
+    for kind in KINDS:
+        for criterion in CRITERIA:
+            prefix = f"{kind}_{criterion}"
+            counts = {key: total[f"{prefix}_{key}"] for key in COUNT_KEYS}
+            precision, recall = precision_recall(counts)
 
-        "gt_pothole",
-        "pred_pothole",
-        "pothole_tp",
-        "pothole_fp",
-        "pothole_fn",
-    ]
+            row.update({f"{prefix}_{key}": counts[key] for key in COUNT_KEYS})
+            row[f"{prefix}_precision"] = metric_text(precision)
+            row[f"{prefix}_recall"] = metric_text(recall)
 
-    with DETAIL_PATH.open(
+    return row
+
+
+def summary_fieldnames():
+    """요약 표의 열: 파라미터·전처리·영상 수, 종류·기준별 개수와 정밀도·재현율."""
+    columns = ["params", "preprocess", "images"]
+
+    for kind in KINDS:
+        for criterion in CRITERIA:
+            prefix = f"{kind}_{criterion}"
+            columns += [f"{prefix}_{key}" for key in COUNT_KEYS]
+            columns += [f"{prefix}_precision", f"{prefix}_recall"]
+
+    return columns
+
+
+def save_csv(path, rows, fieldnames):
+    """결과 행을 UTF-8(BOM) CSV로 저장한다."""
+    with path.open(
         "w",
         encoding="utf-8-sig",
         newline="",
@@ -316,41 +304,31 @@ def save_detail(rows):
         writer.writerows(rows)
 
 
-def save_summary(rows):
-    """파라미터 세트별 전체 성능을 CSV로 저장한다."""
-    fieldnames = [
-        "params",
-        "images",
+def print_summary(summary_rows):
+    """요약을 콘솔 표로 보여 준다: 종류마다 IoU 기준과 중심 기준의 정밀도 / 재현율."""
+    header = " | ".join(
+        f"{kind + ' ' + criterion + ' P / R':>15s}"
+        for kind in KINDS
+        for criterion in CRITERIA
+    )
 
-        "crack_tp",
-        "crack_fp",
-        "crack_fn",
-        "crack_precision",
-        "crack_recall",
+    print()
+    print(f"{'params':15s} {'pre':4s} | {header}")
 
-        "pothole_tp",
-        "pothole_fp",
-        "pothole_fn",
-        "pothole_precision",
-        "pothole_recall",
-    ]
+    for row in summary_rows:
+        cells = []
 
-    with SUMMARY_PATH.open(
-        "w",
-        encoding="utf-8-sig",
-        newline="",
-    ) as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=fieldnames,
-        )
+        for kind in KINDS:
+            for criterion in CRITERIA:
+                precision = float(row[f"{kind}_{criterion}_precision"])
+                recall = float(row[f"{kind}_{criterion}_recall"])
+                cells.append(f"{precision:.3f} / {recall:.3f}")
 
-        writer.writeheader()
-        writer.writerows(rows)
+        print(f"{row['params']:15s} {row['preprocess']:4s} | " + " | ".join(f"{c:>15s}" for c in cells))
 
 
 def main():
-    """훈련 데이터 전체에서 각 파라미터 후보의 정량 성능을 비교한다."""
+    """훈련 데이터 전체에서 각 파라미터 후보의 정량 성능을 전처리 끔·켬과 두 판정 기준으로 비교한다."""
     RESULT_DIR.mkdir(
         parents=True,
         exist_ok=True,
@@ -378,169 +356,104 @@ def main():
             "(JSON 폴더는 config B 구역의 TRAIN_ANN_DIR)."
         )
 
+    roi_table = io_utils.load_roi_table(ROI_PATH)
+
     print("=" * 72)
-    print("훈련 데이터 전체 평가")
+    print("훈련 데이터 전체 평가 (run_experiment와 같은 조건)")
     print("images =", len(image_paths))
     print("GT =", gt_dir)
+    print(f"ROI = roi.csv, 없으면 top {C.ROI_TOP_DEFAULT} · bottom {C.ROI_BOTTOM_DEFAULT} (ROI 밖 정답은 FN)")
+    print(f"판정 = IoU ≥ {C.IOU_THRESH} 일대일(iou), 검출 중심이 정답 박스 안(ctr)")
     print("=" * 72)
 
     original_params = backup_params()
 
+    totals = {
+        (params["name"], mode): {"images": 0, **{col: 0 for col in count_columns()}}
+        for params in PARAM_SETS
+        for mode, _ in MODES
+    }
+
     detail_rows = []
-    summary_rows = []
+    n_default_roi = 0
 
     try:
-        for params in PARAM_SETS:
-            param_name = params["name"]
+        # 사진은 한 번만 읽고, 그 사진으로 파라미터 세트 × 전처리 끔·켬을 모두 돌린다
+        for index, image_path in enumerate(
+            image_paths,
+            start=1,
+        ):
+            gt = load_gt(gt_dir / f"{image_path.stem}.csv")
 
-            apply_param_set(params)
-
-            print()
-            print("=" * 72)
-            print("parameter set:", param_name)
-            print("=" * 72)
-
-            crack_total = {
-                "tp": 0,
-                "fp": 0,
-                "fn": 0,
-            }
-
-            pothole_total = {
-                "tp": 0,
-                "fp": 0,
-                "fn": 0,
-            }
-
-            evaluated_images = 0
-
-            for index, image_path in enumerate(
-                image_paths,
-                start=1,
-            ):
-                result = evaluate_one(image_path)
-
-                if result is None:
-                    print(
-                        "[GT 없음]",
-                        image_path.name,
-                    )
-                    continue
-
-                evaluated_images += 1
-
-                add_counts(
-                    crack_total,
-                    result,
-                    "crack",
+            if gt is None:
+                print(
+                    "[GT 없음]",
+                    image_path.name,
                 )
+                continue
 
-                add_counts(
-                    pothole_total,
-                    result,
-                    "pothole",
-                )
+            bgr = io_utils.load_image(str(image_path))
+            roi, used_default = rx.get_roi(image_path.name, roi_table)
+            n_default_roi += used_default
 
-                detail_rows.append(
-                    {
-                        "params": param_name,
-                        "image": image_path.name,
-                        **result,
-                    }
-                )
+            for params in PARAM_SETS:
+                apply_param_set(params)
 
-                if index % 50 == 0:
-                    print(
-                        f"{index}/{len(image_paths)}"
+                for mode, use_preprocess in MODES:
+                    result = evaluate_one(
+                        bgr,
+                        gt,
+                        roi,
+                        use_preprocess,
                     )
 
-            crack_precision, crack_recall = make_pr(
-                crack_total["tp"],
-                crack_total["fp"],
-                crack_total["fn"],
-            )
+                    detail_rows.append(
+                        {
+                            "params": params["name"],
+                            "preprocess": mode,
+                            "image": image_path.name,
+                            **result,
+                        }
+                    )
 
-            pothole_precision, pothole_recall = make_pr(
-                pothole_total["tp"],
-                pothole_total["fp"],
-                pothole_total["fn"],
-            )
+                    total = totals[(params["name"], mode)]
+                    total["images"] += 1
 
-            summary = {
-                "params": param_name,
-                "images": evaluated_images,
+                    for key, value in result.items():
+                        total[key] += value
 
-                "crack_tp": crack_total["tp"],
-                "crack_fp": crack_total["fp"],
-                "crack_fn": crack_total["fn"],
-                "crack_precision": metric_text(
-                    crack_precision
-                ),
-                "crack_recall": metric_text(
-                    crack_recall
-                ),
-
-                "pothole_tp": pothole_total["tp"],
-                "pothole_fp": pothole_total["fp"],
-                "pothole_fn": pothole_total["fn"],
-                "pothole_precision": metric_text(
-                    pothole_precision
-                ),
-                "pothole_recall": metric_text(
-                    pothole_recall
-                ),
-            }
-
-            summary_rows.append(summary)
-
-            print()
-            print("[crack]")
-            print(
-                "TP =", crack_total["tp"],
-                "FP =", crack_total["fp"],
-                "FN =", crack_total["fn"],
-            )
-            print(
-                "precision =",
-                metric_text(crack_precision),
-            )
-            print(
-                "recall =",
-                metric_text(crack_recall),
-            )
-
-            print()
-            print("[pothole]")
-            print(
-                "TP =", pothole_total["tp"],
-                "FP =", pothole_total["fp"],
-                "FN =", pothole_total["fn"],
-            )
-            print(
-                "precision =",
-                metric_text(pothole_precision),
-            )
-            print(
-                "recall =",
-                metric_text(pothole_recall),
-            )
+            if index % 50 == 0:
+                print(
+                    f"{index}/{len(image_paths)}"
+                )
 
     finally:
         restore_params(
             original_params
         )
 
-    save_detail(
-        detail_rows
+    summary_rows = [
+        summarize(param_name, mode, total)
+        for (param_name, mode), total in totals.items()
+    ]
+
+    save_csv(
+        DETAIL_PATH,
+        detail_rows,
+        ["params", "preprocess", "image"] + count_columns(),
     )
 
-    save_summary(
-        summary_rows
+    save_csv(
+        SUMMARY_PATH,
+        summary_rows,
+        summary_fieldnames(),
     )
+
+    print_summary(summary_rows)
 
     print()
     print("=" * 72)
-    print("전체 평가 완료")
+    print(f"전체 평가 완료 (config 기본 ROI를 쓴 사진 {n_default_roi}장)")
     print("상세:", DETAIL_PATH)
     print("요약:", SUMMARY_PATH)
     print("=" * 72)

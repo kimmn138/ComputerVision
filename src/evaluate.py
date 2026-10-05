@@ -89,6 +89,28 @@ def count_matches(pred, gt, thr):
     }
 
 
+def count_center_hits(pred, gt):
+    """검출 박스의 중심이 정답 박스 안에 있으면 맞힌 것으로 세어, IoU로는 놓치는 조각 검출도 평가한다.
+    균열 정답은 균열 전체를 감싼 큰 박스이고 검출은 그 안의 조각이라 IoU가 낮게 나오므로 IoU 기준과 함께 본다.
+    tp·fp는 검출 기준(중심이 어떤 정답 안에 들었는지, 한 정답에 여러 검출 가능),
+    found·fn은 정답 기준(안에 검출 중심이 하나라도 있는지)이라 tp와 found가 다를 수 있다."""
+    centers = [(x + w / 2, y + h / 2) for x, y, w, h in pred]
+
+    def inside(point, box):
+        bx, by, bw, bh = box[:4]
+        return bx <= point[0] <= bx + bw and by <= point[1] <= by + bh
+
+    tp = sum(any(inside(c, g) for g in gt) for c in centers)
+    found = sum(any(inside(c, g) for c in centers) for g in gt)
+
+    return {
+        "tp": int(tp),
+        "fp": int(len(pred) - tp),
+        "found": int(found),
+        "fn": int(len(gt) - found),
+    }
+
+
 def precision_recall(counts):
     """검출 개수에서 정밀도와 재현율을 계산하며 분모가 0이면 NaN을 반환한다."""
     tp = counts["tp"]

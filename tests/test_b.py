@@ -11,7 +11,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import config as C  # noqa: E402
 from src.detect import describe_regions, detect_cracks, detect_potholes  # noqa: E402
-from src.evaluate import load_gt, iou, count_matches, precision_recall  # noqa: E402
+from src.evaluate import load_gt, iou, count_matches, count_center_hits, precision_recall  # noqa: E402
 
 def test_synthetic_crack():
     """합성 선에서 균열이 검출되고 포트홀은 검출되지 않는지 확인한다."""
@@ -266,6 +266,53 @@ def test_nan():
 
     assert np.isnan(precision)
     assert np.isnan(recall)
+
+
+def test_count_center_hits():
+    """검출 중심이 정답 박스 안이면 맞힘: tp·fp는 검출 기준(한 정답에 여러 개 가능), found·fn은 정답 기준."""
+    gt = [
+        (0, 0, 20, 20, "crack"),
+        (50, 50, 10, 10, "crack"),
+    ]
+
+    pred = [
+        (0, 0, 10, 10),       # 중심 (5, 5): 첫 정답 안
+        (8, 8, 4, 4),         # 중심 (10, 10): 첫 정답 안 (같은 정답에 두 번째 조각)
+        (100, 100, 10, 10),   # 중심이 어느 정답에도 없음
+    ]
+
+    counts = count_center_hits(pred, gt)
+
+    assert counts == {"tp": 2, "fp": 1, "found": 1, "fn": 1}, counts
+
+    assert count_center_hits([], gt) == {"tp": 0, "fp": 0, "found": 0, "fn": 2}
+    assert count_center_hits(pred, []) == {"tp": 0, "fp": 3, "found": 0, "fn": 0}
+
+    precision, recall = precision_recall(counts)
+
+    assert abs(precision - 2 / 3) < 1e-9 and recall == 0.5
+
+
+def test_evaluate_train_roi_coordinates():
+    """evaluate_train이 ROI로 자른 노면에서 찾은 후보를 640px 전체 좌표(y + y0)로 옮겨 정답과 비교하는지 확인한다."""
+    from tools import evaluate_train
+
+    gray = np.vstack([asphalt(seed=1), asphalt(seed=2)])     # 480 × 640, 위·아래 절반 모두 노면 무늬
+    cv.line(gray, (60, 360), (580, 380), 60, 2)                # 아래 절반(ROI 안)에 곧은 균열
+    bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+
+    gt = [(50, 350, 540, 40, "crack")]                         # 640px 전체 영상 좌표
+    roi = {"top": 0.5, "bottom": 1.0, "condition": ""}
+
+    result = evaluate_train.evaluate_one(bgr, gt, roi, False)
+
+    assert result["gt_crack"] == 1 and result["pred_crack"] >= 1, result
+    assert result["crack_ctr_found"] == 1 and result["crack_ctr_tp"] >= 1, result
+
+    # 정답을 ROI 기준(y0를 빼지 않은 채 위로 240 올린 자리)에 두면 맞지 않아야 한다
+    moved = evaluate_train.evaluate_one(bgr, [(50, 110, 540, 40, "crack")], roi, False)
+
+    assert moved["crack_ctr_found"] == 0, moved
 
 
 def test_label_gt_pick_image():
