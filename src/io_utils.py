@@ -86,49 +86,47 @@ def load_roi_table(path):
     return roi_dict
 
 
+def _is_number(token):
+    """이름의 번호 칸이 0~9 숫자로만 되어 있는지 본다(빈 칸·'²' 같은 유니코드 숫자는 거짓)."""
+    return token.isascii() and token.isdigit()
+
+
 def parse_name(path):
     """사진 파일 이름에서 출처·손상·촬영 조건을 읽어 결과 표에 붙인다.
-    own_번호_손상_조건.jpg와 pair번호_기호_조건.jpg 해석, 규칙 위반은 ValueError."""
+    own_번호_손상_조건.jpg → {source: "own", damage, condition}
+    pair번호_기호_조건.jpg → {source: "pair", pair, role, condition}
+    그 밖은 제공 영상(예: Japan_000107.jpg, United_States_004830.jpg) → {source: "provided", damage: "", condition: ""}.
+    제공 영상 이름에는 손상·조건 정보가 없으므로 밑줄 개수와 상관없이 해석하지 않고, 조건은 roi.csv에서 읽는다.
+    own·pair 이름이 칸 수·번호·config A 구역의 태그 규칙을 어기면 ValueError."""
     filename = os.path.basename(path)
-    name_without_ext = os.path.splitext(filename)[0]
-    tokens = name_without_ext.split("_")
+    tokens = os.path.splitext(filename)[0].split("_")
 
-    # 1. 'own' 규칙: own_번호_손상_조건 (예: own_01_crack_low)
-    if name_without_ext.startswith("own_"):
-        if len(tokens) < 4:
-            raise ValueError(f"own 이름 규칙 위반 (토큰 부족): {filename}")
-        return {
-            "source": tokens[0],
-            "pair": tokens[1],
-            "role": tokens[2],
-            "condition": tokens[3]
-        }
-        
-    # 2. 'pair' 규칙: pair번호_기호_조건 (예: pair01_A_low -> ['pair01', 'A', 'low'])
-    elif name_without_ext.startswith("pair"):
-        if len(tokens) < 3:
-            raise ValueError(f"pair 이름 규칙 위반 (토큰 부족): {filename}")
-            
-        pair_token = tokens[0]
-        pair_num = pair_token.replace("pair", "")
-        if not pair_num:
-            raise ValueError(f"pair 번호가 누락되었습니다: {filename}")
-            
-        return {
-            "source": "pair",
-            "pair": pair_num,
-            "role": tokens[1],
-            "condition": tokens[2]
-        }
-        
-    # 3. 그 외 일반 제공 데이터: 출처_손상_조건
-    else:
-        if len(tokens) >= 3:
-            return {
-                "source": tokens[0],
-                "damage": tokens[1],
-                "condition": tokens[2]
-            }
-        else:
-            return {"source": "provided", "damage": "", "condition": ""}
-            
+    # 1. 직접 촬영: own_번호_손상_조건 (예: own_01_crack_dark)
+    if tokens[0] == "own":
+        if len(tokens) != 4:
+            raise ValueError(f"own 이름은 own_번호_손상_조건 4칸이어야 함 ({len(tokens)}칸): {filename}")
+        _, number, damage, condition = tokens
+        if not _is_number(number):
+            raise ValueError(f"own 번호가 숫자가 아님 ('{number}'): {filename}")
+        if damage not in C.DAMAGE_TAGS:
+            raise ValueError(f"손상 '{damage}'가 {C.DAMAGE_TAGS}에 없음: {filename}")
+        if condition not in C.CONDITION_TAGS:
+            raise ValueError(f"조건 '{condition}'이 {C.CONDITION_TAGS}에 없음: {filename}")
+        return {"source": "own", "damage": damage, "condition": condition}
+
+    # 2. 매칭용 쌍: pair번호_기호_조건 (예: pair01_A_ref)
+    if tokens[0].startswith("pair"):
+        if len(tokens) != 3:
+            raise ValueError(f"pair 이름은 pair번호_기호_조건 3칸이어야 함 ({len(tokens)}칸): {filename}")
+        pair_token, role, condition = tokens
+        number = pair_token[len("pair"):]
+        if not _is_number(number):
+            raise ValueError(f"pair 번호가 숫자가 아님 ('{number}'): {filename}")
+        if role not in C.PAIR_ROLES:
+            raise ValueError(f"기호 '{role}'가 {C.PAIR_ROLES}에 없음: {filename}")
+        if condition not in C.PAIR_CONDITIONS:
+            raise ValueError(f"쌍 조건 '{condition}'이 {C.PAIR_CONDITIONS}에 없음: {filename}")
+        return {"source": "pair", "pair": number, "role": role, "condition": condition}
+
+    # 3. 제공 영상
+    return {"source": "provided", "damage": "", "condition": ""}

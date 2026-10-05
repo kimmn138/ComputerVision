@@ -1,9 +1,12 @@
-"""(Tools) 단일 이미지에 대한 전처리 파이프라인 결과를 시각적으로 확인합니다."""
+"""(Tools) 단일 이미지에 대한 전처리 파이프라인 결과를 시각적으로 확인합니다.
+사용법: 맨 위 폴더에서  python tools/show_preprocess.py <영상 경로>"""
 import os
 import sys
 import cv2 as cv
 import numpy as np
-from src import io_utils, analyze, preprocess
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src import io_utils, analyze, preprocess  # noqa: E402
 
 def show_preprocessing_result(image_path, roi_csv_path="data/roi.csv"):
     if not os.path.exists(image_path):

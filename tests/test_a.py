@@ -1,10 +1,15 @@
-"""(파트 A) 전처리 파이프라인(io_utils, analyze, preprocess) 통합 및 단위 테스트"""
-import pytest
+"""(파트 A) 전처리 파이프라인(io_utils, analyze, preprocess) 통합 및 단위 테스트
+사용법: 맨 위 폴더에서  python tests/test_a.py   (pytest 없이 실행되고, pytest로 돌려도 됨)"""
+import os
+import sys
+import traceback
+
 import numpy as np
 import cv2 as cv
 
-from src import io_utils, analyze, preprocess
-from src import config as C
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src import io_utils, analyze, preprocess  # noqa: E402
+from src import config as C  # noqa: E402
 
 # ==========================================
 # 1. io_utils.py 테스트
@@ -33,22 +38,44 @@ def test_crop_roi():
     assert cropped.shape[0] == 65  # 100 - 35 = 65
 
 def test_parse_name():
-    """파일명 분석 규칙 테스트"""
-    # 1. 일반 제공 데이터
-    res1 = io_utils.parse_name("dataset_crack_low.jpg")
-    assert res1 == {"source": "dataset", "damage": "crack", "condition": "low"}
-    
-    # 2. own 규칙
-    res2 = io_utils.parse_name("own_01_crack_day.jpg")
-    assert res2 == {"source": "own", "pair": "01", "role": "crack", "condition": "day"}
-    
-    # 3. pair 규칙
-    res3 = io_utils.parse_name("pair01_A_day.jpg")
-    assert res3 == {"source": "pair", "pair": "01", "role": "A", "condition": "day"}
-    
-    # 4. 예외 처리 (잘못된 own 규칙)
-    with pytest.raises(ValueError):
-        io_utils.parse_name("own_01_crack.jpg")  # 토큰 부족
+    """파일명 분석 규칙 테스트: 약속 표의 반환 형식과 규칙 위반 ValueError"""
+    provided = {"source": "provided", "damage": "", "condition": ""}
+    # 1. 제공 데이터: 밑줄 개수와 상관없이 provided (조건은 roi.csv에서 읽음)
+    for name in ("data/provided/Japan_000107.jpg", "data/provided/United_States_004830.jpg",
+                 "data/provided/China_MotorBike_000123.jpg"):
+        res = io_utils.parse_name(name)
+        assert res == provided, f"{name} -> {res}"
+
+    # 2. own 규칙: {source, damage, condition}
+    res2 = io_utils.parse_name("data/own/own_01_crack_dark.jpg")
+    assert res2 == {"source": "own", "damage": "crack", "condition": "dark"}
+    res2b = io_utils.parse_name("own_03_none_normal.jpg")
+    assert res2b == {"source": "own", "damage": "none", "condition": "normal"}
+
+    # 3. pair 규칙: {source, pair, role, condition}
+    res3 = io_utils.parse_name("data/pairs/pair01_A_ref.jpg")
+    assert res3 == {"source": "pair", "pair": "01", "role": "A", "condition": "ref"}
+
+    # 4. 예외 처리: 규칙을 어긴 own·pair 이름은 ValueError
+    bad_names = [
+        "own_01_crack.jpg",            # 칸 부족
+        "own_01_crack_dark_x.jpg",     # 칸 초과
+        "own_xx_crack_dark.jpg",       # 번호가 숫자가 아님
+        "own_01_normal_dark.jpg",      # 손상 태그 아님 (손상 없음은 none)
+        "own_01_crack_day.jpg",        # 조건 태그 아님 (낮은 normal)
+        "pair01_A.jpg",                # 칸 부족
+        "pair_A_ref.jpg",              # pair 번호 없음
+        "pair01_Z_ref.jpg",            # 기호 태그 아님
+        "pair01_A_day.jpg",            # 쌍 조건 태그 아님 (기준은 ref)
+    ]
+    accepted = []
+    for name in bad_names:
+        try:
+            io_utils.parse_name(name)
+            accepted.append(name)
+        except ValueError:
+            pass
+    assert not accepted, f"규칙 위반인데 ValueError가 나지 않음: {accepted}"
 
 # ==========================================
 # 2. analyze.py 테스트
@@ -127,3 +154,26 @@ def test_pipeline_integration():
     assert processed.dtype == np.uint8
     # 필터가 적용되었으므로 원본 gray와는 값이 달라져야 함
     assert not np.array_equal(gray, processed)
+
+
+def main():
+    """이 파일의 test_ 함수를 모두 돌려 실패를 모아 보여 준다. 실패가 있으면 종료 코드 1."""
+    fails = []
+    for name, fn in list(globals().items()):
+        if not (name.startswith("test_") and callable(fn)):
+            continue
+        try:
+            fn()
+        except Exception as e:
+            line = traceback.extract_tb(e.__traceback__)[-1].line     # 메시지 없는 assert도 어느 줄인지 보이게
+            fails.append(f"{name}: {type(e).__name__} {e} | {line}")
+    if fails:
+        print(f"A 시험 실패 {len(fails)}건")
+        for f in fails:
+            print("  -", f)
+        sys.exit(1)
+    print("A 시험 통과")
+
+
+if __name__ == "__main__":
+    main()

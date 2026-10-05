@@ -1,3 +1,7 @@
+"""(파트 A) 고른 전처리 단계(잡티 제거·밝기/대비 보정·샤프닝)만 흑백 노면 영상에 적용한다."""
+import cv2 as cv
+import numpy as np
+
 
 def preprocess(gray, steps):
     """검출이 잘 되도록 고른 단계만 적용한 흑백 영상을 돌려준다. NO_STEPS면 입력과 똑같은 영상."""
