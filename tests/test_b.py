@@ -268,6 +268,39 @@ def test_nan():
     assert np.isnan(recall)
 
 
+def test_label_gt_pick_image():
+    """label_gt를 인자 없이 실행하면 data 아래 사진(훈련 폴더 제외)을 번호로 고르고,
+    잘못된 번호는 다시 묻고, 빈칸·입력 끝이면 None. 경로를 인자로 주는 방식도 그대로."""
+    import contextlib
+    import io
+
+    from tools import label_gt
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+
+        for rel in ("a.jpg", "provided/b.jpg", "own/c.jpg", "train/img/d.jpg", "provided/note.txt"):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(b"")
+
+        listed = [p.relative_to(root).as_posix() for p in label_gt.list_images(root)]
+
+        assert listed == ["a.jpg", "own/c.jpg", "provided/b.jpg"], listed
+
+        answers = iter(["x", "9", "3"])
+
+        def raise_eof(prompt):
+            raise EOFError
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert label_gt.pick_image(root, lambda prompt: next(answers)) == root / "provided" / "b.jpg"
+            assert label_gt.pick_image(root, lambda prompt: "") is None
+            assert label_gt.pick_image(root, raise_eof) is None
+
+    assert label_gt.parse_args([]).image is None
+    assert label_gt.parse_args(["x.jpg"]).image == "x.jpg"
+
+
 def main():
     """이 파일의 test_ 함수를 모두 돌려 실패를 모아 보여 준다. 실패가 있으면 종료 코드 1."""
     fails = []
