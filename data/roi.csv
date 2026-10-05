@@ -18,10 +18,10 @@ own_03_pothole_blur.jpg,0.05,0.80,blur
 own_03_pothole_normal.jpg,0.10,0.85,normal
 own_04_none_blur.jpg,0.10,1.0,blur
 own_05_none_blur.jpg,0.00,1.0,blur
-own_06_none_night.jpg,0.20,1.0,night
 own_07_none_normal.jpg,0.05,0.95,normal
 own_08_none_blur.jpg,0.10,0.85,blur
 own_09_none_blur.jpg,0.20,1.0,blur
+own_09_none_night.jpg,0.20,1.0,night
 own_09_none_normal.jpg,0.18,1.0,normal
 own_10_crack_blur.jpg,0.32,1.0,blur
 own_10_crack_night.jpg,0.32,1.0,night
