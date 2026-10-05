@@ -22,6 +22,9 @@ GAMMA_RANGE = (0.4, 2.5)    # 결과 = 입력^감마 (감마 < 1 밝게). 감마
 SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0    # 언샤프 마스크: 결과 = 입력 + AMOUNT × (입력 − 가우시안(σ px))
 USE_CLAHE = False           # True면 평활화 대신 CLAHE
 CLAHE_CLIP, CLAHE_TILE = 2.0, (8, 8)
+NOISE_BLOCK = 16            # px, 잡티는 이 크기 블록마다 재서
+NOISE_FLAT_QUANTILE = 0.1   # 가장 평평한 하위 10% 블록 값을 씀. 전체로 재면 결·경계를 잡티로 세어 깨끗한 사진도 흐려짐(제공 사진 13장: 깨끗 최대 1.5, σ3 잡음 2.7 이상)
+NOISE_SAT_MAX = 0.05        # 비율, 0·255 픽셀이 5%보다 많은 블록은 잡티가 잘려 낮게 나오므로 뺌
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150

@@ -8,20 +8,44 @@ from src import config as C
 NO_STEPS = {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}
 
 
+def _estimate_noise(gray):
+    """Immerkær 방식으로 잡음 표준편차를 어림하되, 결·경계가 없는 평평한 블록에서만 잰다.
+    영상 전체로 재면 나뭇잎·경계선·노면 결까지 잡음으로 세어, 깨끗한 사진에도 가우시안을 골라 영상이 뿌예진다.
+    NOISE_BLOCK px 블록마다 잰 값 중 가장 평평한 쪽(하위 NOISE_FLAT_QUANTILE)을 쓰고,
+    0·255에 붙은 픽셀이 NOISE_SAT_MAX보다 많은 블록은 잡음이 잘려 낮게 나오므로 뺀다."""
+    kernel = np.array([[ 1, -2,  1],
+                       [-2,  4, -2],
+                       [ 1, -2,  1]], dtype=np.float32)
+    # 순수 잡음 σ에서 |응답|의 평균이 6σ·√(2/π)이므로 √(π/2)/6을 곱하면 σ. 가장자리 1px은 커널이 걸쳐 뺌
+    resp = np.abs(cv.filter2D(gray.astype(np.float32), -1, kernel))[1:-1, 1:-1] * (np.sqrt(0.5 * np.pi) / 6.0)
+    if resp.size == 0:
+        return 0.0
+
+    b = C.NOISE_BLOCK
+    h, w = (resp.shape[0] // b) * b, (resp.shape[1] // b) * b
+    if h == 0 or w == 0:                                # 블록 하나보다 작은 영상은 전체 평균
+        return float(resp.mean())
+
+    def block_mean(a):
+        return a[:h, :w].reshape(h // b, b, w // b, b).mean(axis=(1, 3))
+
+    inner = gray[1:-1, 1:-1]
+    est = block_mean(resp)
+    saturated = block_mean(((inner == 0) | (inner == 255)).astype(np.float32))
+    usable = est[saturated <= C.NOISE_SAT_MAX]
+    return float(np.quantile(usable if usable.size else est, C.NOISE_FLAT_QUANTILE))
+
+
 def measure_quality(gray):
     """전처리를 고르는 근거로 노면 영상의 밝기(mean)·대비(std)·흐림(lap_var)·잡티(noise)를 잰다."""
     mean_val = float(gray.mean())
     std_val = float(gray.std())
-    
+
     # 라플라시안 분산 (흐림도 측정)
     lap_var = float(cv.Laplacian(gray, cv.CV_64F).var())
-    
-    # Immerkær 잡음 추정 (영상 구조에 영향을 덜 받는 정밀 노이즈 측정법)
-    kernel = np.array([[ 1, -2,  1],
-                       [-2,  4, -2],
-                       [ 1, -2,  1]], dtype=np.float32)
-    filtered = cv.filter2D(gray.astype(np.float32), -1, kernel)
-    noise = float(np.mean(np.abs(filtered)) * np.sqrt(0.5 * np.pi) / 6.0)
+
+    # Immerkær 잡음 추정 (평평한 블록에서만 재서 결·경계를 잡음으로 세지 않음)
+    noise = _estimate_noise(gray)
 
     return {"mean": mean_val, "std": std_val, "lap_var": lap_var, "noise": noise}
 

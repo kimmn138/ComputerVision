@@ -112,6 +112,22 @@ def good_quality(**changes):
     return q
 
 
+def test_noise_ignores_texture():
+    """잡티 지표는 결·경계를 잡음으로 세지 않는다: 깨끗한 무늬 영상은 기준 아래, 같은 영상에 잡음을 더하면 기준 위."""
+    rng = np.random.default_rng(2)
+    gray = np.full((240, 640), 120, np.uint8)
+    # 왼쪽 절반: 대비가 큰 결(나뭇잎·알갱이 흉내), 오른쪽 절반: 평평한 노면 + 경계선
+    gray[:, :320] = rng.integers(40, 220, (240, 320), dtype=np.uint8)
+    cv.line(gray, (330, 20), (630, 220), 30, 3)
+    clean = analyze.measure_quality(gray)["noise"]
+    assert clean < C.NOISE_SIGMA_MAX, f"깨끗한 무늬 영상의 잡티 {clean:.2f}가 기준 {C.NOISE_SIGMA_MAX} 이상"
+    noisy_img = (gray.astype(np.float32) + rng.normal(0, 2 * C.NOISE_SIGMA_MAX, gray.shape)).clip(0, 255).astype(np.uint8)
+    noisy = analyze.measure_quality(noisy_img)["noise"]
+    assert noisy > C.NOISE_SIGMA_MAX, f"σ {2 * C.NOISE_SIGMA_MAX} 잡음을 더했는데 잡티 {noisy:.2f}가 기준 이하"
+    # 블록보다 작은 영상도 오류 없이 잰다
+    assert np.isfinite(analyze.measure_quality(gray[:5, :5])["noise"])
+
+
 def test_choose_steps():
     """진단 결과에 따른 전처리 단계 선택 테스트 (기준값은 config A 구역에서 읽음)"""
     # 1. 정상 (아무 처리 필요 없음)
