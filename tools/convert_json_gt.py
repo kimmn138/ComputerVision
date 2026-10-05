@@ -1,5 +1,6 @@
 """(파트 B) 제공된 JSON annotation을 프로젝트 GT CSV 형식으로 변환한다.
-사용법: 맨 위 폴더에서  python tools/convert_json_gt.py"""
+사용법: 맨 위 폴더에서  python tools/convert_json_gt.py
+읽는 폴더(훈련 사진·JSON)와 쓰는 폴더(정답 CSV)는 config B 구역의 TRAIN_IMAGE_DIR·TRAIN_ANN_DIR·TRAIN_GT_DIR."""
 
 import csv
 import json
@@ -15,14 +16,10 @@ from src import config as C  # noqa: E402
 # ---------------------------------------------------------
 # 교수님 제공 데이터 위치
 #
-# JSON과 JPG가 같은 폴더에 있으면 둘 다 같은 경로로 두면 된다.
-# 필요하면 실제 폴더 구조에 맞게 이 두 줄만 바꾼다.
+# config B 구역의 TRAIN_IMAGE_DIR(사진)·TRAIN_ANN_DIR(JSON)·TRAIN_GT_DIR(정답 CSV)에서 바꾼다.
+# JSON과 JPG가 같은 폴더에 있으면 TRAIN_IMAGE_DIR·TRAIN_ANN_DIR을 같은 경로로 두면 된다.
+# evaluate_train도 같은 값을 읽으므로 두 도구의 경로가 어긋나지 않는다.
 # ---------------------------------------------------------
-
-IMAGE_DIR = Path("data/train/img")
-JSON_DIR = Path("data/train/ann")
-
-GT_DIR = Path("gt/train")
 
 
 def class_to_kind(class_title):
@@ -42,7 +39,7 @@ def find_image(json_path):
     """JSON 파일명에서 .json만 제거해 대응 JPG를 찾는다."""
     image_name = json_path.name.removesuffix(".json")
 
-    image_path = IMAGE_DIR / image_name
+    image_path = Path(C.TRAIN_IMAGE_DIR) / image_name
 
     if image_path.exists():
         return image_path
@@ -204,7 +201,9 @@ def convert_json(json_path):
 
 def save_csv(json_path, rows):
     """변환된 GT를 evaluate.load_gt와 호환되는 CSV로 저장한다."""
-    GT_DIR.mkdir(
+    gt_dir = Path(C.TRAIN_GT_DIR)
+
+    gt_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -212,7 +211,7 @@ def save_csv(json_path, rows):
     image_name = json_path.name.removesuffix(".json")
     image_stem = Path(image_name).stem
 
-    csv_path = GT_DIR / f"{image_stem}.csv"
+    csv_path = gt_dir / f"{image_stem}.csv"
 
     with csv_path.open(
         "w",
@@ -237,20 +236,24 @@ def save_csv(json_path, rows):
 
 def main():
     """JSON 전체를 찾아 GT CSV로 일괄 변환한다."""
+    json_dir = Path(C.TRAIN_ANN_DIR)
+
     json_paths = sorted(
-        JSON_DIR.glob("*.json")
+        json_dir.glob("*.json")
     )
 
     if not json_paths:
         raise RuntimeError(
-            f"JSON 파일이 없습니다: {JSON_DIR}"
+            f"JSON 파일이 없습니다: {json_dir}\n"
+            "훈련 데이터를 이 폴더에 두거나, 다른 곳에 있으면 "
+            "src/config.py B 구역의 TRAIN_ANN_DIR(JSON)·TRAIN_IMAGE_DIR(사진)을 그 경로로 바꾸세요."
         )
 
     print("=" * 70)
     print("JSON -> GT CSV 변환")
-    print("JSON:", JSON_DIR)
-    print("IMAGE:", IMAGE_DIR)
-    print("GT:", GT_DIR)
+    print("JSON:", json_dir)
+    print("IMAGE:", C.TRAIN_IMAGE_DIR)
+    print("GT:", C.TRAIN_GT_DIR)
     print("TARGET_WIDTH:", C.TARGET_WIDTH)
     print("=" * 70)
 

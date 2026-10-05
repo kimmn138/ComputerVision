@@ -1,5 +1,6 @@
 """(파트 B) 교수 제공 훈련 데이터 전체에서 검출 파라미터 후보를 정량 평가한다.
-사용법: 맨 위 폴더에서  python tools/evaluate_train.py"""
+사용법: 맨 위 폴더에서  python tools/convert_json_gt.py (정답 CSV를 먼저 만듦) → python tools/evaluate_train.py
+훈련 사진과 정답 CSV 폴더는 config B 구역의 TRAIN_IMAGE_DIR·TRAIN_GT_DIR."""
 
 import csv
 import sys
@@ -18,8 +19,6 @@ from src.evaluate import (  # noqa: E402
 )
 
 
-IMAGE_DIR = Path("data/train/img")
-GT_DIR = Path("gt/train")
 RESULT_DIR = Path("results/tuning")
 
 DETAIL_PATH = RESULT_DIR / "train_detail.csv"
@@ -220,7 +219,7 @@ def evaluate_one(image_path):
     cracks, _ = detect_cracks(gray)
     potholes, _ = detect_potholes(gray)
 
-    gt_path = GT_DIR / f"{image_path.stem}.csv"
+    gt_path = Path(C.TRAIN_GT_DIR) / f"{image_path.stem}.csv"
     gt = load_gt(gt_path)
 
     if gt is None:
@@ -357,19 +356,32 @@ def main():
         exist_ok=True,
     )
 
+    image_dir = Path(C.TRAIN_IMAGE_DIR)
+    gt_dir = Path(C.TRAIN_GT_DIR)
+
     image_paths = sorted(
-        IMAGE_DIR.glob("*.jpg")
+        image_dir.glob("*.jpg")
     )
 
     if not image_paths:
         raise RuntimeError(
-            f"훈련 이미지가 없습니다: {IMAGE_DIR}"
+            f"훈련 이미지가 없습니다: {image_dir}\n"
+            "훈련 사진을 이 폴더에 두거나, 다른 곳에 있으면 "
+            "src/config.py B 구역의 TRAIN_IMAGE_DIR을 그 경로로 바꾸세요."
+        )
+
+    # 정답 CSV가 하나도 없으면 사진마다 [GT 없음]만 찍히므로 먼저 멈춘다
+    if not any(gt_dir.glob("*.csv")):
+        raise RuntimeError(
+            f"정답 CSV가 없습니다: {gt_dir}\n"
+            "먼저 python tools/convert_json_gt.py 로 JSON 정답을 CSV로 바꾸세요 "
+            "(JSON 폴더는 config B 구역의 TRAIN_ANN_DIR)."
         )
 
     print("=" * 72)
     print("훈련 데이터 전체 평가")
     print("images =", len(image_paths))
-    print("GT =", GT_DIR)
+    print("GT =", gt_dir)
     print("=" * 72)
 
     original_params = backup_params()

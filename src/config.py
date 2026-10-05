@@ -40,6 +40,9 @@ POT_MAX_AREA_RATIO = 0.2    # ROI 넓이 대비
 POT_MAX_ELONG = 3.0
 POT_MIN_SOLIDITY = 0.6
 IOU_THRESH = 0.3            # 정답 비교 기준
+TRAIN_IMAGE_DIR = "data/train/img"  # 경로(맨 위 폴더 기준), 교수 제공 훈련 사진 폴더 (convert_json_gt·evaluate_train)
+TRAIN_ANN_DIR = "data/train/ann"    # 경로, 훈련 사진의 JSON 정답(<사진 이름>.jpg.json) 폴더 (convert_json_gt)
+TRAIN_GT_DIR = "gt/train"           # 경로, JSON을 바꾼 정답 CSV 폴더 (convert_json_gt가 쓰고 evaluate_train이 읽음)
 
 # ===== C: 정량 측정 =====
 HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
