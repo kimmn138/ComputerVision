@@ -1,5 +1,8 @@
 """(Tools) 단일 이미지에 대한 전처리 파이프라인 결과를 시각적으로 확인합니다.
-사용법: 맨 위 폴더에서  python tools/show_preprocess.py <영상 경로>"""
+사용법: 맨 위 폴더에서  python tools/show_preprocess.py [영상 경로]
+영상 경로를 빼면(VS Code ▶ 버튼 등) data 아래 사진 목록을 번호로 보여 주고 고르게 합니다."""
+import argparse
+import glob
 import os
 import sys
 import cv2 as cv
@@ -7,6 +10,43 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src import io_utils, analyze, preprocess  # noqa: E402
+
+DATA_DIR = "data"
+EXCLUDE_DIRS = ("train",)     # data/train은 B의 훈련 사진 804장이라 목록에서 뺌
+
+
+def parse_args(argv=None):
+    """확인할 영상 경로를 명령행에서 읽는다. 빼면 None(목록에서 고름)."""
+    parser = argparse.ArgumentParser(description="사진 1장의 상태 지표·고른 전처리·전후 영상을 창에 띄웁니다")
+    parser.add_argument("image", nargs="?", help="영상 경로. 빼면 data 아래 사진 목록에서 번호로 고름")
+    return parser.parse_args(argv)
+
+
+def list_images(root=DATA_DIR):
+    """root 아래 사진(.jpg) 경로를 이름순으로 모은다. EXCLUDE_DIRS 폴더는 뺀다."""
+    paths = glob.glob(os.path.join(root, "**", "*.jpg"), recursive=True)
+    return sorted(p for p in paths if os.path.relpath(p, root).split(os.sep)[0] not in EXCLUDE_DIRS)
+
+
+def pick_image(root=DATA_DIR, input_fn=input):
+    """사진 목록을 번호로 보여 주고 입력받은 번호의 경로를 돌려준다. 빈칸·q·입력 끝이면 None."""
+    paths = list_images(root)
+    if not paths:
+        print(f"{root} 아래에 사진(.jpg)이 없습니다. 맨 위 폴더에서 실행했는지 확인하세요.")
+        return None
+    for number, path in enumerate(paths, start=1):
+        print(f"{number:3d}. {path.replace(os.sep, '/')}")
+    while True:
+        try:
+            answer = input_fn(f"번호를 입력하세요 (1~{len(paths)}, 빈칸이나 q는 종료): ").strip()
+        except EOFError:
+            return None
+        if answer in ("", "q"):
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(paths):
+            return paths[int(answer) - 1]
+        print("목록에 있는 번호를 입력하세요.")
+
 
 def show_preprocessing_result(image_path, roi_csv_path="data/roi.csv"):
     if not os.path.exists(image_path):
@@ -72,11 +112,15 @@ def show_preprocessing_result(image_path, roi_csv_path="data/roi.csv"):
     cv.waitKey(0)
     cv.destroyAllWindows()
 
-if __name__ == "__main__":
-    # 실행 시 인자로 이미지 경로를 넘겨받음 (예: python tools/show_preprocess.py data/own_01_crack_day.jpg)
-    if len(sys.argv) > 1:
-        target_image = sys.argv[1]
-    else:
-        target_image = "data/dataset_crack_normal.jpg"  # 기본 테스트 파일
-        
+def main(argv=None):
+    """명령행으로 받은(없으면 목록에서 고른) 사진의 전처리 결과를 띄운다."""
+    target_image = parse_args(argv).image or pick_image()
+    if target_image is None:
+        print("사진을 고르지 않아 종료합니다.")
+        return
     show_preprocessing_result(target_image)
+
+
+if __name__ == "__main__":
+    # 예: python tools/show_preprocess.py data/provided/Japan_000107.jpg   (경로를 빼면 목록에서 고름)
+    main()

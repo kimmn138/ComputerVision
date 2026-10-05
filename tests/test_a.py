@@ -244,6 +244,34 @@ def test_pipeline_integration():
     assert not np.array_equal(gray, processed)
 
 
+def test_show_preprocess_pick_image():
+    """show_preprocess를 인자 없이 실행하면 data 아래 사진(훈련 폴더 제외)을 번호로 고르고,
+    잘못된 번호는 다시 묻고, 빈칸·입력 끝이면 None. 경로를 인자로 주는 방식도 그대로."""
+    import io
+    import tempfile
+    from tools import show_preprocess as sp
+
+    with tempfile.TemporaryDirectory() as root:
+        for rel in ("a.jpg", "provided/b.jpg", "own/c.jpg", "train/img/d.jpg", "provided/note.txt"):
+            path = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").close()
+        listed = [os.path.relpath(p, root).replace(os.sep, "/") for p in sp.list_images(root)]
+        assert listed == ["a.jpg", "own/c.jpg", "provided/b.jpg"], listed
+
+        answers = iter(["x", "9", "3"])
+
+        def raise_eof(prompt):
+            raise EOFError
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert sp.pick_image(root, lambda prompt: next(answers)) == os.path.join(root, "provided", "b.jpg")
+            assert sp.pick_image(root, lambda prompt: "q") is None
+            assert sp.pick_image(root, raise_eof) is None
+    assert sp.parse_args([]).image is None
+    assert sp.parse_args(["x.jpg"]).image == "x.jpg"
+
+
 def main():
     """이 파일의 test_ 함수를 모두 돌려 실패를 모아 보여 준다. 실패가 있으면 종료 코드 1."""
     fails = []
