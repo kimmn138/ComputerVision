@@ -4,7 +4,9 @@ import numpy as np
 
 from src import config as C
 def describe_regions(mask, min_pixels=30):
-    """이진 마스크의 연결 영역마다 모양 지표를 계산해 후보 dict로 만든다."""
+    """이진 마스크의 연결 영역마다 모양 지표를 계산해 후보 dict로 만든다.
+    area = 픽셀 수, elong = 회전 사각형의 긴 변 / 짧은 변, fill = 윤곽 넓이 / 회전 사각형 넓이,
+    solidity = 윤곽 넓이 / 볼록 껍질 넓이."""
     num_labels, labels, stats, _ = cv.connectedComponentsWithStats(
         mask,
         connectivity=8,
@@ -74,8 +76,10 @@ def describe_regions(mask, min_pixels=30):
 
     return regions
 def detect_cracks(gray):
-    """가늘고 긴 어두운 선을 균열 후보로 찾는다. (후보 list, 캐니 에지 uint8 0/255)를 돌려준다."""
-    # TODO(B): 캐니 → 닫힘 → 모양으로 거르기, (후보, 캐니 에지) 반환
+    """가늘고 긴 어두운 선을 균열 후보로 찾는다. (후보 list, 캐니 에지 uint8 0/255)를 돌려준다.
+    캐니 → 닫힘 → 넓이 CRACK_MIN_AREA 이상 중에서 길쭉함 ≥ CRACK_MIN_ELONG(곧은 균열) 이거나
+    채움 ≤ CRACK_MAX_FILL(구불구불·갈래 균열)이면 균열 후보. 곧은 균열은 닫힘 뒤 띠가 되어 채움이 높으므로
+    두 조건을 함께 요구하면(그리고) 가장 흔한 곧은 균열을 놓친다."""
     edges=cv.Canny(
         gray, 
         C.CANNY_LOW,
@@ -101,8 +105,10 @@ def detect_cracks(gray):
         region
         for region in regions
         if region["area"] >= C.CRACK_MIN_AREA
-        and region["elong"] >= C.CRACK_MIN_ELONG
-        and region["fill"] <= C.CRACK_MAX_FILL
+        and (
+            region["elong"] >= C.CRACK_MIN_ELONG
+            or region["fill"] <= C.CRACK_MAX_FILL
+        )
     ]
 
     return candidates, edges

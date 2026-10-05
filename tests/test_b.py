@@ -45,7 +45,10 @@ def test_synthetic_crack():
     # 합성 선의 경계는 Canny에서 검출되어야 한다.
     assert np.count_nonzero(edges) > 0
 
-    # 후보가 있다면 계약 형식을 검사한다.
+    # 거의 곧은 선이므로 균열 후보가 있어야 한다.
+    assert len(cracks) >= 1
+
+    # 후보의 계약 형식을 검사한다.
     for region in cracks:
         assert isinstance(region["area"], int)
         assert isinstance(region["elong"], float)
@@ -56,6 +59,63 @@ def test_synthetic_crack():
         assert region["contour"].dtype == np.int32
 
 
+
+
+def asphalt(seed=0):
+    """잔무늬가 있는 아스팔트 흉내 영상 (평균 120)."""
+    rng = np.random.default_rng(seed)
+
+    noise = rng.normal(120, 12, (240, 640))
+
+    return cv.GaussianBlur(
+        noise.clip(0, 255).astype(np.uint8),
+        (0, 0),
+        1.2,
+    )
+
+
+def test_crack_shapes():
+    """곧은 균열(가로·세로)·구불구불한 균열·갈래 균열을 모두 균열 후보로 찾는지 확인한다."""
+    xs = np.arange(40, 600, 4)
+    wave = np.stack([xs, 120 + 25 * np.sin(xs / 30)], 1).astype(np.int32)
+
+    shapes = {
+        "곧은 가로": [np.array([[40, 100], [600, 140]], np.int32)],
+        "곧은 세로": [np.array([[300, 5], [330, 235]], np.int32)],
+        "구불구불": [wave],
+        "갈래": [
+            np.array([[100, 60], [300, 180], [520, 90]], np.int32),
+            np.array([[300, 180], [330, 235]], np.int32),
+        ],
+    }
+
+    missed = []
+
+    for name, lines in shapes.items():
+        gray = asphalt()
+        cv.polylines(gray, lines, False, 60, 2)
+
+        cracks, _ = detect_cracks(gray)
+
+        if not cracks:
+            missed.append(name)
+
+    assert not missed, f"균열을 놓침: {missed}"
+
+
+def test_pothole_not_crack():
+    """둥근 포트홀과 무늬만 있는 노면은 균열 후보가 되지 않는지 확인한다."""
+    for radius in (40, 90):
+        gray = asphalt()
+        cv.circle(gray, (320, 120), radius, 50, -1)
+
+        cracks, _ = detect_cracks(gray)
+
+        assert len(cracks) == 0, f"반지름 {radius} 포트홀이 균열 {len(cracks)}개로 잡힘"
+
+    cracks, _ = detect_cracks(asphalt())
+
+    assert len(cracks) == 0
 
 
 def test_describe_crack_region():
