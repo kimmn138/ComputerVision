@@ -54,6 +54,22 @@ TRAIN_GT_DIR = "gt/train"           # 경로, JSON을 바꾼 정답 CSV 폴더 (
 DARK_RING_PX = 4            # px, 후보의 어둡기를 잴 주변 띠 두께. 어둡기 = 띠의 어두운 쪽 밝기 − 후보 안 평균
 DARK_RING_QUANTILE = 0.25   # 비율, 띠에서 어두운 쪽(하위 25%)과 비교. 평균을 쓰면 넓은 흰 차선의 가장자리가 걸러지지 않음
 CRACK_MIN_DARKNESS = -5     # 밝기 단계(0~255), 균열 후보의 어둡기 하한. 주변보다 밝은 선(흰 차선·횡단보도 점선)을 거름 (훈련 804장 crack_loose 끔: 후보 3300→723, IoU 정밀도 0.015→0.039, 우연을 뺀 IoU 재현율 0.022 유지)
+# 아래는 10/10 기반 작업(C)이 Plan.md 3.4·3.5 값으로 넣은 출발값. B가 WP2·WP3에서 확정하고 docs/part_B.md에 적는다
+DETECT_MODE = "legacy"      # 검출 방식: "legacy" = 1차 방식(Canny 균열 + DoG 포트홀), "dark" = 어두운 영역 한 번 추출 + 형태 분류. dark가 채택 규칙(Plan.md 3.10)을 넘으면 B가 "dark"로 바꿈
+DARK_BG_DOWNSCALE = 4       # 배, 배경을 잴 때 흑백 띠를 1/4로 줄여 중앙값을 빠르게 구함 (Plan.md 3.4 (2) 1·2단계)
+DARK_BG_KSIZE_SMALL = 11    # px(1/4 영상 기준), 밝은 표시 억제용 거친 배경의 중앙값 창. 원래 크기로 약 44px (1단계)
+DARK_BRIGHT_DELTA = 25      # 밝기 단계(0~255), 거친 배경보다 이만큼 밝은 픽셀(흰 차선·횡단보도)을 배경값으로 메움 (1단계)
+DARK_BG_FRAC = 0.5          # 비율, 작은 배경 창 = 띠 높이 × 0.5 (2단계)
+DARK_BG_FRAC_LARGE = 1.0    # 비율, 큰 배경 창 = 띠 높이 × 1.0. 두 창의 큰 값을 써서 큰 포트홀 가운데가 비지 않게 (2단계, 합성 반지름 90: 한 창 43% → 두 창 100%)
+DARK_SIGMA_MIN = 1.0        # 밝기 단계, 잡음 σ의 하한. σ = 0이면 문턱도 0이 되어 띠 전체가 한 영역이 됨 (3단계, Plan.md R1)
+DARK_SIGMA_IN_ROAD = True   # True면 road를 받았을 때 잡음 σ를 노면 안에서만 잼. E3에서 켬·끔을 비교해 B가 정함 (Plan.md 3.4 (1))
+DARK_K_HI = 4               # σ의 배수, 강 문턱 (4단계 이중 문턱)
+DARK_K_LO = 2               # σ의 배수, 약 문턱 (4단계)
+DARK_ABS_MIN = 8            # 밝기 단계, 강 문턱의 하한. σ가 작은 영상에서 잡음이 강 픽셀이 되지 않게 (4단계)
+DARK_CLOSE_KSIZE = 5        # px, 끊긴 조각을 잇는 닫힘 타원 커널 (5단계)
+DARK_MIN_AREA = 40          # 픽셀 수, 이보다 작은 영역(골재 무늬)은 버림 (5단계)
+CRACK_MIN_CIRC_INV = 4      # 비원형도 P²/(4πA), 이 값 이상이면 균열. 폭의 약 12.6배보다 긴 선 (Plan.md 3.5 (2) 출발값, 산점도를 보고 B가 확정)
+POT_MAX_CIRC_INV = 3.5      # 비원형도, 이 값 이하이고 solidity ≥ POT_MIN_SOLIDITY면 포트홀. 경계가 거친 원(c 약 3)도 들어가게 여유 (3.5 (2) 출발값)
 
 # ===== C: 정량 측정 =====
 HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
