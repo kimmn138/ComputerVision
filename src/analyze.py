@@ -37,7 +37,8 @@ def _estimate_noise(gray):
 
 
 def measure_quality(gray):
-    """전처리를 고르는 근거로 노면 영상의 밝기(mean)·대비(std)·흐림(lap_var)·잡티(noise)를 잰다."""
+    """전처리를 고르는 근거로 노면 영상의 밝기(mean)·대비(std)·흐림(lap_var)·잡티(noise)를 잰다.
+    blur_ratio(재흐림 비율, Plan.md 3.6)는 키 자리만 있다. TODO(A): WP4에서 계산하기 전까지 NaN이고, choose_steps는 아직 쓰지 않는다."""
     mean_val = float(gray.mean())
     std_val = float(gray.std())
 
@@ -47,7 +48,8 @@ def measure_quality(gray):
     # Immerkær 잡음 추정 (평평한 블록에서만 재서 결·경계를 잡음으로 세지 않음)
     noise = _estimate_noise(gray)
 
-    return {"mean": mean_val, "std": std_val, "lap_var": lap_var, "noise": noise}
+    return {"mean": mean_val, "std": std_val, "lap_var": lap_var, "noise": noise,
+            "blur_ratio": float("nan")}
 
 
 def choose_steps(q):

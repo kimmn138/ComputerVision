@@ -2,6 +2,7 @@
 사용법: 맨 위 폴더에서  python tests/check_contract.py
 통과하면 '약속 검사 통과', 실패하면 [담당 파트]와 이유를 모두 출력하고 종료 코드 1로 끝난다."""
 import glob
+import inspect
 import os
 import sys
 
@@ -12,10 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src import analyze, detect, features, io_utils, pipeline, preprocess, visualize  # noqa: E402
 from src import config as C  # noqa: E402
 
-QUALITY_KEYS = {"mean", "std", "lap_var", "noise"}
+QUALITY_KEYS = {"mean", "std", "lap_var", "noise"}          # 유한한 실수
 STEP_KEYS = {"denoise", "tone", "gamma", "sharpen"}
 TONES = (None, "gamma", "equalize", "clahe")
 REGION_KEYS = {"area", "elong", "fill", "solidity", "bbox", "contour"}
+NEW_REGION_KEYS = {"thickness", "dt_width", "circ_inv", "contrast", "score"}   # 10/10 약속 변경: 실수. contrast·score는 NaN 허용
 ROW_KEYS = {"edges", "harris", "n_crack", "area_crack", "n_pothole", "area_pothole",
             "roi_pixels", "t_pre_ms", "t_detect_ms"}
 MATCH_KEYS = {"kp1", "kp2", "good", "inliers", "inlier_ratio", "k1", "k2", "matches", "mask"}
@@ -50,11 +52,29 @@ def samples():
     return out
 
 
-def gray_of(bgr):
-    """검사용 흑백 노면: A의 함수를 쓰지 않고 직접 만든다 (A가 고장 나도 B·C 검사는 따로 돌게)."""
+def roi_of(bgr):
+    """검사용 컬러 노면 띠(아래 절반): A의 함수를 쓰지 않고 직접 만든다 (A가 고장 나도 B·C 검사는 따로 돌게)."""
     h, w = bgr.shape[:2]
     small = cv.resize(bgr, (640, round(h * 640 / w)), interpolation=cv.INTER_AREA)
-    return cv.cvtColor(small[small.shape[0] // 2:], cv.COLOR_BGR2GRAY)
+    return small[small.shape[0] // 2:].copy()
+
+
+def gray_of(bgr):
+    """검사용 흑백 노면: roi_of와 같은 띠를 흑백으로."""
+    return cv.cvtColor(roi_of(bgr), cv.COLOR_BGR2GRAY)
+
+
+def same_result(a, b):
+    """detect_* 결과 두 개가 같은지: 후보마다 (bbox, 넓이)와 마스크가 같으면 같다."""
+    return ([(r["bbox"], r["area"]) for r in a[0]] == [(r["bbox"], r["area"]) for r in b[0]]
+            and np.array_equal(a[1], b[1]))
+
+
+def center_on_road(regions, road):
+    """후보 bbox의 중심 픽셀이 모두 노면(255) 안인지 (pipeline.keep_on_road의 'center' 규칙과 같은 계산)."""
+    h, w = road.shape
+    return all(road[min(int(y + bh / 2), h - 1), min(int(x + bw / 2), w - 1)] > 0
+               for x, y, bw, bh in (r["bbox"] for r in regions))
 
 
 def check_a_names():
@@ -103,6 +123,20 @@ def check_a_tone(gray):
                        "감마를 계산하는 식과 적용하는 식의 방향을 맞출 것")
 
 
+def check_a_road(bgr):
+    """road_mask가 약속대로인지 본다(10/10 약속 변경): 컬러 노면 띠 → 같은 크기 uint8 0/255, 입력을 바꾸지 않음,
+    빈 영상에서도 오류 없음, 같은 입력이면 같은 출력. 지금 임시 버전(전부 255)도, A가 구현한 v1·v2도 이 검사를 통과해야 한다."""
+    roi = roi_of(bgr)
+    before = roi.copy()
+    for img, what in ((roi, "노면 띠"), (np.zeros_like(roi), "빈 영상")):
+        mask = io_utils.road_mask(img)
+        check("A", is_gray(mask) and mask.shape == img.shape[:2] and set(np.unique(mask).tolist()) <= {0, 255},
+              f"road_mask: {what}에서 같은 크기의 uint8 0/255 (H, W)를 돌려주지 않음")
+    check("A", np.array_equal(roi, before), "road_mask가 입력 배열을 직접 바꿈")
+    check("A", np.array_equal(io_utils.road_mask(roi), io_utils.road_mask(roi)),
+          "road_mask: 같은 입력인데 결과가 달라짐 (무작위·전역 상태 확인)")
+
+
 def check_a(name, bgr):
     files = sorted(glob.glob("data/provided/*.jpg"))
     if files:
@@ -124,6 +158,8 @@ def check_a(name, bgr):
     check("A", isinstance(q, dict) and QUALITY_KEYS <= q.keys()
           and all(np.isfinite(float(q[k])) for k in QUALITY_KEYS),
           "measure_quality: mean·std·lap_var·noise 숫자가 다 있지 않음")
+    check("A", isinstance(q.get("blur_ratio"), float),
+          "measure_quality: blur_ratio 키(실수, 구현 전에는 NaN)가 없음 (약속 변경 10/10)")
     s = analyze.choose_steps(q)
     check("A", isinstance(s, dict) and STEP_KEYS <= s.keys()
           and isinstance(s["denoise"], (bool, np.bool_)) and isinstance(s["sharpen"], (bool, np.bool_))
@@ -141,6 +177,57 @@ def check_a(name, bgr):
     check("A", np.array_equal(gray, before), "analyze/preprocess가 입력 배열을 직접 바꿈")
     check_a_names()
     check_a_tone(gray)
+    check_a_road(bgr)
+
+
+def detect_form_ok(fn, res, shape, what):
+    """detect_* 결과 하나가 약속 형식인지 보고, 어긋나면 [B]로 남긴 뒤 False를 돌려준다.
+    후보 dict에는 10/10에 더한 키(thickness·dt_width·circ_inv는 유한한 실수, contrast·score는 실수이고 NaN 허용)도 있어야 한다."""
+    if not (isinstance(res, tuple) and len(res) == 2):
+        check("B", False, f"{fn.__name__}: (후보 list, {what}) 두 개를 돌려주지 않음")
+        return False
+    regions, mask = res
+    check("B", is_gray(mask) and mask.shape == shape and set(np.unique(mask)) <= {0, 255},
+          f"{fn.__name__}: {what}가 입력과 같은 크기의 uint8 0/255 영상이 아님")
+    check("B", isinstance(regions, list), f"{fn.__name__}: 후보가 list가 아님")
+    hh, ww = shape
+    for r in regions:
+        ok = isinstance(r, dict) and REGION_KEYS <= r.keys()
+        if ok:
+            x, y, w, h = r["bbox"]
+            c = r["contour"]
+            ok = (is_int(r["area"]) and r["area"] > 0 and min(x, y) >= 0
+                  and x + w <= ww and y + h <= hh and isinstance(c, np.ndarray)
+                  and c.ndim == 3 and c.shape[1:] == (1, 2))
+        if not ok:
+            check("B", False, f"{fn.__name__}: 후보 형식 오류 (키 {sorted(REGION_KEYS)}, "
+                              "area>0 정수, bbox가 노면 영상 안, contour (N,1,2))")
+            return False
+        ok = (NEW_REGION_KEYS <= r.keys() and all(isinstance(r[k], float) for k in NEW_REGION_KEYS)
+              and all(np.isfinite(r[k]) for k in ("thickness", "dt_width", "circ_inv")))
+        if not ok:
+            check("B", False, f"{fn.__name__}: 후보에 새 키 {sorted(NEW_REGION_KEYS)}가 없거나 실수가 아님 "
+                              "(thickness·dt_width·circ_inv는 유한한 값, contrast·score는 NaN 허용, 약속 변경 10/10)")
+            return False
+    return True
+
+
+def check_b_road(gray):
+    """detect_*(gray, road=None)인지 본다(10/10 약속 변경): road 인자의 기본값이 None, road=None이면 인자 없이 부른 것과 같음,
+    road를 줘도 약속 형식, road 배열을 바꾸지 않음, 같은 입력이면 같은 출력."""
+    half = np.zeros_like(gray)
+    half[:, :gray.shape[1] // 2] = 255
+    before = half.copy()
+    for fn, what in ((detect.detect_cracks, "에지"), (detect.detect_potholes, "마스크")):
+        param = inspect.signature(fn).parameters.get("road")
+        check("B", param is not None and param.default is None, f"{fn.__name__}: road=None 인자가 없음 (약속 변경 10/10)")
+        if param is None:
+            continue
+        base = fn(gray)
+        check("B", same_result(base, fn(gray, None)), f"{fn.__name__}: road=None 결과가 인자 없이 부른 결과와 다름")
+        check("B", same_result(base, fn(gray)), f"{fn.__name__}: 같은 입력인데 결과가 달라짐 (무작위·전역 상태 확인)")
+        detect_form_ok(fn, fn(gray, half), gray.shape, what)
+    check("B", np.array_equal(half, before), "detect가 road 배열을 직접 바꿈")
 
 
 def check_b(name, bgr):
@@ -149,27 +236,9 @@ def check_b(name, bgr):
     blank = np.zeros_like(gray)
     for fn, what in ((detect.detect_cracks, "에지"), (detect.detect_potholes, "마스크")):
         for img in (gray, blank):
-            res = fn(img)
-            if not (isinstance(res, tuple) and len(res) == 2):
-                check("B", False, f"{fn.__name__}: (후보 list, {what}) 두 개를 돌려주지 않음")
+            if not detect_form_ok(fn, fn(img), img.shape, what):
                 break
-            regions, mask = res
-            check("B", is_gray(mask) and mask.shape == img.shape and set(np.unique(mask)) <= {0, 255},
-                  f"{fn.__name__}: {what}가 입력과 같은 크기의 uint8 0/255 영상이 아님")
-            check("B", isinstance(regions, list), f"{fn.__name__}: 후보가 list가 아님")
-            hh, ww = img.shape
-            for r in regions:
-                ok = isinstance(r, dict) and REGION_KEYS <= r.keys()
-                if ok:
-                    x, y, w, h = r["bbox"]
-                    c = r["contour"]
-                    ok = (is_int(r["area"]) and r["area"] > 0 and min(x, y) >= 0
-                          and x + w <= ww and y + h <= hh and isinstance(c, np.ndarray)
-                          and c.ndim == 3 and c.shape[1:] == (1, 2))
-                if not ok:
-                    check("B", False, f"{fn.__name__}: 후보 형식 오류 (키 {sorted(REGION_KEYS)}, "
-                                      "area>0 정수, bbox가 노면 영상 안, contour (N,1,2))")
-                    break
+    check_b_road(gray)
     check("B", np.array_equal(gray, before), "detect가 입력 배열을 직접 바꿈")
     try:
         from src import evaluate
@@ -204,11 +273,30 @@ def check_c(name, bgr):
         if not use:
             check("C", out["steps"] == analyze.NO_STEPS and np.array_equal(out["proc"], out["gray"]),
                   "run_pipeline: 전처리 끔인데 steps가 NO_STEPS가 아니거나 영상이 바뀜")
+        road, t_road = out.get("road"), out.get("t_road_ms")
+        check("C", is_gray(road) and road.shape == out["gray"].shape and set(np.unique(road).tolist()) <= {0, 255},
+              "run_pipeline: road가 노면 띠와 같은 크기의 uint8 0/255가 아님 (약속 변경 10/10)")
+        check("C", isinstance(t_road, (int, float)) and not isinstance(t_road, bool) and t_road >= 0,
+              "run_pipeline: t_road_ms가 0 이상의 숫자가 아님 (약속 변경 10/10)")
         drawn = visualize.draw_candidates(out["small"], out["cracks"], out["potholes"], out["y0"])
         check("C", drawn.shape == out["small"].shape and drawn is not out["small"],
               "draw_candidates: 같은 크기의 새 영상을 돌려주지 않음")
-        rows.append({k: v for k, v in out["row"].items() if not k.startswith("t_")})
-    check("C", rows[1] == rows[2], "run_pipeline: 같은 입력인데 결과가 달라짐 (무작위·전역 상태 확인)")
+        small = out["small"].copy()
+        painted = visualize.draw_road(out["small"], road, out["y0"])
+        check("C", isinstance(painted, np.ndarray) and painted.shape == small.shape and painted is not out["small"]
+              and np.array_equal(out["small"], small), "draw_road: 같은 크기의 새 영상을 돌려주지 않거나 받은 영상을 바꿈")
+        rows.append(({k: v for k, v in out["row"].items() if not k.startswith("t_")}, road.tobytes(),
+                     [r["bbox"] for r in out["cracks"]], [r["bbox"] for r in out["potholes"]]))
+    check("C", rows[1] == rows[2], "run_pipeline: 같은 입력인데 결과(row·road·후보)가 달라짐 (무작위·전역 상태 확인)")
+    use_mask = C.USE_ROAD_MASK
+    C.USE_ROAD_MASK = True                              # 노면 마스크를 켠 경로도 형식대로 도는지 (켜 둔 값은 꼭 되돌림)
+    try:
+        on = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    finally:
+        C.USE_ROAD_MASK = use_mask
+    check("C", center_on_road(on["cracks"] + on["potholes"], on["road"]) and on["row"]["n_crack"] == len(on["cracks"])
+          and on["row"]["n_pothole"] == len(on["potholes"]),
+          "run_pipeline: USE_ROAD_MASK를 켰는데 bbox 중심이 노면 밖인 후보가 남거나 row 개수가 후보 수와 다름")
 
 
 def main():

@@ -2,12 +2,15 @@
 run_experiment의 좌표 변환·시간 중앙값·요약 계산, run_matching의 쌍 묶기·inlier 그림·결과 저장, demo의 ROI 선택·화면 맞춤·제목 띠가 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
 import contextlib
+import functools
 import io
 import math
 import os
 import sys
 import tempfile
+import unittest
 import warnings
+from pathlib import Path
 
 import cv2 as cv
 import matplotlib.pyplot as plt
@@ -18,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import demo  # noqa: E402
 import run_experiment as rx  # noqa: E402
 import run_matching as rm  # noqa: E402
-from src import features, visualize  # noqa: E402
+from src import detect, evaluate, features, io_utils, pipeline, visualize  # noqa: E402
 from src import config as C  # noqa: E402
 
 FAILS = []
@@ -27,6 +30,28 @@ FAILS = []
 def check(ok, msg):
     if not ok:
         FAILS.append(msg)
+
+
+def todo(reason):
+    """아직 구현하지 않은 기능의 시험 표시: 기대값은 적어 두되 지금은 건너뛴다(unittest.SkipTest).
+    구현한 사람이 이 줄(@todo)을 지우면 시험이 돈다. 이 시험이 그 작업의 통과 기준이다(docs/tasks/C.md 4장)."""
+    def mark(fn):
+        @functools.wraps(fn)
+        def skipped(*args, **kwargs):
+            raise unittest.SkipTest(reason)
+        return skipped
+    return mark
+
+
+@contextlib.contextmanager
+def patched(obj, name, value):
+    """obj.name을 잠시 value(시험용 가짜 함수나 config 값)로 바꿨다가, 끝나면(실패해도) 되돌린다."""
+    old = getattr(obj, name)
+    setattr(obj, name, value)
+    try:
+        yield
+    finally:
+        setattr(obj, name, old)
 
 
 def square(size, value):
@@ -399,13 +424,206 @@ def test_match_main():
         check(figs == ["pair01_B_view_off.png", "pair01_B_view_on.png"], f"run_matching: 그림 이름이 틀림 ({figs})")
 
 
+def road_scene():
+    """파이프라인 시험용 480×640 컬러 영상: 아래 절반(노면 띠, y0 240)의 왼쪽에 균열 선, 오른쪽에 포트홀(어두운 원).
+    지금 검출기(legacy)로 균열 후보 1개(중심 x 약 160)와 포트홀 후보 1개(중심 x 약 480)가 나온다."""
+    rng = np.random.default_rng(3)
+    gray = cv.GaussianBlur(rng.normal(120, 12, (480, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.2)
+    cv.line(gray, (40, 300), (280, 330), 60, 2)
+    cv.circle(gray, (480, 360), 14, 50, -1)
+    return cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+
+
+def left_half(roi):
+    """노면 띠의 왼쪽 절반만 노면(255)인 시험용 가짜 road_mask."""
+    mask = np.zeros(roi.shape[:2], np.uint8)
+    mask[:, :roi.shape[1] // 2] = 255
+    return mask
+
+
+def spy(fn, seen):
+    """검출 함수를 감싸 pipeline이 넘긴 road를 seen에 적고 원래 함수를 그대로 부른다."""
+    def wrapped(gray, road=None):
+        seen.append(road)
+        return fn(gray, road)
+    return wrapped
+
+
+def summary(out):
+    """run_pipeline 결과를 비교하기 쉬운 값으로: row(시간 열 제외)와 균열·포트홀 후보 bbox."""
+    return ({k: v for k, v in out["row"].items() if not k.startswith("t_")},
+            [r["bbox"] for r in out["cracks"]], [r["bbox"] for r in out["potholes"]])
+
+
+def test_pipeline_road():
+    """run_pipeline 결과에 road(노면 띠와 같은 크기 uint8 0/255)와 t_road_ms(0 이상 실수)가 있고, 받은 영상은 그대로다."""
+    bgr = road_scene()
+    before = bgr.copy()
+    out = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    road = out["road"]
+    check(isinstance(road, np.ndarray) and road.dtype == np.uint8 and road.shape == out["gray"].shape
+          and set(np.unique(road).tolist()) <= {0, 255}, "run_pipeline: road가 노면 띠 크기의 uint8 0/255가 아님")
+    check(isinstance(out["t_road_ms"], float) and out["t_road_ms"] >= 0, f"run_pipeline: t_road_ms가 0 이상 실수가 아님 ({out['t_road_ms']})")
+    check(np.array_equal(bgr, before), "run_pipeline이 받은 영상을 바꿈")
+
+
+def test_road_mask_switch_off():
+    """USE_ROAD_MASK가 꺼져 있으면 노면 마스크가 무엇이든 결과가 같고, 검출 함수에 road를 넘기지 않는다(1차 결과 보존)."""
+    bgr, seen = road_scene(), []
+    with patched(C, "USE_ROAD_MASK", False):
+        base = summary(pipeline.run_pipeline(bgr, 0.5, 1.0, False))
+        with patched(io_utils, "road_mask", left_half), \
+                patched(detect, "detect_cracks", spy(detect.detect_cracks, seen)), \
+                patched(detect, "detect_potholes", spy(detect.detect_potholes, seen)):
+            half = summary(pipeline.run_pipeline(bgr, 0.5, 1.0, False))
+    check(base[1] and base[2], f"시험 영상에서 균열·포트홀 후보가 나오지 않음 ({base})")
+    check(half == base, f"USE_ROAD_MASK 끔인데 노면 마스크에 따라 결과가 바뀜 ({base} → {half})")
+    check(seen == [None, None], f"USE_ROAD_MASK 끔인데 검출 함수에 road를 넘김 ({[type(s).__name__ for s in seen]})")
+
+
+def test_road_mask_switch_on():
+    """USE_ROAD_MASK를 켜면 road를 검출 함수에 넘기고, bbox 중심이 노면 밖인 후보만 지운 뒤 row를 센다.
+    지금 임시 road_mask(전부 255)면 끈 것과 결과가 같다."""
+    bgr, seen = road_scene(), []
+    with patched(C, "USE_ROAD_MASK", False):
+        off = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    with patched(C, "USE_ROAD_MASK", True):
+        full = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+        with patched(io_utils, "road_mask", left_half), \
+                patched(detect, "detect_cracks", spy(detect.detect_cracks, seen)), \
+                patched(detect, "detect_potholes", spy(detect.detect_potholes, seen)):
+            half = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    check(summary(full) == summary(off), "노면 마스크가 전부 255인데 켬·끔 결과가 다름")
+    w = off["gray"].shape[1]
+    on_left = lambda regions: [r["bbox"] for r in regions if int(r["bbox"][0] + r["bbox"][2] / 2) < w // 2]  # noqa: E731
+    expect_c, expect_p = on_left(off["cracks"]), on_left(off["potholes"])
+    check(expect_c and not expect_p and off["potholes"], "시험 영상: 왼쪽 균열은 남고 오른쪽 포트홀은 지워지는 장면이 아님")
+    check(([r["bbox"] for r in half["cracks"]], [r["bbox"] for r in half["potholes"]]) == (expect_c, expect_p),
+          f"노면 밖 후보만 지우지 않음 (남은 균열 {[r['bbox'] for r in half['cracks']]}, 포트홀 {[r['bbox'] for r in half['potholes']]})")
+    row = half["row"]
+    check((row["n_crack"], row["area_crack"], row["n_pothole"], row["area_pothole"])
+          == (len(half["cracks"]), sum(r["area"] for r in half["cracks"]), len(half["potholes"]), sum(r["area"] for r in half["potholes"])),
+          f"row가 지운 뒤의 후보로 세어지지 않음 ({row})")
+    check(len(seen) == 2 and all(isinstance(s, np.ndarray) and np.array_equal(s, half["road"]) for s in seen),
+          "USE_ROAD_MASK 켬인데 검출 함수에 road를 넘기지 않음")
+
+
+def test_keep_on_road():
+    """keep_on_road('center'): bbox 중심 픽셀이 노면이면 남기고, 받은 list는 바꾸지 않으며, 모르는 규칙은 ValueError."""
+    road = np.zeros((100, 200), np.uint8)
+    road[:, :100] = 255
+    regions = [{"bbox": (10, 10, 20, 20)}, {"bbox": (150, 10, 20, 20)}, {"bbox": (90, 50, 18, 4)}, {"bbox": (195, 95, 5, 5)}]
+    kept = pipeline.keep_on_road(regions, road, "center")             # 중심 (20, 20)·(160, 20)·(99, 52)·(197, 97)
+    check([r["bbox"] for r in kept] == [(10, 10, 20, 20), (90, 50, 18, 4)], f"keep_on_road: 남은 후보가 틀림 ({kept})")
+    check(len(regions) == 4 and kept is not regions, "keep_on_road가 받은 list를 바꿈")
+    check(pipeline.keep_on_road([], road) == [], "keep_on_road: 후보가 없을 때 빈 list가 아님")
+    try:
+        pipeline.keep_on_road(regions, road, "overlap50")
+        check(False, "keep_on_road: 모르는 규칙인데 ValueError가 나지 않음")
+    except ValueError:
+        pass
+
+
+def test_draw_road_copy():
+    """draw_road는 같은 크기의 새 영상을 돌려주고 받은 영상은 바꾸지 않는다(약속 표). 칠하는 일은 WP5에서."""
+    bgr = np.full((300, 640, 3), 128, np.uint8)
+    road = np.zeros((200, 640), np.uint8)
+    road[:, :320] = 255
+    out = visualize.draw_road(bgr, road, 100)
+    check(isinstance(out, np.ndarray) and out.shape == bgr.shape and out is not bgr and (bgr == 128).all(),
+          "draw_road: 같은 크기의 새 영상을 돌려주지 않거나 받은 영상을 바꿈")
+
+
+@todo("C WP5: draw_road 구현 뒤 (Plan.md 3.7)")
+def test_draw_road_paint():
+    """노면(road 255)은 y0만큼 내린 자리에 초록이 섞이고, 노면 밖과 띠 위쪽은 그대로다."""
+    bgr = np.full((300, 640, 3), 128, np.uint8)
+    road = np.zeros((200, 640), np.uint8)
+    road[:, :320] = 255
+    out = visualize.draw_road(bgr, road, 100)
+    b, g, r = (int(v) for v in out[150, 100])                        # 노면 안 (띠 좌표 y 50 → 전체 좌표 y 150)
+    check(g > 128 and b <= 128 and r <= 128, f"draw_road: 노면이 초록으로 칠해지지 않음 ({b}, {g}, {r})")
+    check((out[150, 500] == 128).all() and (out[50, 100] == 128).all(), "draw_road: 노면 밖이나 띠 위쪽이 바뀜")
+
+
+@todo("C WP0: evaluate.image_verdict 추가 뒤 (Plan.md 3.2 (1)·(2), B 파일이라 커밋 규칙 따름)")
+def test_image_verdict():
+    """영상 단위 판정: 손상 영상은 같은 종류 후보의 중심이 정답 박스 안이면 맞힘(hit_same), 종류가 달라도 위치가 맞으면 hit_any.
+    두 종류가 모두 있으면 한 종류만 맞혀도 맞힘. 손상 없는 영상은 최종 후보가 0개여야 맞힘. 좌표는 640px 전체 영상 기준."""
+    gt = [(0, 0, 100, 100, "crack"), (200, 200, 50, 50, "pothole")]
+    v = evaluate.image_verdict({"crack": [(40, 40, 10, 10)], "pothole": []}, gt)
+    check(v == {"has_damage": True, "n_pred": 1, "hit_same": True, "hit_any": True, "correct": True}, f"image_verdict: 균열 맞힘 ({v})")
+    v = evaluate.image_verdict({"crack": [], "pothole": [(40, 40, 10, 10)]}, gt)       # 위치는 균열 정답 안, 종류만 틀림
+    check(v["hit_same"] is False and v["hit_any"] is True and v["correct"] is False, f"image_verdict: 종류만 틀린 경우 ({v})")
+    v = evaluate.image_verdict({"crack": [], "pothole": []}, [])
+    check(v["has_damage"] is False and v["n_pred"] == 0 and v["correct"] is True, f"image_verdict: 손상 없음·후보 없음 ({v})")
+    v = evaluate.image_verdict({"crack": [(1, 1, 2, 2)], "pothole": []}, [])
+    check(v["correct"] is False and v["n_pred"] == 1, f"image_verdict: 손상 없음·후보 1개 ({v})")
+
+
+@todo("C WP0: evaluate.summarize_verdicts 추가 뒤 (Plan.md 3.2 (2), B 파일이라 커밋 규칙 따름)")
+def test_summarize_verdicts():
+    """민감도(손상 영상 중 맞힘)·특이도(손상 없는 영상 중 맞힘)·정답률·균형 정확도·기준선('검출 없음' 정답률). 분모가 0이면 NaN."""
+    verdicts = [{"has_damage": True, "correct": True}, {"has_damage": True, "correct": False},
+                {"has_damage": False, "correct": True}, {"has_damage": False, "correct": False},
+                {"has_damage": False, "correct": True}]
+    s = evaluate.summarize_verdicts(verdicts)
+    check((s["n"], s["n_damage"], s["n_none"]) == (5, 2, 3), f"summarize_verdicts: 장수가 틀림 ({s})")
+    expect = {"sensitivity": 0.5, "specificity": 2 / 3, "accuracy": 0.6, "balanced": (0.5 + 2 / 3) / 2, "baseline_none": 0.6}
+    check(all(abs(s[k] - v) < 1e-9 for k, v in expect.items()), f"summarize_verdicts: 값이 틀림 ({s})")
+    s0 = evaluate.summarize_verdicts([{"has_damage": False, "correct": True}])
+    check(math.isnan(s0["sensitivity"]) and s0["specificity"] == 1.0, f"summarize_verdicts: 분모 0이 NaN이 아님 ({s0})")
+
+
+@todo("C WP0: tools/evaluate_train.py에 개발/시험 나누기(assign_split·DIAG35)를 넣은 뒤 (Plan.md 3.2 (3), 부록 B)")
+def test_dev_test_split():
+    """국가별 이름순 순번 % 5 == 4이면 시험, 진단 35장(DIAG35)은 개발에 고정. 804장이면 시험 152(손상 97·무손상 55)·개발 652.
+    무작위가 없어 누가 돌려도 같다. 훈련 사진 804장이 없으면 건너뛴다. (C가 10/10에 이 규칙으로 세어 확인한 값)"""
+    from tools import evaluate_train as et
+    names = sorted(p.name for p in Path(C.TRAIN_IMAGE_DIR).glob("*.jpg"))
+    if len(names) != 804:
+        raise unittest.SkipTest("훈련 사진 804장이 없음")
+    split = et.assign_split(names)
+    test = [n for n in names if split[n] == "test"]
+    damaged = sum(1 for n in test if evaluate.load_gt(Path(C.TRAIN_GT_DIR) / f"{Path(n).stem}.csv"))
+    check((len(test), damaged, len(names) - len(test)) == (152, 97, 652), f"나누기 결과가 틀림 (시험 {len(test)}, 손상 {damaged})")
+    check(len(et.DIAG35) == 35 and all(split[f"{n}.jpg"] == "dev" for n in et.DIAG35), "진단 35장이 시험셋에 들어감")
+    check(et.assign_split(names) == split, "같은 입력인데 나누기가 달라짐")
+
+
+@todo("C E6: tools/evaluate_train.py에 인위 저하(degrade)를 넣은 뒤 (Plan.md 3.2 (6))")
+def test_degrade():
+    """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 57), bright는 입력^0.5(128 → 181),
+    noise는 seed가 고정이라 두 번 해도 같다. 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다. 값은 config C 구역 DEGRADE_*."""
+    from tools import evaluate_train as et
+    a, _ = texture()
+    bgr = cv.cvtColor(a, cv.COLOR_GRAY2BGR)
+    before = bgr.copy()
+    out = {k: et.degrade(bgr, k) for k in ("none", "blur", "dark", "bright", "noise")}
+    check(all(o.shape == bgr.shape and o.dtype == np.uint8 for o in out.values()), "degrade: 크기·형식이 바뀜")
+    check(np.array_equal(out["none"], bgr) and np.array_equal(bgr, before), "degrade: none이 그대로가 아니거나 받은 영상을 바꿈")
+    lap = lambda img: cv.Laplacian(cv.cvtColor(img, cv.COLOR_BGR2GRAY), cv.CV_64F).var()  # noqa: E731
+    check(lap(out["blur"]) < lap(bgr) / 2, "degrade: blur가 흐려지지 않음")
+    flat = np.full((10, 10, 3), 128, np.uint8)
+    check(abs(int(et.degrade(flat, "dark")[0, 0, 0]) - 57) <= 1 and abs(int(et.degrade(flat, "bright")[0, 0, 0]) - 181) <= 1,
+          "degrade: 감마 방향이나 값이 틀림 (128 → dark 57, bright 181)")
+    check(np.array_equal(et.degrade(bgr, "noise"), out["noise"]) and not np.array_equal(out["noise"], bgr),
+          "degrade: noise가 seed 고정이 아니거나 잡음이 들어가지 않음")
+
+
 def main():
+    """시험 함수를 차례로 돌려 실패를 모아 보여 준다. @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
+    skips = []
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
                test_summary_tables, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
-               test_match_group, test_match_row_and_figure, test_match_main):
+               test_match_group, test_match_row_and_figure, test_match_main,
+               test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
+               test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split, test_degrade):
         try:
             fn()
+        except unittest.SkipTest as e:
+            skips.append(f"{fn.__name__}: {e}")
         except Exception as e:
             FAILS.append(f"{fn.__name__}: 실행 중 오류 {type(e).__name__}: {e}")
     if FAILS:
@@ -413,7 +631,9 @@ def main():
         for f in FAILS:
             print("  -", f)
         sys.exit(1)
-    print("C 시험 통과")
+    print("C 시험 통과" + (f" (건너뜀 {len(skips)}건: 구현 전 기능)" if skips else ""))
+    for s in skips:
+        print("  · 건너뜀", s)
 
 
 if __name__ == "__main__":
