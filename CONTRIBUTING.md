@@ -9,9 +9,10 @@
 |---|---|
 | A · 데이터·전처리 | src/io_utils.py, src/analyze.py, src/preprocess.py, data/roi.csv, data/shot_log.csv, tools/check_data.py, tools/show_preprocess.py, tools/show_road_mask.py, tools/shape_scatter.py, tests/test_a.py, docs/part_A.md, docs/ai_log_A.md |
 | B · 후보 검출·평가 | src/detect.py, src/evaluate.py, tools/tune_detect.py, tools/label_gt.py, tools/convert_json_gt.py, tools/evaluate_train.py, gt/, tests/test_b.py, docs/part_B.md, docs/ai_log_B.md |
-| C · 측정·실행·통합 | src/config.py(공통 구역과 파일 관리), src/features.py, src/visualize.py, src/pipeline.py, run_experiment.py, run_matching.py, demo.py, tests/check_contract.py, tests/test_c.py, README.md, CONTRIBUTING.md, CLAUDE.md, Plan.md, docs/tasks/, requirements.txt, .gitignore, .github/, docs/part_C.md, docs/ai_log_C.md |
+| C · 측정·실행·통합 | src/config.py(공통 구역과 파일 관리), src/features.py, src/visualize.py, src/pipeline.py, run_experiment.py, run_matching.py, demo.py, tests/check_contract.py, tests/test_c.py, README.md, CONTRIBUTING.md, CLAUDE.md, Plan.md, docs/plan_2nd.md(관리만), docs/tasks/, docs/review/, requirements.txt, .gitignore, .github/, docs/part_C.md, docs/ai_log_C.md |
 
 - src/config.py는 구역(공통·A·B·C)마다 주인이 있다. 자기 구역 안에서만 고치고, 새 값은 자기 구역 맨 아래에 추가한다.
+- docs/plan_2nd.md는 세 명이 합의한 2차 계획서 확정본이다. 파일은 C가 관리하고, 내용은 세 명이 합의한 뒤에만 고친다(config 공통 구역과 같음).
 - gt/의 정답 박스는 기준과 검수를 B가 맡고, 표시 작업은 세 명이 영상을 나눠 한다. 영상마다 파일이 따로라 충돌이 없다.
 - TODO(A)·TODO(B)·TODO(C)가 붙은 함수는 형식만 맞춘 임시 버전이다. 각 파트가 docs/tasks/의 자기 작업 지시서를 따라 자기 브랜치에서 구현한다.
 - 다른 파트의 파일은 주인이 동의했을 때만 고친다(약속 변경 묶음, 주인이 부탁한 수정, Plan.md에 C가 맡는다고 적힌 B 파일 작업). 커밋 규칙은 5장에 있다.
