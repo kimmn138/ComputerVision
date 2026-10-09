@@ -255,7 +255,7 @@ def test_blur_ratio_key():
     assert "blur_ratio" in q and isinstance(q["blur_ratio"], float), q
 
 
-@todo("A WP4 (Should): blur_ratio 계산 뒤 (Plan.md 3.6 1번)")
+@todo("A WP4 흐림 판정 (Must, v1 바로 뒤): blur_ratio 계산 뒤 (Plan.md 3.6 1번)")
 def test_blur_ratio_synthetic():
     """재흐림 비율 = Sobel 기울기 크기 평균 ÷ 가우시안(σ 1.5)을 건 뒤의 같은 값. 흐린 영상은 1에 가깝고 선명한 영상은 크다.
     비율이라 결의 세기(대비)와 상관없다. 인위 저하 E6의 blur(가우시안 σ 2)는 흐림으로 잡혀야 한다.
@@ -271,7 +271,7 @@ def test_blur_ratio_synthetic():
     assert isinstance(flat, float), "평평한 영상에서 blur_ratio가 float가 아님 (NaN은 허용)"
 
 
-@todo("A WP4 (Should): choose_steps가 blur_ratio를 쓰게 한 뒤 (Plan.md 3.6 1번)")
+@todo("A WP4 흐림 판정 (Must, v1 바로 뒤): choose_steps가 blur_ratio를 쓰게 한 뒤 (Plan.md 3.6 1번)")
 def test_choose_steps_blur_ratio():
     """lap_var < BLUR_VAR_MAX 또는 blur_ratio < BLUR_RATIO_MAX이면 샤프닝. blur_ratio가 NaN이거나 키가 없으면 지금처럼 lap_var만 본다."""
     assert analyze.choose_steps(good_quality(blur_ratio=C.BLUR_RATIO_MAX / 2))["sharpen"] is True
@@ -281,7 +281,7 @@ def test_choose_steps_blur_ratio():
     assert analyze.choose_steps(good_quality(lap_var=C.BLUR_VAR_MAX / 2, blur_ratio=C.BLUR_RATIO_MAX * 2))["sharpen"] is True
 
 
-@todo("A WP4 (Should): blur_ratio 계산 뒤 제공 13장 확인 (Plan.md 3.6 검증 2·3)")
+@todo("A WP4 흐림 판정 (Must, v1 바로 뒤): blur_ratio 계산 뒤 제공 13장 확인 (Plan.md 3.6 검증 2·3)")
 def test_blur_ratio_provided():
     """사람이 흐리다고 판정한 제공 3장만 blur_ratio < BLUR_RATIO_MAX이고, 나머지 10장은 흐림으로 잡히지 않는다(roi.csv 띠).
     사진이 없으면 건너뛴다. 같은 장소 5쌍(blur vs normal)은 시험이 아니라 E5의 상태 판정 검증으로 C가 보고한다."""
