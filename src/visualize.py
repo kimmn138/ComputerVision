@@ -28,6 +28,13 @@ def draw_candidates(bgr, cracks, potholes, y0):
     return out
 
 
+def draw_road(bgr, road, y0):
+    """노면 마스크를 640px 컬러 영상의 복사본에 반투명 초록으로 칠해, 노면으로 본 곳이 맞는지 눈으로 확인하게 한다(받은 영상은 바꾸지 않음).
+    road는 노면 띠 좌표 uint8 (H, W) 0/255라 y0만큼 내려 칠한다. 약속 함수 draw_candidates는 그대로 두고 따로 부른다(Plan.md 3.7).
+    TODO(C): WP5에서 구현한다. 지금은 형식만 맞춘 임시 버전으로, 칠하지 않은 복사본을 돌려준다."""
+    return bgr.copy()
+
+
 def save_comparison(path, title, panels):
     """전처리 끔(위 줄)·켬(아래 줄) 영상 6장을 2행 3열 한 그림으로 path에 저장한다(src/에서 파일을 저장하는 유일한 함수).
     panels는 (제목, 영상) 6개. 흑백은 0~255 고정 밝기로, 컬러는 BGR→RGB로 바꿔 그려 전·후를 같은 기준으로 비교한다.

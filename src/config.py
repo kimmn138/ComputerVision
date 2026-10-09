@@ -85,3 +85,10 @@ DEMO_SCREEN_FALLBACK = (1280, 720)  # px (가로, 세로), 시연 창: 화면 �
 DEMO_SCREEN_MARGIN = 0.9        # 비율, 시연 창이 화면의 90%까지만 쓰게. 작업 표시줄·창 제목 줄 몫
 DEMO_LABEL_HEIGHT = 40          # px, 시연 창 패널 위 제목 띠 높이. 영상 위에 글자를 덮어 쓰지 않게 띠를 따로 붙임
 DEMO_FONT_SIZE = 22             # px, 제목 글자 크기. 세로 사진이 463px까지 줄어도 '전처리 켬: 가우시안+감마 0.53'이 한 줄에 들어가게
+USE_ROAD_MASK = False           # 노면 마스크 켬·끔. True면 pipeline이 road를 검출 함수에 넘기고 노면 밖 후보를 지운 뒤 row를 셈. E1에서 채택되면 C가 True로 (Plan.md 3.3 (7))
+ROAD_KEEP_RULE = "center"       # 노면 안 후보를 고르는 규칙. "center" = bbox 중심 픽셀이 노면 안. 윤곽 50% 규칙과의 비교는 Should (3.3 (7))
+DEGRADE_BLUR_SIGMA = 2.0        # px, 인위 저하 blur: 640px 컬러에 ROI 자르기 전 가우시안 σ. 상태 판정이 샤프닝을 골라야 함 (Plan.md 3.2 (6), E6)
+DEGRADE_DARK_GAMMA = 2.2        # 인위 저하 dark: 결과 = 입력^2.2 (0~1 밝기, 어두워짐). 감마 < 1(밝게)을 골라야 함
+DEGRADE_BRIGHT_GAMMA = 0.5      # 인위 저하 bright: 결과 = 입력^0.5 (밝아짐, 과노출 흉내). 감마 > 1(어둡게)을 골라야 함
+DEGRADE_NOISE_SIGMA = 10.0      # 밝기 단계(0~255), 인위 저하 noise: 가우시안 잡음 σ. 가우시안(잡티 제거)을 골라야 함
+DEGRADE_SEED = 0                # 인위 저하 잡음의 seed. 같은 입력이면 같은 출력 (CONTRIBUTING 3장 5번)

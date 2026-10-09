@@ -12,5 +12,7 @@
 | 2026-10-04 | FONT_CANDIDATES → FONT_BY_PLATFORM, FONT_DEFAULT | Malgun Gothic, AppleGothic, NanumGothic | win32: Malgun Gothic, darwin: AppleGothic, 그 밖: DejaVu Sans | 팀 기준: sys.platform으로 글꼴을 하나로 정함(그 밖 OS는 한글이 □로 나옴) | 윈도: 30장 연속 저장, 글꼴 경고 0건 |
 | 2026-10-04 | DEMO_SCREEN_FALLBACK, DEMO_SCREEN_MARGIN | (없음) | (1280, 720), 0.9 | 시연 창이 화면보다 크면 잘리므로 화면의 90% 안에 끔·켬 두 장을 같은 비율로 줄여 넣음. 화면 크기를 못 읽으면 1280×720으로 가정 | 합성 세로 영상 640×1200, 화면 1707×960 → 창 878×864 |
 | 2026-10-04 | DEMO_LABEL_HEIGHT, DEMO_FONT_SIZE | (없음) | 40, 22 | 패널 위 제목 띠(영상을 가리지 않음). 가장 좁은 패널 463px에도 '전처리 켬: 가우시안+감마 0.53'이 한 줄에 들어감 | 합성 회색 패널 463px |
+| 2026-10-10 | USE_ROAD_MASK, ROAD_KEEP_RULE | (없음) | False, "center" | pipeline의 노면 마스크 켬·끔과 노면 안 후보 규칙(Plan.md 3.3 (7)). 끄면 road를 검출 함수에 넘기지 않고 후보도 지우지 않아 1차와 같음. E1에서 채택되면 True로 바꾸고 이 표에 적는다 | 39장(끔·켬, 5번 반복)·804장(끔·켬) 메모리 비교: row·후보·요약이 main과 같음. True로 켜도(임시 마스크 전부 255) 같음 |
+| 2026-10-10 | DEGRADE_BLUR_SIGMA, DEGRADE_DARK_GAMMA, DEGRADE_BRIGHT_GAMMA, DEGRADE_NOISE_SIGMA, DEGRADE_SEED | (없음) | 2.0, 2.2, 0.5, 10.0, 0 | 인위 저하 실험 E6 값(Plan.md 3.2 (6)). evaluate_train --degrade에서 쓸 값(C 작업) | 아직 쓰이지 않음. 참고 구현으로 128 → dark 57·bright 181 확인(test_c의 @todo 시험) |
 
 ## 알고리즘 설명과 설정 근거 (보고서·발표용)
