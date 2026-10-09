@@ -55,6 +55,17 @@ def crop_roi(img, top=C.ROI_TOP_DEFAULT, bottom=C.ROI_BOTTOM_DEFAULT):
     return img[y0:y1].copy(), y0
 
 
+def road_mask(bgr_roi):
+    """노면 띠(컬러)에서 노면인 픽셀만 255로 표시해, 노면 밖(건물·차·풀숲·보닛)에서 나온 후보를 지울 수 있게 한다.
+    입력: crop_roi가 돌려준 컬러 노면 띠 BGR uint8 (H, W, 3). 출력: 같은 크기 uint8 (H, W), 값은 0(노면 아님)·255(노면).
+    약속: 입력을 바꾸지 않는다. 빈 영상(모든 픽셀이 같은 값)에서도 오류 없이 같은 형식을 돌려준다. 같은 입력이면 같은 출력.
+    모든 영상에 같은 규칙을 쓰고 파일 이름으로 나누지 않는다. 숫자는 config A 구역의 ROAD_* 값을 쓴다.
+    v1 (Plan.md 3.3 (2), 참고 코드는 부록 C): 흐림(ROAD_BLUR_SIGMA) → Lab → 아래 가운데 씨앗(ROAD_SEED_BOX)과 색(ROAD_CHROMA_MAX)·
+    밝기(ROAD_L_K)가 비슷한 픽셀 → 열림(ROAD_OPEN_KSIZE) → 씨앗과 이어진 연결 요소 → 닫힘(ROAD_CLOSE_KSIZE) → 구멍 메우기.
+    TODO(A): 지금은 형식만 맞춘 임시 버전이라 띠 전체를 노면(전부 255)으로 돌려준다. 그래서 결과는 1차와 같다."""
+    return np.full(bgr_roi.shape[:2], 255, np.uint8)
+
+
 def load_roi_table(path):
     """사진마다 다른 노면 범위(top·bottom 비율)와 촬영 조건을 roi.csv에서 읽는다.
     utf-8-sig로 읽어 {파일명: {"top": float, "bottom": float, "condition": str}} 형태로 반환하며, 

@@ -1,9 +1,12 @@
 """(파트 A) 전처리 파이프라인(io_utils, analyze, preprocess) 통합 및 단위 테스트
 사용법: 맨 위 폴더에서  python tests/test_a.py   (pytest 없이 실행되고, pytest로 돌려도 됨)"""
 import contextlib
+import functools
+import glob
 import os
 import sys
 import traceback
+import unittest
 
 import numpy as np
 import cv2 as cv
@@ -11,6 +14,17 @@ import cv2 as cv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src import io_utils, analyze, preprocess  # noqa: E402
 from src import config as C  # noqa: E402
+
+
+def todo(reason):
+    """아직 구현하지 않은 기능의 시험 표시: 기대값은 적어 두되 지금은 건너뛴다(unittest.SkipTest라 pytest도 건너뜀).
+    구현한 사람이 이 줄(@todo)을 지우면 시험이 돈다. 이 시험이 그 작업의 통과 기준이다(docs/tasks/A.md 4장)."""
+    def mark(fn):
+        @functools.wraps(fn)
+        def skipped(*args, **kwargs):
+            raise unittest.SkipTest(reason)
+        return skipped
+    return mark
 
 # ==========================================
 # 1. io_utils.py 테스트
@@ -77,6 +91,71 @@ def test_parse_name():
         except ValueError:
             pass
     assert not accepted, f"규칙 위반인데 ValueError가 나지 않음: {accepted}"
+
+
+def road_band(seed=0, split_lane=False):
+    """노면 마스크 시험용 컬러 띠(240×640)와 영역별 위치. 회색 아스팔트 + 왼쪽 풀(초록) + 오른쪽 위 건물(주황빛)
+    + 노면 안 포트홀(어두운 원) + 흰 차선. split_lane이면 차선이 띠 아래에서 건물까지 이어져 노면을 둘로 가르고,
+    아니면 테두리에 닿지 않는 짧은 차선 조각이다. (컬러 띠, {영역 이름: bool 마스크})를 돌려준다."""
+    rng = np.random.default_rng(seed)
+    gray = cv.GaussianBlur(rng.normal(115, 10, (240, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.2)
+    bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+    grass = np.zeros((240, 640), bool)
+    grass[:, :120] = True
+    bgr[grass] = (np.array([45, 140, 70]) + rng.normal(0, 8, (grass.sum(), 3))).clip(0, 255).astype(np.uint8)
+    building = np.zeros((240, 640), bool)
+    building[:60, 420:] = True
+    bgr[building] = (np.array([90, 130, 190]) + rng.normal(0, 6, (building.sum(), 3))).clip(0, 255).astype(np.uint8)
+    pothole = np.zeros((240, 640), np.uint8)
+    cv.circle(pothole, (250, 170), 25, 255, -1)
+    pothole = pothole > 0
+    bgr[pothole] = 45
+    lane = np.zeros((240, 640), np.uint8)
+    if split_lane:
+        cv.line(lane, (520, 239), (480, 60), 255, 8)
+    else:
+        cv.line(lane, (500, 200), (480, 110), 255, 8)
+    lane = (lane > 0) & ~building
+    bgr[lane] = 230
+    road = ~grass & ~building & ~pothole & ~lane
+    right = road & (np.arange(640)[None, :] > 540)
+    return bgr, {"road": road, "grass": grass, "building": building, "pothole": pothole, "lane": lane, "right": right}
+
+
+def test_road_mask_format():
+    """road_mask는 같은 크기 uint8 0/255를 돌려주고, 입력을 바꾸지 않으며, 빈 영상에서도 오류가 없고, 같은 입력이면 같은 출력."""
+    bgr, _ = road_band()
+    before = bgr.copy()
+    for img in (bgr, np.zeros_like(bgr), np.full_like(bgr, 255)):
+        mask = io_utils.road_mask(img)
+        assert isinstance(mask, np.ndarray) and mask.dtype == np.uint8 and mask.shape == img.shape[:2], \
+            f"road_mask 형식이 (H, W) uint8이 아님: {getattr(mask, 'dtype', None)} {getattr(mask, 'shape', None)}"
+        assert set(np.unique(mask).tolist()) <= {0, 255}, f"road_mask 값이 0/255가 아님: {np.unique(mask)}"
+    assert np.array_equal(bgr, before), "road_mask가 입력 영상을 바꿈"
+    assert np.array_equal(io_utils.road_mask(bgr), io_utils.road_mask(bgr)), "같은 입력인데 road_mask 결과가 다름"
+
+
+@todo("A WP1: road_mask v1 구현 뒤 (Plan.md 3.3 (2), 부록 C)")
+def test_road_mask_v1_synthetic():
+    """v1: 씨앗(아래 가운데)과 색·밝기가 비슷하고 이어진 노면은 남기고 풀·건물은 뺀다.
+    노면 안의 포트홀과 테두리에 닿지 않는 짧은 차선 조각은 구멍 메우기·닫힘으로 마스크에 넣는다.
+    (C가 부록 C 코드로 메모리에서 확인: 노면 0.99, 포트홀 1.0, 차선 조각 1.0, 풀 0.0, 건물 0.001)"""
+    bgr, part = road_band()
+    road = io_utils.road_mask(bgr) == 255
+    ratio = {name: round(float(road[where].mean()), 3) for name, where in part.items()}
+    assert ratio["road"] >= 0.95 and ratio["pothole"] >= 0.95 and ratio["lane"] >= 0.95, ratio
+    assert ratio["grass"] <= 0.05 and ratio["building"] <= 0.05, ratio
+
+
+@todo("A WP1 v2 (Should): 차선이 노면을 가르는 영상 (Plan.md 3.3 (5) 차선)")
+def test_road_mask_v2_lane_split():
+    """v2: 흰 차선이 띠 아래에서 위까지 노면을 갈라도 차선 건너편 노면과 차선을 마스크에 넣는다.
+    (v1은 건너편을 통째로 뺀다. C가 부록 C 코드로 메모리에서 확인: 건너편 0.0, 차선 0.0)"""
+    bgr, part = road_band(split_lane=True)
+    road = io_utils.road_mask(bgr) == 255
+    ratio = {name: round(float(road[where].mean()), 3) for name, where in part.items()}
+    assert ratio["right"] >= 0.90 and ratio["lane"] >= 0.90, ratio
+    assert ratio["grass"] <= 0.05 and ratio["building"] <= 0.05, ratio
 
 # ==========================================
 # 2. analyze.py 테스트
@@ -168,6 +247,59 @@ def test_choose_steps_follows_config():
     assert s["denoise"] and s["sharpen"] and s["tone"] == "gamma", s
     with config_values(GAMMA_RANGE=(0.9, 1.1)):
         assert analyze.choose_steps(good_quality(mean=10.0))["gamma"] == 0.9
+
+
+def test_blur_ratio_key():
+    """quality에 blur_ratio 키가 있고 float다(약속 표). A가 WP4에서 채우기 전까지는 NaN이라 choose_steps 결과는 그대로다."""
+    q = analyze.measure_quality(np.full((50, 50), 100, np.uint8))
+    assert "blur_ratio" in q and isinstance(q["blur_ratio"], float), q
+
+
+@todo("A WP4 (Should): blur_ratio 계산 뒤 (Plan.md 3.6 1번)")
+def test_blur_ratio_synthetic():
+    """재흐림 비율 = Sobel 기울기 크기 평균 ÷ 가우시안(σ 1.5)을 건 뒤의 같은 값. 흐린 영상은 1에 가깝고 선명한 영상은 크다.
+    비율이라 결의 세기(대비)와 상관없다. 인위 저하 E6의 blur(가우시안 σ 2)는 흐림으로 잡혀야 한다.
+    (C가 메모리에서 이 식으로 확인: 선명 2.55, 대비 절반 2.54, σ 2 흐림 1.41)"""
+    rng = np.random.default_rng(0)
+    sharp = cv.GaussianBlur(rng.normal(120, 25, (240, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.0)
+    blurred = cv.GaussianBlur(sharp, (0, 0), 2.0)
+    weak = (sharp.astype(np.float32) * 0.5 + 60).astype(np.uint8)        # 같은 무늬, 대비만 절반
+    r_sharp, r_blur, r_weak = (analyze.measure_quality(g)["blur_ratio"] for g in (sharp, blurred, weak))
+    assert 1.0 <= r_blur < C.BLUR_RATIO_MAX <= r_sharp, (r_blur, C.BLUR_RATIO_MAX, r_sharp)
+    assert abs(r_weak - r_sharp) / r_sharp < 0.05, f"대비만 바꿨는데 blur_ratio가 5% 넘게 달라짐 ({r_sharp:.3f} → {r_weak:.3f})"
+    flat = analyze.measure_quality(np.full((50, 50), 100, np.uint8))["blur_ratio"]
+    assert isinstance(flat, float), "평평한 영상에서 blur_ratio가 float가 아님 (NaN은 허용)"
+
+
+@todo("A WP4 (Should): choose_steps가 blur_ratio를 쓰게 한 뒤 (Plan.md 3.6 1번)")
+def test_choose_steps_blur_ratio():
+    """lap_var < BLUR_VAR_MAX 또는 blur_ratio < BLUR_RATIO_MAX이면 샤프닝. blur_ratio가 NaN이거나 키가 없으면 지금처럼 lap_var만 본다."""
+    assert analyze.choose_steps(good_quality(blur_ratio=C.BLUR_RATIO_MAX / 2))["sharpen"] is True
+    assert analyze.choose_steps(good_quality(blur_ratio=C.BLUR_RATIO_MAX * 2))["sharpen"] is False
+    assert analyze.choose_steps(good_quality(blur_ratio=float("nan")))["sharpen"] is False
+    assert analyze.choose_steps(good_quality())["sharpen"] is False                     # 키가 없어도 오류 없음
+    assert analyze.choose_steps(good_quality(lap_var=C.BLUR_VAR_MAX / 2, blur_ratio=C.BLUR_RATIO_MAX * 2))["sharpen"] is True
+
+
+@todo("A WP4 (Should): blur_ratio 계산 뒤 제공 13장 확인 (Plan.md 3.6 검증 2·3)")
+def test_blur_ratio_provided():
+    """사람이 흐리다고 판정한 제공 3장만 blur_ratio < BLUR_RATIO_MAX이고, 나머지 10장은 흐림으로 잡히지 않는다(roi.csv 띠).
+    사진이 없으면 건너뛴다. 같은 장소 5쌍(blur vs normal)은 시험이 아니라 E5의 상태 판정 검증으로 C가 보고한다."""
+    blurry = {"China_MotorBike_002209.jpg", "Japan_000156.jpg", "United_States_004952.jpg"}
+    files = sorted(glob.glob("data/provided/*.jpg"))
+    if len(files) < 13:
+        raise unittest.SkipTest("data/provided 사진 13장이 없음")
+    table = io_utils.load_roi_table("data/roi.csv")
+    wrong = []
+    for path in files:
+        name = os.path.basename(path)
+        roi = table.get(name, {"top": C.ROI_TOP_DEFAULT, "bottom": C.ROI_BOTTOM_DEFAULT})
+        band, _ = io_utils.crop_roi(io_utils.resize_width(io_utils.load_image(path)), roi["top"], roi["bottom"])
+        ratio = analyze.measure_quality(cv.cvtColor(band, cv.COLOR_BGR2GRAY))["blur_ratio"]
+        if (ratio < C.BLUR_RATIO_MAX) != (name in blurry):
+            wrong.append(f"{name} {ratio:.2f}")
+    assert not wrong, f"사람 판정과 다른 영상(blur_ratio): {wrong}"
+
 
 def test_steps_to_text():
     """텍스트 변환 테스트"""
@@ -272,14 +404,30 @@ def test_show_preprocess_pick_image():
     assert sp.parse_args(["x.jpg"]).image == "x.jpg"
 
 
+def test_new_tools_args():
+    """A의 새 도구 뼈대(노면 마스크 확인 그림·형태 산점도)가 import되고, 인자 없이 기본값으로, 고른 값은 그대로 읽힌다."""
+    from tools import shape_scatter, show_road_mask
+
+    args = show_road_mask.parse_args([])
+    assert args.set == "dev39" and args.out == show_road_mask.OUT_DIR, args
+    assert show_road_mask.parse_args(["--set", "diag35"]).set == "diag35"
+    args = shape_scatter.parse_args([])
+    assert args.y == "both" and args.grid is False and args.limit is None and args.out == shape_scatter.OUT_DIR, args
+    args = shape_scatter.parse_args(["--y", "dt_width", "--grid", "--limit", "20"])
+    assert (args.y, args.grid, args.limit) == ("dt_width", True, 20), args
+
+
 def main():
-    """이 파일의 test_ 함수를 모두 돌려 실패를 모아 보여 준다. 실패가 있으면 종료 코드 1."""
-    fails = []
+    """이 파일의 test_ 함수를 모두 돌려 실패를 모아 보여 준다. 실패가 있으면 종료 코드 1.
+    @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
+    fails, skips = [], []
     for name, fn in list(globals().items()):
         if not (name.startswith("test_") and callable(fn)):
             continue
         try:
             fn()
+        except unittest.SkipTest as e:
+            skips.append(f"{name}: {e}")
         except Exception as e:
             line = traceback.extract_tb(e.__traceback__)[-1].line     # 메시지 없는 assert도 어느 줄인지 보이게
             fails.append(f"{name}: {type(e).__name__} {e} | {line}")
@@ -288,7 +436,9 @@ def main():
         for f in fails:
             print("  -", f)
         sys.exit(1)
-    print("A 시험 통과")
+    print("A 시험 통과" + (f" (건너뜀 {len(skips)}건: 구현 전 기능)" if skips else ""))
+    for s in skips:
+        print("  · 건너뜀", s)
 
 
 if __name__ == "__main__":
