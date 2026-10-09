@@ -518,7 +518,12 @@ def soft_tree_shadow(seed=2):
     return (gray * (1 - 0.4 * shade)).clip(0, 255).astype(np.uint8)
 
 
-EXPECTED_SHADOW_POTHOLES = None   # B가 첫 구현 때 그림자 영상(US_004830·US_005996·직접 촬영)과 아래 합성 결과를 보고 정해 적는다
+RECORDS = []   # 기대값 없이 결과만 남기는 시험(Plan.md 3.4 (4) '기록한다')의 기록. main이 마지막에 보여 준다
+
+
+def record(name, text):
+    """기대값을 두지 않는 시험의 결과를 남긴다. 시험은 통과로 두고, main이 끝에 '기록'으로 보여 준다."""
+    RECORDS.append(f"{name}: {text}")
 
 
 @todo("B WP2: extract_dark_regions 구현 뒤 (Plan.md 3.4 (2))")
@@ -575,10 +580,10 @@ def test_dark_stripes_no_pothole():
     assert not potholes, f"줄무늬 사이가 포트홀 {len(potholes)}개로 잡힘"
 
 
-@todo("B WP2 (Should): 밝은 표시 억제의 대안(기준 밝기를 띠·노면 중앙값으로) 뒤 (Plan.md 3.4 (2) 1단계, 3.11)")
+@todo("B WP2 (Should): 밝은 표시 억제의 대안(기준 밝기를 띠·노면 중앙값으로) 뒤. 실패하면 한계로 보고 (Plan.md 3.4 (2) 1단계, 3.11)")
 def test_dark_wide_stripes_no_pothole():
     """넓은 흰 줄무늬(폭 30px, 30px 간격)는 억제 창(약 44px)의 절반을 넘어 명세 그대로면 사이가 포트홀이 된다.
-    C 메모리 확인: 명세 그대로 9개 → 실패. 대안을 넣어도 안 되면 한계로 보고하고 이 시험은 건너뜀으로 둔다."""
+    C 메모리 확인: 명세 그대로 9개 → 실패. 대안을 넣어도 안 되면 한계로 보고하고 이 시험은 @todo로 둔다."""
     gray = asphalt(1)
     for x in range(20, 620, 60):
         cv.rectangle(gray, (x, 40), (x + 30, 200), 230, -1)
@@ -589,22 +594,26 @@ def test_dark_wide_stripes_no_pothole():
     assert not potholes, f"넓은 줄무늬 사이가 포트홀 {len(potholes)}개로 잡힘"
 
 
-@todo("B WP2: 그림자 결과를 보고 EXPECTED_SHADOW_POTHOLES를 정한 뒤 (Plan.md 3.4 (3), (4) 새 시험 3)")
+@todo("B WP2 (Should): dark 구현 뒤 결과 기록. 후보가 남으면 한계로 보고 (Plan.md 3.4 (3)·(4) 새 시험 3)")
 def test_dark_soft_shadow():
-    """넓고 흐린 그림자에서 후보가 남는지 기록한다. 기대값은 B가 정한다(위 EXPECTED_SHADOW_POTHOLES).
+    """넓고 흐린 그림자(지름 200px, 가운데 40% 어둡게)에서 후보가 남는지 기록한다. 기대값은 두지 않는다(Plan.md 3.4 (4)).
+    후보가 남으면 그림자 영상(US_004830·US_005996·직접 촬영)의 결과와 함께 한계로 보고한다.
     C 메모리 확인: 명세 그대로면 포트홀 후보 1개가 남음(c 2.0, solidity 0.94)."""
-    assert EXPECTED_SHADOW_POTHOLES is not None, "B: 그림자 결과를 보고 EXPECTED_SHADOW_POTHOLES를 정해 적는다"
+    gray = soft_tree_shadow()
 
     with config_values(DETECT_MODE="dark"):
-        potholes, _ = detect_potholes(soft_tree_shadow())
+        potholes, _ = detect_potholes(gray)
+        cracks, _ = detect_cracks(gray)
 
-    assert len(potholes) == EXPECTED_SHADOW_POTHOLES, len(potholes)
+    assert isinstance(potholes, list) and isinstance(cracks, list)
+    record("test_dark_soft_shadow", f"흐린 그림자 → 포트홀 후보 {len(potholes)}개, 균열 후보 {len(cracks)}개 (기대값 없음)")
 
 
-@todo("B WP2·WP3: dark 구현 뒤 (Plan.md 3.4 (4) 새 시험 4)")
+@todo("B WP2·WP3 (Should): 덩어리와 선을 나누는 단계를 넣은 뒤. 실패하면 한계로 보고 (Plan.md 3.4 (4) 새 시험 4)")
 def test_dark_crack_touching_pothole():
     """포트홀(반지름 35)에 균열이 붙어 있어도 둘 다 검출한다: 원 안에 포트홀 후보 1개(폭이 원을 크게 넘지 않음), 선 쪽에 균열 후보.
-    C 메모리 확인: 명세 그대로면 한 영역(c 16.1)으로 합쳐져 균열 1개만 나옴 → 덩어리와 선을 나누는 단계가 필요."""
+    C 메모리 확인: 명세 그대로면 한 영역(c 16.1)으로 합쳐져 균열 1개만 나옴 → 덩어리와 선을 나누는 단계가 필요.
+    넣어도 안 되면 한계로 보고하고 이 시험은 @todo로 둔다."""
     gray = asphalt(3)
     cv.circle(gray, (200, 120), 35, 50, -1)
     cv.line(gray, (235, 120), (600, 150), 60, 2)
@@ -687,6 +696,9 @@ def main():
 
     for s in skips:
         print("  · 건너뜀", s)
+
+    for r in RECORDS:
+        print("  · 기록", r)
 
 
 if __name__ == "__main__":
