@@ -191,7 +191,7 @@ Should: S1 `ROAD_KEEP_RULE` 50% 규칙(`pipeline.keep_on_road`에 규칙 추가.
 ```bash
 python tests/check_contract.py                      # 약속 검사
 python tests/test_c.py                              # C 시험 (A는 test_a, B는 test_b)
-python run_experiment.py --name <이름> [--only provided|own]   # 39장 끔·켬 → results/<이름>/
+python run_experiment.py --name <이름> [--only provided|own] [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3]   # 39장 끔·켬 → results/<이름>/
 python run_matching.py --name <이름>                # 쌍 사진 5쌍 매칭 → results/<이름>/matching.csv
 python demo.py [사진 경로 [roi_top roi_bottom]]     # 경로를 빼면 사진 목록에서 번호로 고름
 python tools/label_gt.py [사진 경로]                # 정답 박스 (c 균열, p 포트홀, Enter, q 저장)
@@ -200,7 +200,7 @@ python tools/convert_json_gt.py                     # data/train/ann JSON → gt
 python tools/check_data.py                          # 사진·CSV 이름 검사
 ```
 
-실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--mask`·`--roi`·`--detect`는 M3, `--degrade`는 M6에서 만든다:
+실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--roi`·`--mask`·`--detect`·`--roi-top`은 M3에서 만들었다(10/11). `--degrade`는 M6에서 만든다:
 
 ```bash
 python tools/evaluate_train.py --split all --name e0_all                      # E0 재현, 804장 (C)
@@ -229,6 +229,9 @@ python run_matching.py --name final
 ### 4.3 결과 폴더
 
 - `run_experiment`: `results/<이름>/metrics.csv`(영상마다 끔·켬 2행), `figures/<사진>.png`, `table_by_image.csv`·`table_by_source.csv`·`table_by_condition.csv`, `config_used.txt`.
+  - (10/11 M7) metrics.csv에 `edges_road`(노면 안 에지 수)·`t_road_ms`(반복 중앙값)가 row 9열 뒤에, 영상 단위 판정 `has_gt`·`has_damage`·`n_pred`·`hit_same`·`hit_any`·`correct`(evaluate.image_verdict, 중심 기준)가 정답 비교 열 뒤에 붙는다. 정답 파일이 없으면 판정 4칸(`has_damage`·`hit_same`·`hit_any`·`correct`)은 빈칸이고 `has_gt`·`n_pred`는 채운다.
+  - source·condition 표 앞쪽에 `n_damage`·`n_none`, 정답 있는 영상의 `sensitivity`·`specificity`·`accuracy`(끔·켬·차이)와 정답률 바로 옆에 `baseline_none`이 있다. SUMMARY_METRICS에 `edges_road`·`t_road_ms`가 더해져 세 표 모두 끔·켬·차이로 나온다.
+  - config_used.txt 맨 끝 두 줄: `# 실행 옵션: --roi …`, `# 실행 옵션으로 바꾼 config 값: …`(없으면 '없음').
 - `run_matching`: 같은 폴더에 `matching.csv`, `matches/<사진>_off.png`·`_on.png`, `config_used_matching.txt`.
 - `evaluate_train`: `results/<이름>/`에 `train_detail.csv`(영상별 개수·판정, split·source·height 열), `train_summary.csv`(끔·켬 요약: 종류·기준별 정밀도·재현율, 민감도·특이도·정답률·균형 정확도·기준선, 영상당 후보·오검출, 우연 대조군), `per_source.csv`(같은 요약을 국가별로), `config_used_train.txt`(config 값, 파라미터 세트, 실행 옵션으로 바꾼 값). 파일 이름이 run_experiment·run_matching과 겹치지 않는다.
 - 세 도구 모두 `--name`을 빼면 `results/latest`에 쓰고(매번 덮어씀), 1차 결과 폴더 이름(`base`·`tuning`·`diagnosis`)은 대소문자·하위 폴더까지 거부한다(`run_experiment.check_name`).
@@ -291,12 +294,14 @@ python run_matching.py --name final
 
 ### 5.3 run_experiment·pipeline (C 파일)
 
-- `metrics.csv`의 정답 열(`crack_tp` 등)은 IoU 0.3 일대일(`count_matches`)이다. 계획서의 주 기준(중심)이 아니다. 39장의 영상 단위 판정은 M7에서 `image_verdict`(중심)로 새 열을 만든다. `evaluate_train`은 이미 iou·ctr 두 기준을 낸다.
-- `write_config`가 `main` 맨 처음에 불린다. 실행 중 바꾸는 값(`--mask` 등)을 먼저 적용한 뒤 써야 config_used.txt가 맞다. 끝나면 `finally`로 되돌린다.
+- `metrics.csv`의 정답 열(`crack_tp` 등)은 IoU 0.3 일대일(`count_matches`)이다. 계획서의 주 기준(중심)이 아니다. (10/11 M7) 39장의 영상 단위 판정은 `image_verdict`(중심)로 만든 새 열(`has_damage`·`hit_same`·`hit_any`·`correct`)을 본다. `evaluate_train`은 iou·ctr 두 기준을 다 낸다.
+- (10/11 M3에서 고침) `main`은 실행 옵션을 config에 적용한 뒤 config_used.txt를 쓰고, 처리와 표 저장을 `try`에 넣어 `finally`에서 되돌린다(실패해도 되돌아옴). 옵션이 없으면 바꾸는 값이 없어 1차와 같은 조건이다.
 - 실행 중 config 바꾸기는 `C.이름`을 그때그때 읽는 곳에만 먹힌다. `io_utils.crop_roi(top=C.ROI_TOP_DEFAULT)`·`resize_width(width=C.TARGET_WIDTH)`·`run_matching.timed_match(repeat=C.TIME_REPEAT)`의 기본값은 import 때 굳는다. 지금 경로는 `get_roi`가 그때 값을 읽어 `run_pipeline`에 top을 넘기므로 괜찮다.
-- `--roi-top`은 roi.csv에 없는 사진에만 먹힌다. 39장의 E1b는 `--roi auto`와 같이 쓴다. 개발셋은 모두 roi.csv에 없어 그대로 먹힌다.
-- `metrics_frame`은 row dict의 모르는 키를 `quality_columns()`로 상태 지표 뒤에 붙이고, 그 열은 `table_by_image`의 머리 열에도 들어간다. M7의 새 열은 열 목록을 따로 두고 위치를 정한다. 정답이 없을 때 빈칸이 되도록 형(Int64·boolean)도 정한다.
-- `median_times`는 row의 두 시간 열만 중앙값으로 바꾼다. `t_road_ms`는 결과의 맨 위 키라 따로 처리해야 한다.
+- `--roi-top`은 roi.csv에 없는 사진에만 먹힌다. 39장은 모두 roi.csv에 있으므로 (10/11) run_experiment는 `--roi csv`에서 `--roi-top`을 주면 오류로 멈추고, E1b는 `--roi auto --roi-top 0.3`으로 돈다. 개발셋은 모두 roi.csv에 없어 evaluate_train에서는 그대로 먹힌다.
+- `--roi auto`는 roi.csv의 띠 범위만 무시하고 상태 태그(condition)는 roi.csv에서 그대로 가져온다(A가 제공 13장 태그를 넣어도 auto에서 잃지 않게).
+- `metrics_frame`은 row dict의 모르는 키를 `quality_columns()`로 상태 지표 뒤에 붙이고, 그 열은 `table_by_image`의 머리 열에도 들어간다. (10/11 M7) 새 열은 `EXTRA_COLUMNS`(row 9열 뒤)·`VERDICT_COLUMNS`(정답 비교 열 뒤)로 자리를 정했고 두 함수의 '아는 열'에 넣었다. 판정은 빈칸을 허용하는 boolean, 개수는 Int64다.
+- (10/11 M7에서 고침) `median_times`는 row의 두 시간 열과 결과 맨 위 키인 `t_road_ms`를 모두 반복 중앙값으로 바꾼다.
+- 실패한 사진은 같은 오류끼리 한 줄로 묶어 출력한다(`failure_lines`). 아직 구현 전인 `--detect dark`로 돌리면 'NotImplementedError … (39장: …)' 한 줄이 나오고 종료 코드 1, config는 되돌아온다.
 - `save_comparison`은 패널이 정확히 6개여야 한다. 노면 표시는 7번째 칸이 아니라 '후보' 칸에 겹쳐 그린다(`draw_candidates(draw_road(...), ...)`).
 - `draw_road`는 `road.shape[0]`만큼만 칠한다. roi_bottom이 1보다 작으면(미국 3장 0.95) 띠 높이가 '사진 높이 − y0'보다 작다.
 - `USE_ROAD_MASK`가 꺼져 있으면 pipeline은 road를 검출 함수에 넘기지 않는다. E2('마스크 없음')에서 dark의 σ가 노면 안에서 재지지 않게 하고, 꺼진 상태가 어느 `DETECT_MODE`에서도 1차와 같게 하려는 결정이다.
@@ -335,7 +340,7 @@ python run_matching.py --name final
 | `image_verdict`·`summarize_verdicts`를 약속 표에 | B·C | M2 PR 때 | C가 CONTRIBUTING 2장·check_contract |
 | evaluate_train 기본 세트(한 세트 vs 5세트) | B·C | M2 PR 리뷰 | (10/11) 사용자 결정으로 C가 config 한 세트로 구현, 1차 5세트는 `--param-set`. B 확인 대기 |
 | 우연 대조군에서 사진 1장뿐인 크기 묶음 | C | (10/11 정함) | 빼고 `chance_skipped`에 수를 적음. 학습 804장은 1장뿐인 묶음이 없어 0장(5.2), 보고서에 적음 |
-| `--roi auto`가 노면 마스크를 저절로 켤지 | C | M3 | Plan.md 명령은 둘을 함께 줌 |
+| `--roi auto`가 노면 마스크를 저절로 켤지 | C | (10/11 정함) | 묶지 않는다(사용자 결정). `--roi auto`는 띠만 바꾸고 마스크는 `--mask on`으로 따로 켠다. 마지막 일괄 실행에서 단계를 하나씩 끄고 켜며 비교하려는 것이고, 둘 다 쓰려면 명령에서 함께 준다(Plan.md 5장 명령처럼). `--roi csv`에서 `--roi-top`은 39장에 효과가 없어 오류로 막았다 |
 | 최종 방법을 고를 때 처리 시간을 어떻게 볼지 | 전원 | G4 전, 확정본 6장 | |
 | 계획서 3장 라플라시안 표기(3~5 vs 3.0~3.9) | 전원(확정본은 합의 뒤 수정) | 제출 전 | C가 `docs/plan_2nd.md` |
 | 계획서 1장 조 정보, 제출 | 전원 | 10/12 | 양식에 직접 |
