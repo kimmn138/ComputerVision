@@ -136,7 +136,7 @@ PR은 #1(feat/측정실행통합, 10/04)·#2(feat/전처리, 10/05)·#3(feat/후
 ### 2.5 남은 질문 (답이 저장소에 없음)
 
 1. `image_verdict`·`summarize_verdicts`를 약속 표(CONTRIBUTING 2장)에 넣을지: B와 정한다. 넣으면 C가 CONTRIBUTING·check_contract를 먼저 고친다(7장 절차).
-2. evaluate_train의 기본을 config 값 한 세트로 하고 5세트는 옵션으로 둘지: B와 정한다. 시간이 5배 차이 나고, 5세트 방식에는 5.2의 함정이 있다.
+2. evaluate_train의 기본을 config 값 한 세트로 하고 5세트는 옵션으로 둘지: (10/11) 사용자 결정으로 C가 기본 = config 한 세트, 1차 5세트 = `--param-set base|…|all`로 구현했다. B의 확인은 PR 리뷰에서 받는다(5.2).
 3. 제공 13장 상태 태그를 A가 넣을지: A의 동의가 필요하다. 안 되면 E5 검증과 조건별 표에 Plan.md 1.3의 '사람 판정' 표를 그대로 쓸지 팀이 정한다.
 
 나머지 정해지지 않은 것은 6장에 있다.
@@ -148,14 +148,14 @@ PR은 #1(feat/측정실행통합, 10/04)·#2(feat/전처리, 10/05)·#3(feat/후
 | 순서 | 작업 | 마감 | 손댈 파일·함수 | 끝났다는 기준 |
 |---|---|---|---|---|
 | 1 | M1 정답 박스 11장 | 10/10 13:00 (지남) | `gt/<사진 이름>.csv`를 `tools/label_gt.py`로: own_11_pothole_blur·normal, own_12_crack_normal, own_13_none_normal, own_14_none_blur, own_16_pothole_blur, own_17_crack_blur, own_18_pothole_dark, own_19_none_blur·dark·normal | CSV 11개(손상 없으면 머리글만), `[C] 정답 박스 11장` |
-| 2 | M2 WP0 평가 체계 + E0 재현 | 10/10 17:00 (지남) | `src/evaluate.py`(B 파일): `image_verdict`, `summarize_verdicts`. `tools/evaluate_train.py`(B 파일): `DIAG35`, `assign_split`, `--split dev\|test\|all`(기본 dev), `--name`, 영상 단위 요약, `per_source.csv`, 우연 대조군, `--mask`·`--roi-top`·`--detect`·`--set NAME=VALUE` | test_image_verdict·test_summarize_verdicts·test_dev_test_split의 @todo를 지우고 통과. E0(`--split all`, 끔): 정답률 10.4%, 찾은 정답 67·21, 후보 6,588 |
+| 2 | M2 WP0 평가 체계 + E0 재현 | 10/10 17:00 (지남) | `src/evaluate.py`(B 파일): `image_verdict`, `summarize_verdicts`. `tools/evaluate_train.py`(B 파일): `DIAG35`, `assign_split`, `--split dev\|test\|all`(기본 dev), `--name`, 영상 단위 요약, `per_source.csv`, 우연 대조군, `--mask`·`--roi-top`·`--detect`·`--set NAME=VALUE` | test_image_verdict·test_summarize_verdicts·test_dev_test_split의 @todo를 지우고 통과. E0(`--split all --name e0_all`, 끔): 정답률 10.4%, 찾은 정답 67·21, 후보 6,588 |
 | 3 | M3 run_experiment 39장 자동 ROI | 10/10 저녁 | `run_experiment.py`: `parse_args`(`--roi csv\|auto`, `--mask`, `--detect`, `--roi-top`), `main`, `get_roi` 호출부, `write_config` 순서 | `--roi auto`면 roi.csv를 쓰지 않음, 바꾼 값이 config_used.txt에 남음 |
 | 4 | M4 E1·E1b | 10/10 21:00 | 실행. 채택되면 config C 구역 `USE_ROAD_MASK`, 합의되면 공통 구역 `ROI_TOP_DEFAULT`, 둘 다 `docs/part_C.md` | 정답 유지율 95% 이상·후보 35% 이상 감소(93% 미만이면 되돌림). 21:00 표를 단톡방에 |
 | 5 | M5 교차 검수 | 10/10 22:00 | 없음(`label_gt`로 A의 12장을 열어 봄) | 고칠 곳을 A에게 알림 |
 | 6 | M6 E6 인위 저하 | 도구 10/10 저녁, 1회 10/11 09:00 | `tools/evaluate_train.py`: `degrade(bgr, kind)`, `--degrade`, 상태 판정 적중률. 값은 config C 구역 `DEGRADE_*` | test_degrade 통과. 1회 결과로 G3 정리(단톡방, Plan.md 개정 내역 10/11) |
 | 7 | M7 run_experiment 새 열·표 | 10/11 오전 | `run_experiment.py`: `process_image`·`make_row`(has_gt, has_damage, n_pred, hit_same, hit_any, correct, edges_road, t_road_ms), `metrics_frame`, `table_by_group`(민감도·특이도·정답률과 기준선) | row 9열 그대로, 정답 파일이 없으면 빈칸 |
 | 8 | M8 시연의 노면 표시 | 10/11 오후 | `src/visualize.py` `draw_road`, config C 구역(섞는 비율·색), `run_experiment.save_figure`, `demo.py` | test_draw_road_paint 통과. demo가 quality·고른 전처리·노면·후보를 끔·켬으로 보여 줌 |
-| 9 | M9 E5·E6 최종, 39장 자동 ROI, 시험셋 | 10/11 15:00~17:00 | 실행 | 17:00 `--split test` 한 번만. 그 뒤 파라미터를 고치지 않음 |
+| 9 | M9 E5·E6 최종, 39장 자동 ROI, 시험셋 | 10/11 15:00~17:00 | 실행 | 17:00 `--split test --name test_once` 한 번만. 그 뒤 파라미터를 고치지 않음 |
 | 10 | M10 G4, 데모 녹화 | 10/11 21:00 | 없음 | 같은 화면을 녹화 |
 | 11 | M11 최종 실행 | 10/12 오전 | 없음 | 4.2의 최종 명령, 처리 시간은 4.5 규칙 |
 
@@ -195,23 +195,24 @@ python run_experiment.py --name <이름> [--only provided|own]   # 39장 끔·�
 python run_matching.py --name <이름>                # 쌍 사진 5쌍 매칭 → results/<이름>/matching.csv
 python demo.py [사진 경로 [roi_top roi_bottom]]     # 경로를 빼면 사진 목록에서 번호로 고름
 python tools/label_gt.py [사진 경로]                # 정답 박스 (c 균열, p 포트홀, Enter, q 저장)
-python tools/evaluate_train.py                      # 주의: 옵션 없음, 5세트 × 끔·켬, results/tuning/을 덮어씀 (5.2)
+python tools/evaluate_train.py --name <이름> [--split dev|test|all] [옵션]   # 학습 사진 평가 → results/<이름>/ (기본 개발셋, 5.2)
 python tools/convert_json_gt.py                     # data/train/ann JSON → gt/train CSV (이미 커밋됨)
 python tools/check_data.py                          # 사진·CSV 이름 검사
 ```
 
-만들 옵션을 쓴 실험 명령(Plan.md 5장, C가 M2·M3·M6에서 만든다):
+실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--mask`·`--roi`·`--detect`는 M3, `--degrade`는 M6에서 만든다:
 
 ```bash
-python tools/evaluate_train.py --split all                                   # E0 재현 (C)
-python tools/evaluate_train.py --split dev --mask on                         # E1 (C)
-python tools/evaluate_train.py --split dev --mask on --roi-top 0.3           # E1b (C)
+python tools/evaluate_train.py --split all --name e0_all                      # E0 재현, 804장 (C)
+python tools/evaluate_train.py --split dev --name e0_dev                      # E0 개발셋, 채택 규칙의 비교 기준 (C)
+python tools/evaluate_train.py --split dev --mask on --name e1_mask_dev       # E1 (C)
+python tools/evaluate_train.py --split dev --mask on --roi-top 0.3 --name e1b_top03_dev   # E1b (C)
 python run_experiment.py --name e1_mask --mask on                            # E1 39장 roi.csv (C)
 python run_experiment.py --name e1_mask_auto --mask on --roi auto            # E1 39장 자동 ROI (C)
-python tools/evaluate_train.py --split dev --detect dark                     # E2 (B)
-python tools/evaluate_train.py --split dev --detect dark --mask on           # E3 (B)
-python tools/evaluate_train.py --split dev --degrade blur                    # E6 (C, dark·bright·noise도)
-python tools/evaluate_train.py --split test                                  # 시험셋, 10/11 17:00 한 번만 (C)
+python tools/evaluate_train.py --split dev --detect dark --name e2_dark_dev                  # E2 (B)
+python tools/evaluate_train.py --split dev --detect dark --mask on --name e3_dark_mask_dev   # E3 (B)
+python tools/evaluate_train.py --split dev --degrade blur --name e6_blur_dev   # E6 (C, dark·bright·noise도 이름을 바꿔)
+python tools/evaluate_train.py --split test --name test_once                  # 시험셋, 10/11 17:00 한 번만 (C)
 ```
 
 최종(10/12 오전, C 컴퓨터):
@@ -219,7 +220,7 @@ python tools/evaluate_train.py --split test                                  # �
 ```bash
 python tests/check_contract.py
 python run_experiment.py --name final
-python tools/evaluate_train.py --split test     # 10/11 숫자와 같은지만 확인, 다르면 원인만 찾음
+python tools/evaluate_train.py --split test --name final_test   # test_once와 같은지만 확인, 다르면 원인만 찾음 (run_experiment의 final과 폴더를 나눔)
 python run_matching.py --name final
 ```
 
@@ -229,7 +230,9 @@ python run_matching.py --name final
 
 - `run_experiment`: `results/<이름>/metrics.csv`(영상마다 끔·켬 2행), `figures/<사진>.png`, `table_by_image.csv`·`table_by_source.csv`·`table_by_condition.csv`, `config_used.txt`.
 - `run_matching`: 같은 폴더에 `matching.csv`, `matches/<사진>_off.png`·`_on.png`, `config_used_matching.txt`.
-- 쓸 이름(Plan.md 3.7): `e0_base`, `e1_mask`, `e1_mask_auto`, `e1b_top03`, `e2_dark`, `e3_dark_mask`, `e4_score`, `e6_degrade`, `final`.
+- `evaluate_train`: `results/<이름>/`에 `train_detail.csv`(영상별 개수·판정, split·source·height 열), `train_summary.csv`(끔·켬 요약: 종류·기준별 정밀도·재현율, 민감도·특이도·정답률·균형 정확도·기준선, 영상당 후보·오검출, 우연 대조군), `per_source.csv`(같은 요약을 국가별로), `config_used_train.txt`(config 값, 파라미터 세트, 실행 옵션으로 바꾼 값). 파일 이름이 run_experiment·run_matching과 겹치지 않는다.
+- 세 도구 모두 `--name`을 빼면 `results/latest`에 쓰고(매번 덮어씀), 1차 결과 폴더 이름(`base`·`tuning`·`diagnosis`)은 대소문자·하위 폴더까지 거부한다(`run_experiment.check_name`).
+- 쓸 이름(Plan.md 3.7): `e0_base`, `e1_mask`, `e1_mask_auto`, `e1b_top03`, `e2_dark`, `e3_dark_mask`, `e4_score`, `e6_degrade`, `final`. evaluate_train은 이름 끝에 데이터를 붙여(`e0_all`·`e1_mask_dev` 등) 39장 폴더와 나누고, 시험셋은 `test_once`(10/11)·`final_test`(10/12 재현 확인)로 쓴다(4.2).
 - 지금 있는 것(C 컴퓨터에만, Git에 없음):
 
 | 폴더 | 무엇 | 쓰임 |
@@ -260,12 +263,31 @@ python run_matching.py --name final
 - `data/shot_log.csv`는 어느 코드도 읽지 않는다(기록용). 실행에 쓰이는 것은 `data/roi.csv`뿐이다.
 - 제공 13장은 `parse_name`의 condition이 빈칸이고 roi.csv condition 칸도 비어 있어, `table_by_condition`에서 'unknown'으로 묶인다. A가 상태 태그를 넣으면 풀린다.
 
-### 5.2 evaluate_train (B 파일, C가 M2·M6에서 고침)
+### 5.2 evaluate_train (B 파일, C가 M2에서 고침, M6에서 `--degrade`를 더함)
 
-- 결과 폴더가 `results/tuning`으로 고정이다. 지금 돌리면 10/06 기준 파일(Plan.md 부록 B의 출처)을 덮는다. `--name`을 먼저 넣고, 기본 이름을 `tuning`으로 두지 않는다.
-- `PARAM_SETS`의 "base" 세트는 config B 구역 값을 숫자로 적어 둔 것이다. 실행 중 `apply_param_set`이 config를 이 숫자로 덮으므로, B가 config B 구역을 고쳐도 "base" 세트는 옛 값으로 돈다. 지금은 두 값이 같아서 E0 숫자는 같게 나온다. 기본 실행은 config를 덮지 않는 한 세트로 하는 것이 안전하다(2.5의 질문 2).
-- 5세트 × 끔·켬이라 사진 한 장을 10번 돈다. 한 세트면 2번이다.
-- 우연 대조군은 '640px 높이가 같은 사진끼리' 묶으므로 사진 크기가 필요하다. 정답 CSV만으로는 못 한다(Norway는 크기가 둘). 묶음에 사진이 1장뿐이면 '다음 사진'이 자기 자신이 되어 실제 값과 같아진다. 빼거나 표시하는 방법을 C가 정하고 보고서에 적는다.
+- (10/11) 결과 폴더는 `--name`으로 정하고(기본 `latest`), 1차 결과 폴더 이름은 거부한다. 10/06 기준 파일(`results/tuning`, Plan.md 1.2·부록 B의 출처)은 덮이지 않는다.
+- (10/11) 기본 실행은 config 값 한 세트(params 열 `config`)라 사진 한 장을 끔·켬 2번 돈다. 1차 튜닝 5세트는 `--param-set base|…|all`로만 돈다(all이면 10번). `base`는 config B 구역의 legacy 검출 값 13개를 숫자로 고정해 둔 것이라 B가 config를 바꾼 뒤에도 1차 값을 다시 낼 수 있다. 다만 `DETECT_MODE`·`USE_ROAD_MASK`·`ROI_TOP_DEFAULT`는 들어 있지 않으므로, 그때 E0를 다시 내려면 `--detect legacy --mask off`도 함께 준다.
+- 실행 옵션(`--mask`·`--roi-top`·`--detect`·`--set`)은 실행 중에만 config 값을 바꾸고 `finally`로 되돌린다. `--set`은 config에 있는 대문자 이름만 받고, `--param-set`과 같은 값을 바꾸면 거부한다. 개발/시험 나누기는 고른 분할이 아니라 사진 전체 이름으로 정한다(고른 분할만으로 정하면 국가별 순번이 달라짐).
+- (10/11 검증, 임시 폴더) 학습 사진·JSON 804개씩, 확장자 소문자 `.jpg`, 사진·JSON·`gt/train` 이름이 하나씩 맞음. config 실행과 `--param-set base` 실행의 결과 파일 3개가 params 열 말고 모두 같았다. `--split all` 실행이 10/06 `results/tuning` base 행과 영상별 개수 20열 × 1,608행(804장 × 끔·켬)에서 모두 같았고, Plan.md 1.2 표(35장·804장, 끔·켬, 띠 밖 정답 비율 포함)도 모두 같았다. 실행 시간(C 컴퓨터, legacy·마스크 끔, 한 세트 × 끔·켬): `--split all` 56초(사진을 처음 읽을 때 81초), `--split dev` 46초. 사진·끔켬 1회에 약 35ms다.
+- 우연 대조군: 640px 높이가 같은 사진끼리 이름순으로 묶어 i번 사진의 후보를 i+1번 사진의 같은 종류 정답과 중심 기준으로 비교한다(마지막은 첫 사진과). 1장뿐인 높이 묶음은 자기 자신과 비교하게 되므로 빼고 `chance_skipped` 열에 그 수를 적는다. 학습 데이터의 묶음은 아래 넷이고 1장뿐인 묶음이 없어 **빠진 사진은 0장**이다(전체·개발 모두). Norway는 원본 크기가 셋이다(10/10 메모의 '둘'을 고침). 358과 359는 1px 차이지만 규칙대로 다른 묶음이다. 시험셋의 묶음은 시험셋 실행의 `chance_skipped`로 나온다.
+
+| 640px 높이 | 전체 804장 | 개발 652장 | 원본 크기 |
+|---|---|---|---|
+| 640 | 629 (China_Drone 43, China_MotorBike 46, Czech 42, India 167, Japan 236, United_States 95) | 510 | 정사각형 512·540·600·640·720·1024·1080 |
+| 322 | 94 (Norway) | 75 | 4040×2035 |
+| 359 | 62 (Norway) | 54 | 3643×2041 |
+| 358 | 19 (Norway) | 13 | 3650×2044 |
+
+- (10/11 검증 실행의 값, 1차 방법·804장. 보고서 숫자는 마지막 실행에서 다시 낸다) 중심 기준 재현율:
+
+| 종류 | 전처리 | 실제 | 대조군 | 실제 − 대조군 |
+|---|---|---|---|---|
+| 균열 | 끔 | 55/1,113 = 4.94% | 37/1,113 = 3.32% | +1.62%p |
+| 포트홀 | 끔 | 12/133 = 9.02% | 14/133 = 10.53% | −1.50%p |
+| 균열 | 켬 | 58/1,113 = 5.21% | 40/1,113 = 3.59% | +1.62%p |
+| 포트홀 | 켬 | 16/133 = 12.03% | 16/133 = 12.03% | 0.00%p |
+
+- 포트홀은 끔·켬 모두 대조군과 같은 수준이라 Plan.md 1.2의 '우연 수준'과 맞는다. 균열은 대조군보다 1.6%p 높다(다른 사진의 정답과 비교해도 균열 37개가 '찾은' 것으로 세어짐).
 
 ### 5.3 run_experiment·pipeline (C 파일)
 
@@ -311,8 +333,8 @@ python run_matching.py --name final
 | 39장 정답과 무손상 수 | 표시한 사람, 엇갈리면 B | 교차 검수 10/10 22:00 → G3 | 39장 기준선 확정 |
 | 제공 13장 상태 태그 | A(동의 여부) | 10/10 13:00 | A가 roi.csv |
 | `image_verdict`·`summarize_verdicts`를 약속 표에 | B·C | M2 PR 때 | C가 CONTRIBUTING 2장·check_contract |
-| evaluate_train 기본 세트(한 세트 vs 5세트) | B·C | M2 PR 때 | C |
-| 우연 대조군에서 사진 1장뿐인 크기 묶음 | C | M2 | 보고서에 적음 |
+| evaluate_train 기본 세트(한 세트 vs 5세트) | B·C | M2 PR 리뷰 | (10/11) 사용자 결정으로 C가 config 한 세트로 구현, 1차 5세트는 `--param-set`. B 확인 대기 |
+| 우연 대조군에서 사진 1장뿐인 크기 묶음 | C | (10/11 정함) | 빼고 `chance_skipped`에 수를 적음. 학습 804장은 1장뿐인 묶음이 없어 0장(5.2), 보고서에 적음 |
 | `--roi auto`가 노면 마스크를 저절로 켤지 | C | M3 | Plan.md 명령은 둘을 함께 줌 |
 | 최종 방법을 고를 때 처리 시간을 어떻게 볼지 | 전원 | G4 전, 확정본 6장 | |
 | 계획서 3장 라플라시안 표기(3~5 vs 3.0~3.9) | 전원(확정본은 합의 뒤 수정) | 제출 전 | C가 `docs/plan_2nd.md` |

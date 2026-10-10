@@ -1360,22 +1360,26 @@ git commit -m "[A|B|C] 무엇을 바꿨는지"
 **실험** (옵션은 모두 신규. C가 만든다. config를 고치지 않고 실행 중에만 바꾼다. 괄호는 돌리는 사람)
 
 ```bash
-python tools/evaluate_train.py --split dev                                  # WP0, E0 (C)
-python tools/evaluate_train.py --split dev --mask on                        # E1 (C)
-python tools/evaluate_train.py --split dev --mask on --roi-top 0.3          # E1b (C, 공통 config는 그대로)
+python tools/evaluate_train.py --split all --name e0_all                    # E0 재현, 804장 (C)
+python tools/evaluate_train.py --split dev --name e0_dev                    # WP0, E0 개발셋 (C)
+python tools/evaluate_train.py --split dev --mask on --name e1_mask_dev     # E1 (C)
+python tools/evaluate_train.py --split dev --mask on --roi-top 0.3 --name e1b_top03_dev   # E1b (C, 공통 config는 그대로)
 python run_experiment.py --name e1_mask --mask on                           # E1 39장 roi.csv (C, 결과 폴더 이름은 3.7절)
 python run_experiment.py --name e1_mask_auto --mask on --roi auto           # E1 39장 자동 ROI (C, Must)
-python tools/evaluate_train.py --split dev --detect dark                    # E2 (B)
-python tools/evaluate_train.py --split dev --detect dark --mask on          # E3 (B)
-python tools/evaluate_train.py --split dev --degrade blur                   # E6 (C, dark·bright·noise도 같은 방식)
+python tools/evaluate_train.py --split dev --detect dark --name e2_dark_dev                  # E2 (B)
+python tools/evaluate_train.py --split dev --detect dark --mask on --name e3_dark_mask_dev   # E3 (B)
+python tools/evaluate_train.py --split dev --degrade blur --name e6_blur_dev                 # E6 (C, dark·bright·noise도 이름을 바꿔 같은 방식)
 python run_experiment.py --name e3_dark_mask --detect dark --mask on --roi auto   # E3 39장 (C)
 python run_matching.py --name final                                         # 특징점·매칭 전·후 표 (C)
 ```
 
+- evaluate_train은 `--name`을 빼면 `results/latest`에 써서 다음 실행이 덮어쓴다. 이름 끝에 데이터(`_all`·`_dev`)를 붙여 run_experiment의 39장 폴더와 나눈다. 1차 결과 폴더 이름(`base`·`tuning`·`diagnosis`)은 세 도구 모두 거부한다.
+- (10/11) evaluate_train의 기본 실행은 config 값 한 세트다. 1차 튜닝 세트는 `--param-set base|…|all`로만 돈다.
+
 **시험셋 평가** (10/11 17:00, 한 번만)
 
 ```bash
-python tools/evaluate_train.py --split test
+python tools/evaluate_train.py --split test --name test_once
 ```
 
 **최종** (10/12, C 컴퓨터에서)
@@ -1383,7 +1387,7 @@ python tools/evaluate_train.py --split test
 ```bash
 python tests/check_contract.py
 python run_experiment.py --name final
-python tools/evaluate_train.py --split test   # 재현 확인: 10/11 숫자와 같아야 한다(다시 튜닝하지 않음)
+python tools/evaluate_train.py --split test --name final_test   # 재현 확인: test_once와 같아야 한다(다시 튜닝하지 않음). run_experiment의 final과 폴더를 나눔
 ```
 
 ---

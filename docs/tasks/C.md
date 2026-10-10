@@ -76,10 +76,10 @@ def degrade(bgr, kind):         # kind: none·blur·dark·bright·noise → 같�
 **M2. WP0 평가 체계 + E0 재현** (10/10 17:00 PR) — Plan.md 3.2. 먼저 학습과제 6번을 단톡방에 공유한다.
 - `evaluate.image_verdict`, `summarize_verdicts` → `test_image_verdict`, `test_summarize_verdicts`의 @todo 지우기.
 - `evaluate_train`: `DIAG35`·`assign_split`·`--split dev|test|all`(기본 dev) → `test_dev_test_split`의 @todo 지우기. 결과 폴더 `--name`(results/<name>/), 영상 단위 요약 열, 국가별 표(`per_source.csv`).
-  - 지금 evaluate_train은 파라미터 5세트를 모두 돈다. 기본을 config 값 한 세트로 하고 5세트는 옵션으로 둘지 B와 정한다(시간 5배 차이).
+  - (10/11 구현) 기본 실행은 config 값 한 세트이고, 1차 튜닝 5세트는 `--param-set base|…|all`로만 돈다(base = 1차 기준 값, E0 재현 확인용). 결과는 `results/<--name>/`, 이름을 빼면 `results/latest`. B의 확인은 PR 리뷰에서 받는다.
 - **우연 대조군 (E0부터 Must)** (Plan.md 부록 B): 640px 높이가 같은 사진끼리 이름순으로 묶고, i번 사진의 후보를 i+1번 사진의 정답과 비교(마지막은 첫 사진과). 대조군 재현율 = 그렇게 센 찾은 정답 / 정답 수. 균열·포트홀 따로 '실제 − 대조군'. 채택 규칙 3번이 이 값을 쓴다.
 - 실행 옵션 `--mask on|off`, `--roi-top 0.3`, `--detect legacy|dark`, `--set NAME=VALUE`.
-- **E0 재현** (Plan.md 3.2 (5)): `--split all`, 전처리 끔에서 정답률 10.4%, 찾은 정답 중심 67·IoU 21, 후보 6,588. 기반에서 메모리로 같은 값을 확인했으니, 다르면 새 코드 탓이다.
+- **E0 재현** (Plan.md 3.2 (5)): `python tools/evaluate_train.py --split all --name e0_all`, 전처리 끔에서 정답률 10.4%, 찾은 정답 중심 67·IoU 21, 후보 6,588. 기반에서 메모리로 같은 값을 확인했으니, 다르면 새 코드 탓이다.
 - PR이 병합되면 A에게 `DIAG35`·`assign_split`을, B에게 `--detect`·`--mask`·`--set`을 쓰라고 알린다.
 
 **M3. run_experiment의 39장 자동 ROI** (10/10 저녁, E1 전) — Plan.md 3.2 (4), 3.7. E1에서 39장을 손으로 정한 ROI 없이도 돌려야 한다(교수님 질문 'ROI 자동 설정', 확정본 6장 E1).
@@ -87,8 +87,8 @@ def degrade(bgr, kind):         # kind: none·blur·dark·bright·noise → 같�
 - `--mask on|off`, `--detect legacy|dark`. 바꾼 값은 config_used.txt에 남긴다.
 
 **M4. E1·E1b** (10/10 21:00) — A의 road_mask v1이 병합되면
-- E1: 개발셋 `evaluate_train --split dev --mask on`, 39장 `run_experiment --mask on`(roi.csv)과 `--mask on --roi auto`. 마스크 정답 유지율(띠 안 정답 중 상자 중심이 노면 안인 비율)과 후보 감소율. 통과 기준 95% 이상·35% 이상, 93% 미만이면 되돌림(Plan.md 3.3 (8)).
-- E1b: `--mask on --roi-top 0.3`. 띠 밖 정답(드론·오토바이)을 되찾는지, 후보가 얼마나 느는지. 21:00에 E0·E1·E1b 표를 단톡방에 올리고 띠 값·마스크 켬을 정한다. 마스크를 켜기로 하면 C 구역 `USE_ROAD_MASK = True`, 띠 값이 바뀌면 공통 구역 `ROI_TOP_DEFAULT`(세 명 합의) — 둘 다 `docs/part_C.md`에 기록.
+- E1: 개발셋 `evaluate_train --split dev --mask on --name e1_mask_dev`, 39장 `run_experiment --mask on --name e1_mask`(roi.csv)과 `--mask on --roi auto --name e1_mask_auto`. 마스크 정답 유지율(띠 안 정답 중 상자 중심이 노면 안인 비율)과 후보 감소율. 통과 기준 95% 이상·35% 이상, 93% 미만이면 되돌림(Plan.md 3.3 (8)).
+- E1b: `--mask on --roi-top 0.3 --name e1b_top03_dev`. 띠 밖 정답(드론·오토바이)을 되찾는지, 후보가 얼마나 느는지. 21:00에 E0·E1·E1b 표를 단톡방에 올리고 띠 값·마스크 켬을 정한다. 마스크를 켜기로 하면 C 구역 `USE_ROAD_MASK = True`, 띠 값이 바뀌면 공통 구역 `ROI_TOP_DEFAULT`(세 명 합의) — 둘 다 `docs/part_C.md`에 기록.
 
 **M5. 교차 검수** (10/10 22:00) — A가 표시한 12장(README 4장).
 
@@ -109,12 +109,12 @@ def degrade(bgr, kind):         # kind: none·blur·dark·bright·noise → 같�
 
 **M9. E5·E6 최종·39장 자동 ROI → 시험셋** (10/11 15:00~17:00) — 확정본 8장 순서
 - 15:00 B의 파라미터 확정 → E5: 최종 검출기의 전처리 끔 vs 켬(개발, 39장) + **상태 판정 검증**: 같은 장소 정상·흔들림 5쌍(own_03·09·10·11·19)에서 흔들림 쪽만 흐림으로 잡는가, 사람이 판정한 제공 13장(A가 roi.csv에 넣은 태그)과 analyze 판정이 맞는가. E6 2회째(최종 코드), 39장 자동 ROI 실행.
-- **17:00 `--split test` 한 번만.** 그 뒤 파라미터를 고치지 않는다. 39장 최종 판정(roi.csv·auto).
+- **17:00 `python tools/evaluate_train.py --split test --name test_once` 한 번만.** 그 뒤 파라미터를 고치지 않는다. 39장 최종 판정(roi.csv·auto).
 - 보고서 표 초안(Plan.md 3.7): 단계별(E0~E6), 국가별, 조건별, 전처리 끔·켬, 특징점·매칭 전·후, 제공 vs 직접 촬영, 인위 저하.
 
 **M10. G4** (10/11 21:00) — 코드 동결. 같은 화면을 데모 영상으로 녹화.
 
-**M11. 최종 실행** (10/12 오전, C 컴퓨터) — `python tests/check_contract.py`, `python run_experiment.py --name final`, `python tools/evaluate_train.py --split test`(10/11 숫자와 같아야 함, 다르면 원인만 찾음), `python run_matching.py --name final`. 처리 시간은 이 값만 보고서에 쓰고, **검출 시간에 후보 형태 값 계산(두께·거리 변환 폭·비원형도)이 들어 있다고 적는다**(기반에서 legacy 기준 15~23% 늘어남, 팀이 받아들임).
+**M11. 최종 실행** (10/12 오전, C 컴퓨터) — `python tests/check_contract.py`, `python run_experiment.py --name final`, `python tools/evaluate_train.py --split test --name final_test`(10/11 숫자와 같아야 함, 다르면 원인만 찾음. run_experiment의 `final`과 폴더를 나눔), `python run_matching.py --name final`. 처리 시간은 이 값만 보고서에 쓰고, **검출 시간에 후보 형태 값 계산(두께·거리 변환 폭·비원형도)이 들어 있다고 적는다**(기반에서 legacy 기준 15~23% 늘어남, 팀이 받아들임).
 
 ### Should
 
