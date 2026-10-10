@@ -534,6 +534,36 @@ def test_draw_road_copy():
           "draw_road: 같은 크기의 새 영상을 돌려주지 않거나 받은 영상을 바꿈")
 
 
+def test_result_folder_safety():
+    """세 실행 도구(run_experiment·run_matching·evaluate_train)는 --name이 없으면 results/latest에 쓰고,
+    1차 결과 폴더(base·tuning·diagnosis = 기준 수치의 출처)는 대소문자·하위 폴더까지 거부한다.
+    evaluate_train의 기본 실행은 config 값 그대로 한 세트이고, 1차 튜닝 세트는 --param-set으로만 돈다."""
+    from tools import evaluate_train as et
+
+    def parse_quietly(parse, argv):
+        """명령행을 읽는다. 거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                return parse(argv)
+        except SystemExit:
+            return None
+
+    parsers = {"run_experiment": rx.parse_args, "run_matching": rm.parse_args, "evaluate_train": et.parse_args}
+    for tool, parse in parsers.items():
+        args = parse_quietly(parse, [])
+        check(args is not None and args.name == "latest", f"{tool}: --name 없이 실행하면 results/latest가 아님 ({args})")
+        for name in ("base", "tuning", "diagnosis", "Base", "tuning/sub"):
+            check(parse_quietly(parse, ["--name", name]) is None, f"{tool}: 1차 결과 폴더 이름도 받아들임 ({name})")
+        args = parse_quietly(parse, ["--name", "e0_base"])
+        check(args is not None and args.name == "e0_base", f"{tool}: 보통 이름(e0_base)을 받지 못함")
+    args = parse_quietly(et.parse_args, [])
+    default = et.select_param_sets(args.param_set) if args else []
+    check(default == [{"name": "config"}],
+          f"evaluate_train: 기본 세트가 config 값 그대로(덮는 값 없음)가 아님 ({[p['name'] for p in default]})")
+    check([p["name"] for p in et.select_param_sets("base")] == ["base"], "evaluate_train: --param-set base로 base 세트를 고르지 못함")
+    check(et.select_param_sets("all") == et.PARAM_SETS and len(et.PARAM_SETS) == 5, "evaluate_train: --param-set all이 1차 5세트가 아님")
+
+
 @todo("C WP5: draw_road 구현 뒤 (Plan.md 3.7)")
 def test_draw_road_paint():
     """노면(road 255)은 y0만큼 내린 자리에 초록이 섞이고, 노면 밖과 띠 위쪽은 그대로다."""
@@ -546,7 +576,6 @@ def test_draw_road_paint():
     check((out[150, 500] == 128).all() and (out[50, 100] == 128).all(), "draw_road: 노면 밖이나 띠 위쪽이 바뀜")
 
 
-@todo("C WP0: evaluate.image_verdict 추가 뒤 (Plan.md 3.2 (1)·(2), B 파일이라 커밋 규칙 따름)")
 def test_image_verdict():
     """영상 단위 판정: 손상 영상은 같은 종류 후보의 중심이 정답 박스 안이면 맞힘(hit_same), 종류가 달라도 위치가 맞으면 hit_any.
     두 종류가 모두 있으면 한 종류만 맞혀도 맞힘. 손상 없는 영상은 최종 후보가 0개여야 맞힘. 좌표는 640px 전체 영상 기준."""
@@ -561,7 +590,6 @@ def test_image_verdict():
     check(v["correct"] is False and v["n_pred"] == 1, f"image_verdict: 손상 없음·후보 1개 ({v})")
 
 
-@todo("C WP0: evaluate.summarize_verdicts 추가 뒤 (Plan.md 3.2 (2), B 파일이라 커밋 규칙 따름)")
 def test_summarize_verdicts():
     """민감도(손상 영상 중 맞힘)·특이도(손상 없는 영상 중 맞힘)·정답률·균형 정확도·기준선('검출 없음' 정답률). 분모가 0이면 NaN."""
     verdicts = [{"has_damage": True, "correct": True}, {"has_damage": True, "correct": False},
@@ -575,7 +603,6 @@ def test_summarize_verdicts():
     check(math.isnan(s0["sensitivity"]) and s0["specificity"] == 1.0, f"summarize_verdicts: 분모 0이 NaN이 아님 ({s0})")
 
 
-@todo("C WP0: tools/evaluate_train.py에 개발/시험 나누기(assign_split·DIAG35)를 넣은 뒤 (Plan.md 3.2 (3), 부록 B)")
 def test_dev_test_split():
     """국가별 이름순 순번 % 5 == 4이면 시험, 진단 35장(DIAG35)은 개발에 고정. 804장이면 시험 152(손상 97·무손상 55)·개발 652.
     무작위가 없어 누가 돌려도 같다. 훈련 사진 804장이 없으면 건너뛴다. (C가 10/10에 이 규칙으로 세어 확인한 값)"""
@@ -589,6 +616,59 @@ def test_dev_test_split():
     check((len(test), damaged, len(names) - len(test)) == (152, 97, 652), f"나누기 결과가 틀림 (시험 {len(test)}, 손상 {damaged})")
     check(len(et.DIAG35) == 35 and all(split[f"{n}.jpg"] == "dev" for n in et.DIAG35), "진단 35장이 시험셋에 들어감")
     check(et.assign_split(names) == split, "같은 입력인데 나누기가 달라짐")
+
+
+def test_train_options():
+    """evaluate_train 실행 옵션: --mask·--roi-top·--detect·--set은 이번 실행에만 쓸 config 값 {이름: 값}이 되고(--set 값은 파이썬 값으로,
+    안 되면 글자로 읽음), config에 없는 이름·소문자 이름·범위 밖 띠·튜닝 세트와 겹치는 값은 거부한다. 백업으로 원래 값이 돌아온다."""
+    from tools import evaluate_train as et
+
+    def parse_quietly(argv):
+        """거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                return et.parse_args(argv)
+        except SystemExit:
+            return None
+
+    args = parse_quietly(["--mask", "on", "--roi-top", "0.3", "--detect", "legacy",
+                          "--set", "DARK_SIGMA_IN_ROAD=False", "--set", "DETECT_MODE=dark"])
+    expect = {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.3, "DETECT_MODE": "dark", "DARK_SIGMA_IN_ROAD": False}
+    check(args is not None and args.overrides == expect, f"evaluate_train: 실행 옵션을 config 값으로 못 바꿈 ({args and args.overrides})")
+    check(parse_quietly([]).overrides == {} and parse_quietly([]).split == "dev", "evaluate_train: 옵션이 없는데 바꾸는 값이 있거나 기본 분할이 dev가 아님")
+    for bad in (["--set", "NO_SUCH_NAME=1"], ["--set", "use_road_mask=True"], ["--set", "USE_ROAD_MASK"], ["--roi-top", "1.2"],
+                ["--param-set", "base", "--set", "CANNY_LOW=10"], ["--split", "train"]):
+        check(parse_quietly(bad) is None, f"evaluate_train: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
+    check(parse_quietly(["--param-set", "base", "--set", "USE_ROAD_MASK=True"]) is not None,
+          "evaluate_train: 튜닝 세트와 겹치지 않는 --set까지 거부함")
+    if args is None:
+        return
+    before = {name: getattr(C, name) for name in expect}
+    backup = et.backup_params(args.overrides)
+    try:
+        et.apply_param_set(args.overrides)
+        check(C.USE_ROAD_MASK is True and C.ROI_TOP_DEFAULT == 0.3 and C.DETECT_MODE == "dark", "evaluate_train: 실행 옵션이 config에 적용되지 않음")
+    finally:
+        et.restore_params(backup)
+    check({name: getattr(C, name) for name in expect} == before, "evaluate_train: 실행 옵션으로 바꾼 config 값이 되돌아가지 않음")
+
+
+def test_chance_control():
+    """우연 대조군: 640px 높이가 같은 사진끼리 이름순으로 묶어 i번 후보를 i+1번의 같은 종류 정답과 중심 기준으로 비교하고
+    (마지막은 첫 사진과), 사진이 1장뿐인 높이 묶음은 자기 자신과 비교하게 되므로 뺀다."""
+    from tools import evaluate_train as et
+    heights = {"a.jpg": 640, "b.jpg": 640, "c.jpg": 640, "d.jpg": 358}
+    gts = {"a.jpg": [(0, 0, 100, 100, "crack")],
+           "b.jpg": [(300, 300, 50, 50, "crack"), (0, 0, 640, 640, "pothole")],
+           "c.jpg": [],
+           "d.jpg": [(0, 0, 10, 10, "crack")]}
+    preds = {"a.jpg": {"crack": [(40, 40, 10, 10)], "pothole": []},   # → b: 균열 상자 밖, 포트홀 상자 안이지만 종류가 달라 안 셈
+             "b.jpg": {"crack": [(10, 10, 20, 20)], "pothole": []},   # → c: 정답 없음
+             "c.jpg": {"crack": [(40, 40, 10, 10)], "pothole": []},   # → a(마지막 → 첫 사진): 균열 상자 안이라 우연히 맞음
+             "d.jpg": {"crack": [(0, 0, 4, 4)], "pothole": []}}       # 높이 358은 1장뿐이라 뺌(자기 정답과 맞아도 세지 않음)
+    found, truth, skipped = et.chance_found(list(heights), heights, preds, gts)
+    check((found, truth, skipped) == ({"crack": 1, "pothole": 0}, {"crack": 2, "pothole": 1}, 1),
+          f"chance_found: 찾은 정답·비교한 정답·뺀 사진 수가 틀림 ({found}, {truth}, {skipped})")
 
 
 @todo("C E6: tools/evaluate_train.py에 인위 저하(degrade)를 넣은 뒤 (Plan.md 3.2 (6))")
@@ -619,7 +699,9 @@ def main():
                test_summary_tables, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
-               test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split, test_degrade):
+               test_result_folder_safety,
+               test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
+               test_train_options, test_chance_control, test_degrade):
         try:
             fn()
         except unittest.SkipTest as e:

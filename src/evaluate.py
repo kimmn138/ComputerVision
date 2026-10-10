@@ -134,3 +134,67 @@ def precision_recall(counts):
     )
 
     return precision, recall
+
+
+def image_verdict(pred_by_kind, gt):
+    """영상 한 장의 손상 판정이 맞았는지 본다(영상 단위 정답률·민감도·특이도용).
+    손상 영상은 정답에 있는 종류 중 하나라도 같은 종류 후보의 중심이 정답 박스 안이면 맞힘(hit_same),
+    손상 없는 영상은 후보가 0개여야 맞힘. hit_any는 종류와 상관없이 후보 중심이 정답 안에 든 경우로,
+    위치는 맞았는데 종류만 틀린 경우를 따로 보려고 센다.
+    pred_by_kind: {"crack": [(x, y, w, h)], "pothole": [...]}, gt: [(x, y, w, h, kind)], 둘 다 640px 전체 영상 좌표."""
+    truth_by_kind = {}
+
+    for x, y, w, h, kind in gt:
+        truth_by_kind.setdefault(kind, []).append((x, y, w, h))
+
+    all_pred = [
+        box
+        for boxes in pred_by_kind.values()
+        for box in boxes
+    ]
+
+    all_truth = [box[:4] for box in gt]
+
+    hit_same = any(
+        count_center_hits(pred_by_kind.get(kind, []), truth)["found"] > 0
+        for kind, truth in truth_by_kind.items()
+    )
+
+    hit_any = count_center_hits(all_pred, all_truth)["found"] > 0
+
+    has_damage = len(gt) > 0
+    n_pred = len(all_pred)
+
+    return {
+        "has_damage": has_damage,
+        "n_pred": n_pred,
+        "hit_same": hit_same,
+        "hit_any": hit_any,
+        "correct": hit_same if has_damage else n_pred == 0,
+    }
+
+
+def summarize_verdicts(verdicts):
+    """여러 장의 영상 판정을 민감도·특이도·정답률·균형 정확도와 '검출 없음' 기준선으로 묶는다. 분모가 0이면 NaN.
+    민감도 = 손상 영상 중 맞힌 비율, 특이도 = 손상 없는 영상 중 맞힌(후보 0개) 비율,
+    기준선 = 아무것도 검출하지 않을 때의 정답률(= 손상 없는 영상 비율)."""
+    n = len(verdicts)
+    n_damage = sum(1 for v in verdicts if v["has_damage"])
+    n_none = n - n_damage
+
+    correct_damage = sum(1 for v in verdicts if v["has_damage"] and v["correct"])
+    correct_none = sum(1 for v in verdicts if not v["has_damage"] and v["correct"])
+
+    sensitivity = correct_damage / n_damage if n_damage else np.nan
+    specificity = correct_none / n_none if n_none else np.nan
+
+    return {
+        "n": n,
+        "n_damage": n_damage,
+        "n_none": n_none,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+        "accuracy": (correct_damage + correct_none) / n if n else np.nan,
+        "balanced": (sensitivity + specificity) / 2,     # 한쪽이 NaN이면 NaN
+        "baseline_none": n_none / n if n else np.nan,
+    }

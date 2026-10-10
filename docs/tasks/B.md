@@ -92,10 +92,14 @@ def detect_potholes(gray, road=None):  # → (포트홀 후보 list, 이진 마�
 **M6. E2·E3 실행** (10/11 09:00 결과 공유, G3 근거) — 확정본 8장. C의 evaluate_train 옵션(10/10 17:00 병합)으로 개발셋에서 돌린다.
 
 ```bash
-python tools/evaluate_train.py --split dev --detect dark                      # E2: 마스크 없음
-python tools/evaluate_train.py --split dev --detect dark --mask on            # E3: 노면 마스크
-python tools/evaluate_train.py --split dev --detect dark --mask on --set DARK_SIGMA_IN_ROAD=False   # E3: σ를 띠 전체에서
+python tools/evaluate_train.py --split dev --detect dark --name e2_dark_dev                         # E2: 마스크 없음
+python tools/evaluate_train.py --split dev --detect dark --mask on --name e3_dark_mask_dev           # E3: 노면 마스크
+python tools/evaluate_train.py --split dev --detect dark --mask on --set DARK_SIGMA_IN_ROAD=False --name e3_sigma_band_dev   # E3: σ를 띠 전체에서
 ```
+
+- 결과는 `results/<--name>/`에 쌓인다. `--name`을 빼면 `results/latest`에 써서 다음 실행이 덮어쓰므로 실험마다 이름을 준다. 1차 결과 폴더 이름(`base`·`tuning`·`diagnosis`)은 거부된다.
+- 볼 파일: `train_summary.csv`(끔·켬 두 줄. `sensitivity`·`specificity`·`accuracy`·`baseline_none`·`balanced`·`fp_per_image`, 우연을 뺀 균열 재현율 `crack_ctr_recall_net`), `per_source.csv`(같은 요약을 국가별로), `train_detail.csv`(영상별), `config_used_train.txt`(돈 config 값과 실행 옵션).
+- 옵션은 config.py 파일을 고치지 않고 실행 중에만 값을 바꾼 뒤 되돌린다. `--set`은 config에 있는 대문자 이름만 받는다(오타 방지).
 
 - E1(C가 21:00에 공유)과 채택 규칙(4장)으로 비교해 단톡방에 표를 올린다. 옵션 이름은 C의 PR에서 확인한다.
 

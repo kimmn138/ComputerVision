@@ -120,7 +120,7 @@ PR 리뷰는 CONTRIBUTING 5장대로 A·B의 PR은 C가, C의 PR은 A나 B가 �
 | 기반 | 10/10 10:00 | 단톡방 동의, 기반 병합, 세 명 모두 Update from main 뒤 `check_contract` 통과 |
 | G3 전처리 고정 | 10/11 10:00 | 정답 박스 교차 검수 끝(39장 무손상 수 확정), B의 E2·E3 결과로 dark 채택 여부 결정(Plan.md 3.10 채택 규칙), 10/10 밤~10/11 오전에 B의 dark 1차로 돌린 E6 결과로 전처리 규칙 결정 → config A 구역 동결. B의 1차가 늦어지면 전처리 확정만 E5 실행 전까지 미룬다 |
 | G4 코드 동결 | 10/11 21:00 | 검출 파라미터 확정, 시험셋 1회 평가 끝, 39장 최종 판정, 모든 시험 통과. 이후는 버그 수정만 |
-| 최종 | 10/12 오전 | C 컴퓨터에서 `check_contract`, `run_experiment --name final`, `evaluate_train --split test`(10/11 숫자와 같은지), `run_matching --name final` |
+| 최종 | 10/12 오전 | C 컴퓨터에서 `check_contract`, `run_experiment --name final`, `evaluate_train --split test --name final_test`(10/11 숫자와 같은지), `run_matching --name final` |
 
 **매일 21:00 점검** — 단톡방에 한 사람씩 아래 모양으로 올린다.
 
