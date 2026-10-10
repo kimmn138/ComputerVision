@@ -1,6 +1,6 @@
 """(파트 C) 제공·직접 촬영 영상 전체를 전처리 끔·켬으로 처리해 지표 표·비교 그림·요약 표를 저장한다.
-사용법: 맨 위 폴더에서  python run_experiment.py --name base  [--only provided|own]
-결과: results/<name>/
+사용법: 맨 위 폴더에서  python run_experiment.py --name <이름>  [--only provided|own]
+결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
 - metrics.csv: 영상마다 끔·켬 2행 (영상 정보, 상태 지표, row 9열, 정답 비교 tp·fp·found·fn)
 - figures/<영상 이름>.png: 위 줄 끔·아래 줄 켬 비교 그림
 - table_by_image.csv, table_by_source.csv, table_by_condition.csv: 지표_off·지표_on·지표_diff(on − off) 요약 표
@@ -38,14 +38,30 @@ GT_COLUMNS = [f"{kind}_{key}" for kind in KINDS for key in COUNT_KEYS]
 SUMMARY_METRICS = ["edges", "harris", "n_crack", "area_crack", "area_crack_pct",
                    "n_pothole", "area_pothole", "area_pothole_pct", "t_pre_ms", "t_detect_ms"]
 PR_METRICS = [f"{kind}_{name}" for kind in KINDS for name in ("precision", "recall")]
+DEFAULT_NAME = "latest"             # --name을 빼면 쓰는 결과 폴더(매번 덮어씀). run_matching·evaluate_train도 같은 기본값
+# 1차 실험 결과 폴더: 계획서·Plan.md 기준 수치의 출처라 어느 도구도 덮어쓰지 않는다
+# (base: Plan.md 1.3·1.4의 39장·매칭, tuning: 1.2·부록 B의 804장, diagnosis: 띠 밖 정답 비율·원인 분석)
+PROTECTED_NAMES = ("base", "tuning", "diagnosis")
+
+
+def check_name(parser, name):
+    """결과 폴더가 1차 결과 폴더이거나 그 안이면 실행을 멈춘다. 덮어쓰면 계획서 숫자를 다시 셀 근거가 사라지기 때문이다.
+    윈도·맥 파일 시스템은 대소문자를 가리지 않으므로 소문자로 비교한다."""
+    target = os.path.abspath(os.path.join("results", name)).lower()
+    for protected in PROTECTED_NAMES:
+        root = os.path.abspath(os.path.join("results", protected)).lower()
+        if target == root or target.startswith(root + os.sep):
+            parser.error(f"results/{protected}: 1차 결과(기준 수치의 출처)라 쓰지 않습니다. --name으로 다른 이름을 주세요.")
 
 
 def parse_args(argv=None):
-    """결과 폴더 이름(--name)과 처리할 사진 묶음(--only)을 명령행에서 읽는다."""
+    """결과 폴더 이름(--name)과 처리할 사진 묶음(--only)을 명령행에서 읽는다. 1차 결과 폴더 이름은 거부한다."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬 비교 실험")
-    parser.add_argument("--name", default="base", help="결과 폴더 이름 (results/<name>/)")
+    parser.add_argument("--name", default=DEFAULT_NAME, help=f"결과 폴더 이름 (results/<name>/, 기본 {DEFAULT_NAME})")
     parser.add_argument("--only", choices=list(IMAGE_DIRS), help="한쪽 사진만 처리")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    check_name(parser, args.name)
+    return args
 
 
 def list_images(only=None):

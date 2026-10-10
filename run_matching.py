@@ -1,6 +1,6 @@
 """(파트 C) 매칭 실험: 쌍 사진(data/pairs)끼리의 특징점 매칭이 전처리로 좋아지는지 잰다.
-사용법: 맨 위 폴더에서  python run_matching.py --name base   (run_experiment와 같은 이름을 쓰면 결과가 한 폴더에 모임)
-결과: results/<name>/
+사용법: 맨 위 폴더에서  python run_matching.py --name <이름>   (run_experiment와 같은 이름을 쓰면 결과가 한 폴더에 모임)
+결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
 - matching.csv: 쌍마다 기준 A와 B·C·D를 끔·켬으로 매칭한 행 (pair, target, condition, preprocess,
   kp_ref, kp_target, good, inliers, inlier_ratio, t_match_ms)
 - matches/<대상 사진 이름>_off.png·_on.png: RANSAC inlier만 초록 선으로 그린 그림
@@ -31,10 +31,12 @@ INLIER_COLOR = (0, 255, 0)          # inlier 선: 초록 (BGR)
 
 
 def parse_args(argv=None):
-    """결과 폴더 이름(--name)을 읽는다. run_experiment와 같은 이름을 쓰면 같은 폴더에 결과가 모인다."""
+    """결과 폴더 이름(--name)을 읽는다. run_experiment와 같은 이름을 쓰면 같은 폴더에 결과가 모인다. 1차 결과 폴더 이름은 거부한다."""
     parser = argparse.ArgumentParser(description="쌍 사진 매칭의 전처리 끔·켬 비교 실험")
-    parser.add_argument("--name", default="base", help="결과 폴더 이름 (results/<name>/)")
-    return parser.parse_args(argv)
+    parser.add_argument("--name", default=rx.DEFAULT_NAME, help=f"결과 폴더 이름 (results/<name>/, 기본 {rx.DEFAULT_NAME})")
+    args = parser.parse_args(argv)
+    rx.check_name(parser, args.name)
+    return args
 
 
 def group_pairs(paths, parse_fn=io_utils.parse_name):
