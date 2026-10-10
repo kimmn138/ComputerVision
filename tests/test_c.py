@@ -54,6 +54,16 @@ def patched(obj, name, value):
         setattr(obj, name, old)
 
 
+def parse_quietly(parse, argv):
+    """명령행 읽기 함수 parse(argv)를 부른다. 거부되면(argparse의 SystemExit) None. 오류 문구는 화면에 내지 않는다.
+    SystemExit은 Exception이 아니라 main의 except가 못 잡아 시험 전체가 멈추므로 여기서 None으로 바꾼다."""
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return parse(argv)
+    except SystemExit:
+        return None
+
+
 def square(size, value):
     """검은 바탕에 회색 사각형 하나: 해리스 코너 4개, SIFT 특징점이 아주 적은 영상."""
     img = np.zeros((240, 640), np.uint8)
@@ -290,6 +300,189 @@ def test_summary_tables():
     check("edges_diff" in rx.table_by_image(empty, fake_pr).columns
           and list(rx.table_by_group(empty, "source", fake_pr)["source"]) == ["all"],
           "요약 표: 0장일 때 머리글이나 all 행이 없음")
+
+
+def test_run_options():
+    """run_experiment 실행 옵션: 아무것도 안 주면 roi.csv 띠에 바꾸는 config 값이 없다(1차와 같은 조건).
+    --mask·--detect·--roi-top은 이번 실행에만 쓸 config 값이 되고, --roi auto는 마스크를 저절로 켜지 않는다(한 단계씩 비교하려고).
+    --roi-top은 --roi auto와 함께만 받는다(--roi csv에서는 39장에 효과가 없음). 범위 밖·모르는 값도 거부하고, 바꾼 값은 되돌아온다."""
+    args = parse_quietly(rx.parse_args, [])
+    check(args is not None and args.roi == "csv" and rx.runtime_overrides(args) == {},
+          f"run_experiment: 옵션이 없는데 roi.csv 띠가 아니거나 바꾸는 값이 있음 ({args})")
+    auto = parse_quietly(rx.parse_args, ["--roi", "auto"])
+    check(auto is not None and rx.runtime_overrides(auto) == {}, "run_experiment: --roi auto가 마스크 등 다른 값까지 바꿈")
+    args = parse_quietly(rx.parse_args, ["--roi", "auto", "--mask", "on", "--detect", "dark", "--roi-top", "0.3"])
+    expect = {"USE_ROAD_MASK": True, "DETECT_MODE": "dark", "ROI_TOP_DEFAULT": 0.3}
+    check(args is not None and rx.runtime_overrides(args) == expect, f"run_experiment: 실행 옵션을 config 값으로 못 바꿈 ({args})")
+    off = parse_quietly(rx.parse_args, ["--mask", "off", "--detect", "legacy"])
+    check(off is not None and rx.runtime_overrides(off) == {"USE_ROAD_MASK": False, "DETECT_MODE": "legacy"},
+          "run_experiment: --mask off·--detect legacy를 config 값으로 못 바꿈")
+    for bad in (["--roi-top", "0.3"], ["--roi", "csv", "--roi-top", "0.3"], ["--roi", "auto", "--roi-top", "1.0"],
+                ["--roi", "auto", "--roi-top", "-0.1"], ["--roi", "manual"], ["--detect", "fast"], ["--mask", "yes"]):
+        check(parse_quietly(rx.parse_args, bad) is None, f"run_experiment: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
+    if args is not None:
+        notes = rx.run_notes(args, expect)
+        check(notes == ["실행 옵션: --roi auto --mask on --detect dark --roi-top 0.3",
+                        "실행 옵션으로 바꾼 config 값: USE_ROAD_MASK=True, DETECT_MODE='dark', ROI_TOP_DEFAULT=0.3"],
+              f"run_notes: 실행 조건 줄이 틀림 ({notes})")
+    before = {name: getattr(C, name) for name in expect}
+    backup = rx.apply_overrides(expect)
+    try:
+        check(C.USE_ROAD_MASK is True and C.DETECT_MODE == "dark" and C.ROI_TOP_DEFAULT == 0.3, "apply_overrides: config에 적용되지 않음")
+    finally:
+        rx.restore_overrides(backup)
+    check({name: getattr(C, name) for name in expect} == before, "restore_overrides: 바꾼 config 값이 되돌아가지 않음")
+
+
+def test_get_roi_auto():
+    """--roi auto: roi.csv의 범위는 쓰지 않고 모든 사진에 config 기본 띠를 쓴다. 상태 태그(condition)는 사진의 성질이라 roi.csv에서 그대로 가져온다.
+    기본 띠는 import 때가 아니라 부를 때 config를 읽어야 --roi-top이 먹는다(인계 메모 5.3)."""
+    table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": "dark"}}
+    roi, used = rx.get_roi("a.jpg", table, "auto")
+    check(used and (roi["top"], roi["bottom"], roi["condition"]) == (C.ROI_TOP_DEFAULT, C.ROI_BOTTOM_DEFAULT, "dark"),
+          f"get_roi auto: roi.csv 범위를 쓰거나 상태 태그를 잃음 ({roi})")
+    roi, used = rx.get_roi("b.jpg", table, "auto")
+    check(used and roi["condition"] == "", f"get_roi auto: roi.csv에 없는 사진의 상태 태그가 빈칸이 아님 ({roi})")
+    check(rx.get_roi("a.jpg", table, "csv") == rx.get_roi("a.jpg", table) == (table["a.jpg"], False), "get_roi: 기본 방식이 csv가 아님")
+    with patched(C, "ROI_TOP_DEFAULT", 0.3):
+        check(rx.get_roi("a.jpg", table, "auto")[0]["top"] == 0.3, "get_roi auto: 실행 중에 바꾼 ROI_TOP_DEFAULT를 읽지 않음")
+
+
+def test_median_road_time():
+    """노면 마스크 시간 t_road_ms도 row의 두 시간 열처럼 반복의 중앙값으로 바꾼다(인계 메모 4.4). 받은 결과는 바꾸지 않는다."""
+    outs = [{"row": {"edges": 1, "t_pre_ms": 1.0, "t_detect_ms": 1.0}, "t_road_ms": t} for t in (5.0, 1.0, 3.0)]
+    out = rx.median_times(outs)
+    check(out["t_road_ms"] == 3.0 and outs[0]["t_road_ms"] == 5.0,
+          f"median_times: t_road_ms가 중앙값이 아니거나 받은 결과를 바꿈 ({out['t_road_ms']})")
+
+
+def test_edges_on_road():
+    """노면 안 에지 수: 에지(0/255) 중 노면(255) 위에 있는 것만 센다. 노면이 띠 전체(지금의 road_mask 자리)면 띠 전체 에지 수와 같다."""
+    edges = np.zeros((10, 20), np.uint8)
+    edges[:, ::2] = 255                                              # 에지 100개
+    road = np.zeros((10, 20), np.uint8)
+    road[:, :10] = 255                                               # 왼쪽 절반만 노면 → 에지 50개
+    before = (edges.copy(), road.copy())
+    full = np.full((10, 20), 255, np.uint8)
+    check(rx.edges_on_road(edges, full) == features.count_edges(edges) == 100, "edges_on_road: 노면이 띠 전체인데 띠 전체 에지 수와 다름")
+    check(rx.edges_on_road(edges, road) == 50, f"edges_on_road: 노면 안 에지만 세지 않음 ({rx.edges_on_road(edges, road)})")
+    check(np.array_equal(edges, before[0]) and np.array_equal(road, before[1]), "edges_on_road가 받은 영상을 바꿈")
+
+
+def test_verdict_columns():
+    """영상 단위 판정 열: 정답이 있으면 image_verdict(중심 기준)로 채우고, 정답 파일이 없으면 판정 4칸은 빈칸(has_gt·n_pred는 채움).
+    metrics.csv에서 판정은 빈칸을 허용하는 boolean, 개수는 Int64로 저장되고, 새 열은 상태 지표 열로 섞이지 않고 정한 자리에 온다."""
+    out = {"cracks": [{"bbox": (40, 0, 10, 10)}], "potholes": [], "y0": 40}     # 640px 전체 좌표 (40, 40, 10, 10), 중심 (45, 45)
+    v = rx.verdict_columns(out, [(0, 0, 100, 100, "crack")])
+    check(v == {"has_gt": True, "has_damage": True, "n_pred": 1, "hit_same": True, "hit_any": True, "correct": True},
+          f"verdict_columns: 정답 있는 사진의 판정이 틀림 ({v})")
+    none = rx.verdict_columns(out, None)
+    check(none["has_gt"] is False and none["n_pred"] == 1 and all(math.isnan(none[k]) for k in rx.VERDICT_BOOL),
+          f"verdict_columns: 정답 파일이 없는데 판정 칸이 빈칸이 아님 ({none})")
+    rows = [{**metric_row("a.jpg", "own", "dark", "off", 10, 5, 100, (1, 0, 1, 0)), "edges_road": 8, "t_road_ms": 0.5, **v},
+            {**metric_row("b.jpg", "own", "dark", "off", 10, 5, 100), "edges_road": 9, "t_road_ms": 0.5, **none}]
+    df = rx.metrics_frame(rows)
+    types = {c: str(df[c].dtype) for c in ("has_gt", "correct", "n_pred", "edges_road")}
+    check(types == {"has_gt": "boolean", "correct": "boolean", "n_pred": "Int64", "edges_road": "Int64"}, f"metrics_frame: 새 열의 형이 틀림 ({types})")
+    check(list(df["has_gt"]) == [True, False] and df["correct"].isna().tolist() == [False, True],
+          "metrics_frame: 정답 없는 사진의 판정이 빈칸이 아님")
+    lines = df.to_csv(index=False).splitlines()
+    head, b_row = lines[0].split(","), lines[2].split(",")
+    check(b_row[head.index("correct")] == "" and b_row[head.index("n_pred")] == "1",
+          f"metrics.csv: 정답 없는 사진의 판정 칸이 빈칸으로 저장되지 않음 (correct={b_row[head.index('correct')]!r})")
+    check(not set(rx.quality_columns(rows)) & set(rx.VERDICT_COLUMNS + rx.EXTRA_COLUMNS), "quality_columns: 새 열이 상태 지표 열로 섞임")
+    cols = list(df.columns)
+    check(cols.index("t_road_ms") == cols.index("t_detect_ms") + 2 and cols[-len(rx.VERDICT_COLUMNS):] == rx.VERDICT_COLUMNS,
+          "metrics_frame: 새 열이 row 9열 뒤(edges_road·t_road_ms)·정답 비교 열 뒤(판정)에 오지 않음")
+
+
+def test_group_verdict_tables():
+    """source·condition 표: 정답 있는 영상만으로 민감도·특이도·영상 단위 정답률의 끔·켬·차이를 내고, 정답률 바로 옆에 기준선을 둔다.
+    정답 없는 영상(c)은 영상 수에는 들고 판정에서는 빠진다."""
+    def row(file, source, pre, damage, correct):
+        """damage None = 정답 파일 없음."""
+        r = metric_row(file, source, "dark", pre, 10, 5, 100, None if damage is None else (1, 0, 1, 0))
+        r.update({"edges_road": 10, "t_road_ms": 0.5, "has_gt": damage is not None, "n_pred": 1})
+        r.update({k: (math.nan if damage is None else val) for k, val in
+                  (("has_damage", damage), ("hit_same", correct and bool(damage)), ("hit_any", correct and bool(damage)), ("correct", correct))})
+        return r
+
+    rows = [row("a.jpg", "provided", "off", True, True), row("a.jpg", "provided", "on", True, False),
+            row("b.jpg", "own", "off", False, True), row("b.jpg", "own", "on", False, True),
+            row("c.jpg", "own", "off", None, None), row("c.jpg", "own", "on", None, None)]
+    df = rx.metrics_frame(rows)
+    src = rx.table_by_group(df, "source", fake_pr)
+    cols = list(src.columns)
+    check(cols[:5] == ["source", "n_images", "n_gt", "n_damage", "n_none"] and cols.index("baseline_none") == cols.index("accuracy_diff") + 1,
+          f"table_by_source: 영상 단위 열이 앞에 없거나 정답률 바로 옆에 기준선이 없음 ({cols[:16]})")
+    t = src.set_index("source")
+    p, o, a = t.loc["provided"], t.loc["own"], t.loc["all"]
+    check((p["sensitivity_off"], p["sensitivity_on"], p["sensitivity_diff"], p["accuracy_on"], p["baseline_none"]) == (1.0, 0.0, -1.0, 0.0, 0.0)
+          and math.isnan(p["specificity_off"]), "table_by_source: 제공 행(손상 1장)의 민감도·정답률·기준선이 틀림")
+    check((o["n_images"], o["n_gt"], o["n_none"], o["specificity_on"], o["accuracy_off"], o["baseline_none"]) == (2, 1, 1, 1.0, 1.0, 1.0)
+          and math.isnan(o["sensitivity_on"]), "table_by_source: 직접 촬영 행(무손상 1장 + 정답 없음 1장)이 틀림")
+    check((a["n_gt"], a["n_damage"], a["n_none"], a["accuracy_off"], a["accuracy_on"], a["accuracy_diff"], a["baseline_none"])
+          == (2, 1, 1, 1.0, 0.5, -0.5, 0.5), "table_by_source: all 행의 정답률·기준선이 틀림")
+    cond = rx.table_by_group(df, "condition", fake_pr)
+    check(list(cond["condition"]) == ["dark", "all"] and cond.iloc[1]["accuracy_on"] == 0.5 and cond.iloc[1]["baseline_none"] == 0.5,
+          "table_by_condition: 영상 단위 지표가 틀림")
+
+
+def test_run_main_options():
+    """run_experiment.main을 임시 폴더의 합성 사진 2장(roi.csv에 있는 직접 촬영 1장, 없는 제공 1장)으로 끝까지 돌린다(TIME_REPEAT 1).
+    옵션 없음과 기본값을 직접 준 실행은 시간 열 말고 같고, 실행 옵션·바꾼 값이 config_used.txt 끝에 남으며, 끝나면 config가 되돌아온다.
+    정답 없는 사진은 판정 칸이 빈칸이고, 지금 노면 마스크(전부 255)에서는 edges_road = edges. --roi auto·--roi-top은 roi.csv 띠 대신 기본 띠를 쓴다.
+    --detect dark(아직 구현 전)는 같은 오류를 한 줄로 묶어 알리고 1로 끝나며, 그래도 config는 되돌아온다."""
+    rng = np.random.default_rng(1)
+    times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
+    before = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+    with tempfile.TemporaryDirectory() as tmp:
+        dirs = {"provided": os.path.join(tmp, "provided"), "own": os.path.join(tmp, "own")}
+        for folder, name in (("provided", "Japan_900001.jpg"), ("own", "own_90_crack_normal.jpg")):
+            os.makedirs(dirs[folder])
+            gray = cv.GaussianBlur(rng.integers(90, 160, (480, 640), dtype=np.uint8), (0, 0), 1.5)
+            cv.line(gray, (60, 380), (580, 400), 40, 3)
+            cv.imwrite(os.path.join(dirs[folder], name), cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
+        roi_path, res = os.path.join(tmp, "roi.csv"), os.path.join(tmp, "results")
+        with open(roi_path, "w", encoding="utf-8") as f:
+            f.write("file,roi_top,roi_bottom,condition\nown_90_crack_normal.jpg,0.2,1.0,normal\n")
+        gts = {"own_90_crack_normal.jpg": [(50, 360, 540, 60, "crack")]}
+
+        def run(argv):
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                code = rx.main(argv, dirs, roi_path, res)
+            return code, printed.getvalue()
+
+        def read(name):
+            metrics = pd.read_csv(os.path.join(res, name, "metrics.csv"), encoding="utf-8-sig").set_index(["file", "preprocess"])
+            with open(os.path.join(res, name, "config_used.txt"), encoding="utf-8") as f:
+                return metrics, f.read().splitlines()
+
+        with patched(C, "TIME_REPEAT", 1), patched(rx, "load_gt_for", gts.get):
+            codes = [run(argv)[0] for argv in ([], ["--name", "explicit", "--roi", "csv", "--mask", "off", "--detect", "legacy"],
+                                               ["--name", "auto", "--roi", "auto", "--mask", "on", "--roi-top", "0.3"])]
+            after = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+            dark_code, dark_out = run(["--name", "dark", "--detect", "dark"])
+            after_dark = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+        (m0, c0), (m1, c1), (m2, c2) = read("latest"), read("explicit"), read("auto")
+        check(codes == [0, 0, 0] and after == before and after_dark == before,
+              f"main: 끝 코드({codes})이 0이 아니거나 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
+        check(m0.drop(columns=times).equals(m1.drop(columns=times)), "main: 옵션 없음과 기본값을 직접 준 실행의 결과가 다름")
+        check(c0[-2:] == ["# 실행 옵션: --roi csv", "# 실행 옵션으로 바꾼 config 값: 없음"], f"config_used: 옵션 없는 실행의 조건 줄이 틀림 ({c0[-2:]})")
+        check("USE_ROAD_MASK = True" in c2 and "ROI_TOP_DEFAULT = 0.3" in c2
+              and c2[-1] == "# 실행 옵션으로 바꾼 config 값: USE_ROAD_MASK=True, ROI_TOP_DEFAULT=0.3",
+              f"config_used: 바꾼 값이 남지 않음 ({c2[-2:]})")
+        own, provided = ("own_90_crack_normal.jpg", "off"), ("Japan_900001.jpg", "off")
+        check(bool(m0.loc[own, "has_gt"]) and not pd.isna(m0.loc[own, "correct"])
+              and not bool(m0.loc[provided, "has_gt"]) and pd.isna(m0.loc[provided, "correct"]) and m0.loc[provided, "n_pred"] >= 0,
+              "main: 정답 있는 사진의 판정이 비었거나 정답 없는 사진의 판정이 빈칸이 아님")
+        check((m0["edges_road"] == m0["edges"]).all() and (m0["t_road_ms"] >= 0).all(),
+              "main: 노면 마스크가 띠 전체인데 edges_road가 edges와 다르거나 t_road_ms가 없음")
+        check((m0.loc[own, "roi_pixels"], m0.loc[provided, "roi_pixels"]) == (384 * 640, 240 * 640)
+              and (m2.loc[own, "roi_pixels"], m2.loc[provided, "roi_pixels"]) == (336 * 640, 336 * 640),
+              "main: --roi csv(roi.csv 0.2·기본 0.5)와 --roi auto --roi-top 0.3의 띠 높이가 틀림")
+        check(dark_code == 1 and dark_out.count("NotImplementedError") == 1 and "2장" in dark_out,
+              f"main: dark의 '아직 구현 안 됨' 오류를 한 줄로 묶어 알리지 않음 ({dark_out.strip().splitlines()[-2:]})")
 
 
 def test_demo_args_roi():
@@ -539,15 +732,6 @@ def test_result_folder_safety():
     1차 결과 폴더(base·tuning·diagnosis = 기준 수치의 출처)는 대소문자·하위 폴더까지 거부한다.
     evaluate_train의 기본 실행은 config 값 그대로 한 세트이고, 1차 튜닝 세트는 --param-set으로만 돈다."""
     from tools import evaluate_train as et
-
-    def parse_quietly(parse, argv):
-        """명령행을 읽는다. 거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
-        try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                return parse(argv)
-        except SystemExit:
-            return None
-
     parsers = {"run_experiment": rx.parse_args, "run_matching": rm.parse_args, "evaluate_train": et.parse_args}
     for tool, parse in parsers.items():
         args = parse_quietly(parse, [])
@@ -622,24 +806,16 @@ def test_train_options():
     """evaluate_train 실행 옵션: --mask·--roi-top·--detect·--set은 이번 실행에만 쓸 config 값 {이름: 값}이 되고(--set 값은 파이썬 값으로,
     안 되면 글자로 읽음), config에 없는 이름·소문자 이름·범위 밖 띠·튜닝 세트와 겹치는 값은 거부한다. 백업으로 원래 값이 돌아온다."""
     from tools import evaluate_train as et
-
-    def parse_quietly(argv):
-        """거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
-        try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                return et.parse_args(argv)
-        except SystemExit:
-            return None
-
-    args = parse_quietly(["--mask", "on", "--roi-top", "0.3", "--detect", "legacy",
-                          "--set", "DARK_SIGMA_IN_ROAD=False", "--set", "DETECT_MODE=dark"])
+    args = parse_quietly(et.parse_args, ["--mask", "on", "--roi-top", "0.3", "--detect", "legacy",
+                                         "--set", "DARK_SIGMA_IN_ROAD=False", "--set", "DETECT_MODE=dark"])
     expect = {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.3, "DETECT_MODE": "dark", "DARK_SIGMA_IN_ROAD": False}
     check(args is not None and args.overrides == expect, f"evaluate_train: 실행 옵션을 config 값으로 못 바꿈 ({args and args.overrides})")
-    check(parse_quietly([]).overrides == {} and parse_quietly([]).split == "dev", "evaluate_train: 옵션이 없는데 바꾸는 값이 있거나 기본 분할이 dev가 아님")
+    plain = parse_quietly(et.parse_args, [])
+    check(plain.overrides == {} and plain.split == "dev", "evaluate_train: 옵션이 없는데 바꾸는 값이 있거나 기본 분할이 dev가 아님")
     for bad in (["--set", "NO_SUCH_NAME=1"], ["--set", "use_road_mask=True"], ["--set", "USE_ROAD_MASK"], ["--roi-top", "1.2"],
                 ["--param-set", "base", "--set", "CANNY_LOW=10"], ["--split", "train"]):
-        check(parse_quietly(bad) is None, f"evaluate_train: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
-    check(parse_quietly(["--param-set", "base", "--set", "USE_ROAD_MASK=True"]) is not None,
+        check(parse_quietly(et.parse_args, bad) is None, f"evaluate_train: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
+    check(parse_quietly(et.parse_args, ["--param-set", "base", "--set", "USE_ROAD_MASK=True"]) is not None,
           "evaluate_train: 튜닝 세트와 겹치지 않는 --set까지 거부함")
     if args is None:
         return
@@ -696,7 +872,8 @@ def main():
     skips = []
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
-               test_summary_tables, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
+               test_summary_tables, test_run_options, test_get_roi_auto, test_median_road_time, test_edges_on_road,
+               test_verdict_columns, test_group_verdict_tables, test_run_main_options, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,
