@@ -534,6 +534,36 @@ def test_draw_road_copy():
           "draw_road: 같은 크기의 새 영상을 돌려주지 않거나 받은 영상을 바꿈")
 
 
+def test_result_folder_safety():
+    """세 실행 도구(run_experiment·run_matching·evaluate_train)는 --name이 없으면 results/latest에 쓰고,
+    1차 결과 폴더(base·tuning·diagnosis = 기준 수치의 출처)는 대소문자·하위 폴더까지 거부한다.
+    evaluate_train의 기본 실행은 config 값 그대로 한 세트이고, 1차 튜닝 세트는 --param-set으로만 돈다."""
+    from tools import evaluate_train as et
+
+    def parse_quietly(parse, argv):
+        """명령행을 읽는다. 거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                return parse(argv)
+        except SystemExit:
+            return None
+
+    parsers = {"run_experiment": rx.parse_args, "run_matching": rm.parse_args, "evaluate_train": et.parse_args}
+    for tool, parse in parsers.items():
+        args = parse_quietly(parse, [])
+        check(args is not None and args.name == "latest", f"{tool}: --name 없이 실행하면 results/latest가 아님 ({args})")
+        for name in ("base", "tuning", "diagnosis", "Base", "tuning/sub"):
+            check(parse_quietly(parse, ["--name", name]) is None, f"{tool}: 1차 결과 폴더 이름도 받아들임 ({name})")
+        args = parse_quietly(parse, ["--name", "e0_base"])
+        check(args is not None and args.name == "e0_base", f"{tool}: 보통 이름(e0_base)을 받지 못함")
+    args = parse_quietly(et.parse_args, [])
+    default = et.select_param_sets(args.param_set) if args else []
+    check(default == [{"name": "config"}],
+          f"evaluate_train: 기본 세트가 config 값 그대로(덮는 값 없음)가 아님 ({[p['name'] for p in default]})")
+    check([p["name"] for p in et.select_param_sets("base")] == ["base"], "evaluate_train: --param-set base로 base 세트를 고르지 못함")
+    check(et.select_param_sets("all") == et.PARAM_SETS and len(et.PARAM_SETS) == 5, "evaluate_train: --param-set all이 1차 5세트가 아님")
+
+
 @todo("C WP5: draw_road 구현 뒤 (Plan.md 3.7)")
 def test_draw_road_paint():
     """노면(road 255)은 y0만큼 내린 자리에 초록이 섞이고, 노면 밖과 띠 위쪽은 그대로다."""
@@ -619,6 +649,7 @@ def main():
                test_summary_tables, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
+               test_result_folder_safety,
                test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split, test_degrade):
         try:
             fn()
