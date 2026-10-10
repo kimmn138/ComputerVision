@@ -1,6 +1,13 @@
 """(파트 B) 교수 제공 훈련 데이터 전체에서 검출 파라미터 후보를 정량 평가한다.
-사용법: 맨 위 폴더에서  python tools/convert_json_gt.py (정답 CSV를 먼저 만듦) → python tools/evaluate_train.py
+사용법: 맨 위 폴더에서  python tools/convert_json_gt.py (정답 CSV를 먼저 만듦)
+        → python tools/evaluate_train.py [--name 이름] [--param-set base|…|all]
 훈련 사진과 정답 CSV 폴더는 config B 구역의 TRAIN_IMAGE_DIR·TRAIN_GT_DIR.
+
+결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
+- train_detail.csv(영상별), train_summary.csv(합계), config_used_train.txt(이번 실행의 config 값과 파라미터 세트)
+파라미터: 기본은 config.py 값을 그대로 한 번 돌린다(params 열 = config).
+--param-set으로 1차 튜닝 세트를 고르면 그 값으로 config를 실행 중에만 덮는다.
+base는 1차(10/06, results/tuning) 기준 값이라 E0 재현에 쓰고, all은 5세트를 모두 돈다.
 
 run_experiment와 같은 조건으로 평가한다:
 - pipeline.run_pipeline(640px → ROI 자르기 → 전처리 끔/켬 → 검출)을 그대로 쓰고, 끔·켬 두 줄을 모두 낸다.
@@ -11,6 +18,7 @@ run_experiment와 같은 조건으로 평가한다:
 - iou: IoU ≥ IOU_THRESH, 정답 하나에 검출 하나(evaluate.count_matches)
 - ctr: 검출 중심이 정답 박스 안(evaluate.count_center_hits). 큰 정답 박스 안의 조각 검출도 맞힘으로 셈"""
 
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -29,10 +37,11 @@ from src.evaluate import (  # noqa: E402
 )
 
 
-RESULT_DIR = Path("results/tuning")
+RESULTS_ROOT = Path("results")              # 결과는 results/<name>/ (이름 규칙은 run_experiment와 같음)
 
-DETAIL_PATH = RESULT_DIR / "train_detail.csv"
-SUMMARY_PATH = RESULT_DIR / "train_summary.csv"
+DETAIL_NAME = "train_detail.csv"
+SUMMARY_NAME = "train_summary.csv"
+CONFIG_NAME = "config_used_train.txt"       # run_experiment의 config_used.txt와 같은 폴더에서 겹치지 않게
 
 ROI_PATH = Path("data/roi.csv")
 
@@ -45,9 +54,16 @@ COUNT_KEYS = ("tp", "fp", "found", "fn")
 # ---------------------------------------------------------
 # 파라미터 후보
 #
+# 기본 실행은 config.py 값을 그대로 쓴다(CONFIG_SET).
+# 아래 1차 튜닝 세트는 --param-set으로 고를 때만 쓴다.
+# base는 1차(10/06, results/tuning) 기준 값을 숫자로 고정해 둔 것이라
+# config B 구역이 바뀐 뒤에도 E0(1차 방법)를 다시 낼 수 있다.
+#
 # config.py 파일은 수정하지 않는다.
 # 실행 중 C.xxx 값만 임시 변경한 뒤 반드시 원복한다.
 # ---------------------------------------------------------
+
+CONFIG_SET = {"name": "config"}            # 덮어쓰는 값이 없는 세트: config.py 값 그대로
 
 PARAM_SETS = [
     {
@@ -145,6 +161,43 @@ PARAM_SETS = [
         "POT_MIN_SOLIDITY": 0.70,
     },
 ]
+
+
+def parse_args(argv=None):
+    """결과 폴더 이름(--name)과 1차 튜닝 세트(--param-set)를 명령행에서 읽는다. 1차 결과 폴더 이름은 거부한다."""
+    parser = argparse.ArgumentParser(description="훈련 데이터 전체 평가")
+
+    parser.add_argument(
+        "--name",
+        default=rx.DEFAULT_NAME,
+        help=f"결과 폴더 이름 (results/<name>/, 기본 {rx.DEFAULT_NAME})",
+    )
+
+    parser.add_argument(
+        "--param-set",
+        choices=[params["name"] for params in PARAM_SETS] + ["all"],
+        help="1차 튜닝 세트로 돌림 (base = E0 재현용 1차 값, all = 5세트 모두). 빼면 config.py 값 그대로",
+    )
+
+    args = parser.parse_args(argv)
+    rx.check_name(parser, args.name)
+
+    return args
+
+
+def select_param_sets(name):
+    """돌릴 파라미터 세트를 고른다: 없으면 config 값 그대로 한 세트, 'all'이면 1차 5세트, 아니면 그 이름의 세트."""
+    if name is None:
+        return [CONFIG_SET]
+
+    if name == "all":
+        return PARAM_SETS
+
+    return [
+        params
+        for params in PARAM_SETS
+        if params["name"] == name
+    ]
 
 
 def split_gt(gt):
@@ -304,6 +357,16 @@ def save_csv(path, rows, fieldnames):
         writer.writerows(rows)
 
 
+def write_config(path, param_sets):
+    """이번 실행의 config 값과 돌린 파라미터 세트 이름을 남긴다(결과가 어떤 설정에서 나왔는지 알 수 있게)."""
+    rx.write_config(path)
+
+    names = ", ".join(params["name"] for params in param_sets)
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(f"# 파라미터 세트: {names} (config가 아닌 세트는 PARAM_SETS 값이 위 값을 실행 중에 덮음)\n")
+
+
 def print_summary(summary_rows):
     """요약을 콘솔 표로 보여 준다: 종류마다 IoU 기준과 중심 기준의 정밀도 / 재현율."""
     header = " | ".join(
@@ -327,12 +390,15 @@ def print_summary(summary_rows):
         print(f"{row['params']:15s} {row['preprocess']:4s} | " + " | ".join(f"{c:>15s}" for c in cells))
 
 
-def main():
-    """훈련 데이터 전체에서 각 파라미터 후보의 정량 성능을 전처리 끔·켬과 두 판정 기준으로 비교한다."""
-    RESULT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+def main(argv=None):
+    """훈련 데이터 전체를 고른 파라미터 세트(기본 config 값)로 전처리 끔·켬과 두 판정 기준으로 평가해 results/<name>/에 저장한다."""
+    args = parse_args(argv)
+    param_sets = select_param_sets(args.param_set)
+
+    out_dir = RESULTS_ROOT / args.name
+    detail_path = out_dir / DETAIL_NAME
+    summary_path = out_dir / SUMMARY_NAME
+    config_path = out_dir / CONFIG_NAME
 
     image_dir = Path(C.TRAIN_IMAGE_DIR)
     gt_dir = Path(C.TRAIN_GT_DIR)
@@ -356,12 +422,25 @@ def main():
             "(JSON 폴더는 config B 구역의 TRAIN_ANN_DIR)."
         )
 
+    # 사진·정답을 확인한 뒤에 폴더를 만든다(입력이 없을 때 빈 결과 폴더가 남지 않게)
+    out_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    write_config(
+        config_path,
+        param_sets,
+    )
+
     roi_table = io_utils.load_roi_table(ROI_PATH)
 
     print("=" * 72)
     print("훈련 데이터 전체 평가 (run_experiment와 같은 조건)")
     print("images =", len(image_paths))
     print("GT =", gt_dir)
+    print("params =", ", ".join(params["name"] for params in param_sets))
+    print("결과 =", out_dir)
     print(f"ROI = roi.csv, 없으면 top {C.ROI_TOP_DEFAULT} · bottom {C.ROI_BOTTOM_DEFAULT} (ROI 밖 정답은 FN)")
     print(f"판정 = IoU ≥ {C.IOU_THRESH} 일대일(iou), 검출 중심이 정답 박스 안(ctr)")
     print("=" * 72)
@@ -370,7 +449,7 @@ def main():
 
     totals = {
         (params["name"], mode): {"images": 0, **{col: 0 for col in count_columns()}}
-        for params in PARAM_SETS
+        for params in param_sets
         for mode, _ in MODES
     }
 
@@ -396,7 +475,7 @@ def main():
             roi, used_default = rx.get_roi(image_path.name, roi_table)
             n_default_roi += used_default
 
-            for params in PARAM_SETS:
+            for params in param_sets:
                 apply_param_set(params)
 
                 for mode, use_preprocess in MODES:
@@ -438,13 +517,13 @@ def main():
     ]
 
     save_csv(
-        DETAIL_PATH,
+        detail_path,
         detail_rows,
         ["params", "preprocess", "image"] + count_columns(),
     )
 
     save_csv(
-        SUMMARY_PATH,
+        summary_path,
         summary_rows,
         summary_fieldnames(),
     )
@@ -454,8 +533,9 @@ def main():
     print()
     print("=" * 72)
     print(f"전체 평가 완료 (config 기본 ROI를 쓴 사진 {n_default_roi}장)")
-    print("상세:", DETAIL_PATH)
-    print("요약:", SUMMARY_PATH)
+    print("상세:", detail_path)
+    print("요약:", summary_path)
+    print("설정:", config_path)
     print("=" * 72)
 
 
