@@ -1393,11 +1393,15 @@ def test_run_all_plan():
     from tools import evaluate_train as et
     from tools import run_all as ra
     names = collections.Counter(e["name"] for e in ra.EXPERIMENTS)
-    check(names.pop("final") == 2 and set(names.values()) == {1}, f"run_all: 결과 폴더 이름이 겹침 ({names.most_common(3)})")
+    check(names.pop("final_ratio") == 2 and set(names.values()) == {1}, f"run_all: 결과 폴더 이름이 겹침 ({names.most_common(3)})")
+    old_final = {"final", "final_auto", "e0", "e5_dev"} | {f"e6_{k}_final_dev" for k in et.DEGRADE_KINDS}
+    check(not old_final & {e["name"] for e in ra.EXPERIMENTS if e["stage"] == "final"},
+          "run_all: ratio 채택 뒤 최종 단계가 예전 최종 폴더(남기기 center)를 덮어씀")
     parsers = {"train": et.parse_args, "run39": rx.parse_args, "match": rm.parse_args}
     for e in ra.EXPERIMENTS:
         if e["tool"] == "train":
-            check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test", "test_autoband", "final_test_autoband"),
+            check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test", "test_autoband", "final_test_autoband",
+                                                                                 "test_ratio", "final_test_ratio"),
                   f"run_all: 학습 데이터 폴더 이름 끝에 데이터가 없음 ({e['name']})")
         if e["tool"]:
             argv, _ = ra.command(e, ra.resolve(e, {"E0"}))
@@ -1415,21 +1419,33 @@ def test_run_all_plan():
                                                       "DARK_SIGMA_IN_ROAD": False}, f"run_all: E3σ의 옵션이 틀림 ({e3s.overrides})")
     argv, pins = first("F39e0")
     base = {k: v for k, v in et.PARAM_SETS[0].items() if k != "name"}
-    check(pins == {**base, "ROI_TOP_DEFAULT": 0.5, "AUTO_BAND_TOP": False} and "--roi-top" not in argv and argv[-2:] == ["--name", "e0"],
+    check(pins == {**base, "ROI_TOP_DEFAULT": 0.5, "AUTO_BAND_TOP": False} and "--roi-top" not in argv
+          and argv[-2:] == ["--name", "e0_final_ratio"],
           f"run_all: 39장 1차 설정이 1차 값을 실행 중에만 덮지 않음 ({argv}, {sorted(pins)})")
     check(first("E3_39") == (["--roi", "auto", "--detect", "dark", "--mask", "on", "--roi-top", "0.5", "--name", "e3_dark_mask_auto"],
-                             {"DARK_SIGMA_IN_ROAD": True, "AUTO_BAND_TOP": False}),
+                             {"DARK_SIGMA_IN_ROAD": True, "AUTO_BAND_TOP": False, "ROAD_KEEP_RULE": "center"}),
           f"run_all: 39장 E3 자동 ROI의 명령·고정 값이 틀림 ({first('E3_39')})")
-    check(first("TA") == (["--split", "test", "--name", "test_autoband"], {}) and first("F39") == (["--roi", "csv", "--name", "final"], {})
-          and first("E5") == (["--split", "dev", "--name", "e5_dev"], {}),
+    check(first("TR") == (["--split", "test", "--name", "test_ratio"], {}) and first("F39") == (["--roi", "csv", "--name", "final_ratio"], {})
+          and first("E5") == (["--split", "dev", "--name", "e5_ratio_dev"], {}) and first("RR")[1] == {},
           "run_all: 최종 설정 실행에 config를 바꾸는 옵션이 붙음")
-    # 띠 고정 시절 시험셋(test_once·final_test)과 띠를 비율로 정한 실험은 자동 띠를 켠 뒤에도 띠 고정으로 돈다
-    check(first("T") == (["--split", "test", "--name", "test_once"], {"AUTO_BAND_TOP": False})
-          and first("R")[1] == {"AUTO_BAND_TOP": False} and first("E3")[1] == {"AUTO_BAND_TOP": False},
-          f"run_all: 띠 고정 실험에 AUTO_BAND_TOP=False를 고정하지 않음 ({first('T')}, {first('R')}, {first('E3')})")
+    # 띠 고정 시절 시험셋(test_once·final_test)과 띠를 비율로 정한 실험은 자동 띠를 켠 뒤에도 띠 고정으로 돈다.
+    # ratio 채택(10/12) 전에 돈 실험(비교·자동 띠·test_once·test_autoband)은 남기기 규칙도 처음처럼 center로 돈다
+    center = {"ROAD_KEEP_RULE": "center"}
+    check(first("T") == (["--split", "test", "--name", "test_once"], {"AUTO_BAND_TOP": False, **center})
+          and first("R")[1] == {"AUTO_BAND_TOP": False, **center} and first("E3")[1] == {"AUTO_BAND_TOP": False, **center},
+          f"run_all: 띠 고정 실험에 AUTO_BAND_TOP=False·center를 고정하지 않음 ({first('T')}, {first('R')}, {first('E3')})")
+    check(first("TA") == (["--split", "test", "--name", "test_autoband"], center) and first("RA")[1] == center
+          and all(first(sid)[1].get("ROAD_KEEP_RULE") == "center" for sid in ("E1", "E6_blur", "E3_39", "B1_39")),
+          f"run_all: ratio 채택 전 실험에 남기기 center를 고정하지 않음 ({first('TA')})")
+    m2 = parse_quietly(et.parse_args, first("M2")[0])
+    m2_39 = parse_quietly(rx.parse_args, first("M2_39")[0])
+    check(m2 is not None and m2.overrides == {"ROAD_KEEP_RULE": "center", "ROAD_LANE_BRIDGE": True} and first("M2")[1] == {}
+          and m2_39 is not None and rx.runtime_overrides(m2_39) == {"ROAD_KEEP_RULE": "center", "ROAD_LANE_BRIDGE": True}
+          and m2_39.roi == "auto" and parse_quietly(et.parse_args, first("M1")[0]).overrides == {"ROAD_KEEP_RULE": "ratio"},
+          f"run_all: 노면 마스크 보완 비교(M1·M2)의 --set이 틀림 ({first('M2')}, {first('M2_39')})")
     b1 = parse_quietly(et.parse_args, first("B1")[0])
     check(b1 is not None and b1.overrides.get("AUTO_BAND_TOP") is True and b1.overrides.get("AUTO_BAND_USE_TEXTURE") is False
-          and first("B1")[1] == {}, f"run_all: B1(자동 띠, 결 없음)의 옵션이 틀림 ({first('B1')})")
+          and first("B1")[1] == {"ROAD_KEEP_RULE": "center"}, f"run_all: B1(자동 띠, 결 없음)의 옵션이 틀림 ({first('B1')})")
     b39 = parse_quietly(rx.parse_args, first("B1_39")[0])
     check(b39 is not None and rx.runtime_overrides(b39).get("AUTO_BAND_TOP") is True
           and rx.runtime_overrides(b39).get("AUTO_BAND_USE_TEXTURE") is False and b39.roi == "auto",
@@ -1653,7 +1669,7 @@ def test_run_all_retest_refuse():
         paths = {**ra.default_paths(), "results": str(results)}
         check(ra.stage_refusal("retest", results) is not None and "final을 먼저" in ra.stage_refusal("retest", results),
               "run_all retest: 최종 단계 결과 없이 거부하지 않음")
-        e5 = results / "e5_dev"
+        e5 = results / "e5_ratio_dev"
         e5.mkdir(parents=True)
         rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
         check(ra.stage_refusal("retest", results) is None, f"run_all retest: config가 같은데 거부함 ({ra.stage_refusal('retest', results)})")
@@ -1667,6 +1683,14 @@ def test_run_all_retest_refuse():
         with contextlib.redirect_stdout(io.StringIO()) as printed:
             code = ra.main(["retest", "--yes"], paths)
         check(code == 2 and "한 번만" in printed.getvalue(), f"run_all retest: test_autoband가 있는데 거부하지 않음 ({code})")
+        check(ra.stage_refusal("retest_ratio", results) is None, "run_all retest_ratio: test_autoband만 있는데 거부함")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_ratio_repro"], paths)
+        check(code == 2 and "retest_ratio 뒤에" in printed.getvalue(), "run_all retest_ratio_repro: test_ratio 없이도 돌았음")
+        (results / "test_ratio").mkdir()
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_ratio", "--yes"], paths)
+        check(code == 2 and "한 번만" in printed.getvalue(), f"run_all retest_ratio: test_ratio가 있는데 거부하지 않음 ({code})")
     old = {"t_pre_ms_mean": 1.0, "t_detect_ms_mean": 2.0, "t_road_ms_mean": 3.0}
     check(ra.time_per_image(old) == 6.0 and ra.time_per_image({**old, "t_band_ms_mean": 4.0}) == 10.0,
           "run_all: 처리 시간 합에 t_band가 빠지거나 예전 결과(t_band 없음)를 0으로 읽지 않음")
@@ -1681,7 +1705,8 @@ def test_run_all_report_empty():
         out = Path(tmp) / "results" / ra.REPORT_DIR
         expect = {f"table{i}_{n}.csv" for i, n in enumerate(["stages", "by_country", "by_condition", "preprocess", "matching",
                                                             "provided_vs_own", "degrade", "39_images"], 1)}
-        expect |= {"table9_auto_band.csv", "table9_auto_band_country.csv", "table9_auto_band_39.csv"}
+        expect |= {"table9_auto_band.csv", "table9_auto_band_country.csv", "table9_auto_band_39.csv", "table10_mask2.csv",
+                   "table10_mask2_changes.csv", "table10_mask_gt.csv", "table11_tests.csv", "table12_time.csv", "table13_judge.csv"}
         check(expect | {"adoption.csv", "adoption_grid.csv", "summary.md", "accept.txt", "reject.txt"} == set(os.listdir(out)),
               f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
         text = (out / "summary.md").read_text(encoding="utf-8")
