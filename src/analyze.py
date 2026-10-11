@@ -63,18 +63,49 @@ def _mean_gradient(gray):
 def measure_quality(gray):
     """전처리를 고르는 근거로 노면 영상의 밝기(mean)·대비(std)·흐림(lap_var)·잡티(noise)를 잰다.
     blur_ratio(재흐림 비율, Plan.md 3.6)는 키 자리만 있다. TODO(A): WP4에서 계산하기 전까지 NaN이고, choose_steps는 아직 쓰지 않는다."""
+
     mean_val = float(gray.mean())
     std_val = float(gray.std())
 
-    # 라플라시안 분산 (흐림도 측정)
-    lap_var = float(cv.Laplacian(gray, cv.CV_64F).var())
+    # 기존 흐림 지표
+    lap_var = float(
+        cv.Laplacian(
+            gray,
+            cv.CV_64F
+        ).var()
+    )
 
-    # Immerkær 잡음 추정 (평평한 블록에서만 재서 결·경계를 잡음으로 세지 않음)
+    # 잡음 추정
     noise = _estimate_noise(gray)
 
-    return {"mean": mean_val, "std": std_val, "lap_var": lap_var, "noise": noise,
-            "blur_ratio": float("nan")}
+    # 원본의 Sobel 평균
+    grad_original = _mean_gradient(gray)
 
+    # 일부러 한 번 더 흐리게
+    reblurred = cv.GaussianBlur(
+        gray,
+        (0, 0),
+        C.BLUR_RATIO_SIGMA
+    )
+
+    grad_reblurred = _mean_gradient(reblurred)
+
+    # 평평한 영상은 gradient가 거의 0이라
+    # 의미 있는 비율을 구할 수 없음
+    if grad_reblurred <= 1e-6:
+        blur_ratio = float("nan")
+    else:
+        blur_ratio = float(
+            grad_original / grad_reblurred
+        )
+
+    return {
+        "mean": mean_val,
+        "std": std_val,
+        "lap_var": lap_var,
+        "noise": noise,
+        "blur_ratio": blur_ratio,
+    }
 
 def choose_steps(q):
     """상태 지표를 config A 구역의 기준값과 비교해 적용할 전처리 단계를 고른다.
@@ -95,9 +126,24 @@ def choose_steps(q):
         steps["gamma"] = float(np.clip(np.log(0.5) / np.log(norm_mean), *C.GAMMA_RANGE))
     elif q["std"] < C.CONTRAST_STD_MIN:
         steps["tone"] = "clahe" if C.USE_CLAHE else "equalize"
-
     # 3. 샤프닝 여부
-    steps["sharpen"] = bool(q["lap_var"] < C.BLUR_VAR_MAX)
+    # 기존 Laplacian 기준
+    blur_by_laplacian = (
+        q["lap_var"] < C.BLUR_VAR_MAX
+    )
+    # 새로운 재흐림 비율 기준
+    blur_ratio = q.get(
+        "blur_ratio",
+        float("nan")
+    )
+    blur_by_ratio = (
+        np.isfinite(blur_ratio)
+        and blur_ratio < C.BLUR_RATIO_MAX
+    )
+    # 둘 중 하나라도 흐림으로 판단하면 sharpening
+    steps["sharpen"] = bool(
+        blur_by_laplacian or blur_by_ratio
+    )
 
     return steps
 
