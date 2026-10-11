@@ -35,6 +35,30 @@ def _estimate_noise(gray):
     usable = est[saturated <= C.NOISE_SAT_MAX]
     return float(np.quantile(usable if usable.size else est, C.NOISE_FLAT_QUANTILE))
 
+def _mean_gradient(gray):
+    """Sobel로 영상의 평균 기울기 세기를 계산한다."""
+
+    gray_f = gray.astype(np.float32)
+
+    gx = cv.Sobel(
+        gray_f,
+        cv.CV_32F,
+        1,
+        0,
+        ksize=3
+    )
+
+    gy = cv.Sobel(
+        gray_f,
+        cv.CV_32F,
+        0,
+        1,
+        ksize=3
+    )
+
+    magnitude = cv.magnitude(gx, gy)
+
+    return float(magnitude.mean())
 
 def measure_quality(gray):
     """전처리를 고르는 근거로 노면 영상의 밝기(mean)·대비(std)·흐림(lap_var)·잡티(noise)를 잰다.
