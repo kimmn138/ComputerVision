@@ -1,6 +1,8 @@
 """파트 C 시험: features의 에지·해리스 점 세기와 SIFT 매칭, visualize의 후보 그리기·비교 그림 저장,
-run_experiment의 좌표 변환·시간 중앙값·요약 계산, run_matching의 쌍 묶기·inlier 그림·결과 저장, demo의 ROI 선택·화면 맞춤·제목 띠가 경계 입력에서도 약속대로 동작하는지 확인한다.
+run_experiment의 좌표 변환·시간 중앙값·요약 계산, run_matching의 쌍 묶기·inlier 그림·결과 저장, demo의 ROI 선택·화면 맞춤·제목 띠,
+run_all의 실험 목록·채택 비교·거부 조건이 경계 입력에서도 약속대로 동작하는지 확인한다.
 사용법: 맨 위 폴더에서  python tests/test_c.py"""
+import collections
 import contextlib
 import functools
 import io
@@ -21,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import demo  # noqa: E402
 import run_experiment as rx  # noqa: E402
 import run_matching as rm  # noqa: E402
-from src import detect, evaluate, features, io_utils, pipeline, visualize  # noqa: E402
+from src import analyze, detect, evaluate, features, io_utils, pipeline, visualize  # noqa: E402
 from src import config as C  # noqa: E402
 
 FAILS = []
@@ -1066,6 +1068,167 @@ def test_degrade_main():
         check(config[-1].startswith("# 인위 저하: dark"), f"config_used_train: 저하 종류가 남지 않음 ({config[-1]})")
 
 
+def test_run_all_plan():
+    """run_all의 실험 목록: 결과 폴더는 겹치지 않고(39장 최종과 매칭만 final을 함께 씀) 1차 결과 폴더가 아니며, 학습 데이터 실행은
+    이름 끝이 데이터(_all·_dev·_test)이거나 test_once·final_test다. 명령은 각 도구가 그대로 받고, E0·E1·E1b는 1차 값(base 세트·legacy·
+    띠 0.5)으로 고정, 39장 1차 설정은 --param-set이 없어 그 값을 실행 중에만 덮는다. 최종·시험셋 최종은 config 그대로 돈다."""
+    from tools import evaluate_train as et
+    from tools import run_all as ra
+    names = collections.Counter(e["name"] for e in ra.EXPERIMENTS)
+    check(names.pop("final") == 2 and set(names.values()) == {1}, f"run_all: 결과 폴더 이름이 겹침 ({names.most_common(3)})")
+    parsers = {"train": et.parse_args, "run39": rx.parse_args, "match": rm.parse_args}
+    for e in ra.EXPERIMENTS:
+        if e["tool"] == "train":
+            check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test"),
+                  f"run_all: 학습 데이터 폴더 이름 끝에 데이터가 없음 ({e['name']})")
+        if e["tool"]:
+            argv, _ = ra.command(e)
+            args = parse_quietly(parsers[e["tool"]], argv)
+            check(args is not None and args.name == e["name"], f"run_all: {e['id']} 명령을 도구가 받지 않음 ({' '.join(argv)})")
+    e1 = parse_quietly(et.parse_args, ra.command(ra.EXP["E1"])[0])
+    check(e1.param_set == "base" and e1.overrides == {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.5, "DETECT_MODE": "legacy"},
+          f"run_all: E1이 1차 값 + 노면 마스크가 아님 ({e1.param_set}, {e1.overrides})")
+    e3s = parse_quietly(et.parse_args, ra.command(ra.EXP["E3s"])[0])
+    check(e3s.param_set is None and e3s.overrides == {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.5, "DETECT_MODE": "dark",
+                                                      "DARK_SIGMA_IN_ROAD": False}, f"run_all: E3 σ 띠 전체의 옵션이 틀림 ({e3s.overrides})")
+    argv, pins = ra.command(ra.EXP["F39e0"])
+    base = {k: v for k, v in et.PARAM_SETS[0].items() if k != "name"}
+    check(pins == {**base, "ROI_TOP_DEFAULT": 0.5} and "--roi-top" not in argv and argv[-2:] == ["--name", "e0"],
+          f"run_all: 39장 1차 설정이 1차 값을 실행 중에만 덮지 않음 ({argv}, {sorted(pins)})")
+    check(ra.command(ra.EXP["T"]) == (["--split", "test", "--name", "test_once"], {})
+          and ra.command(ra.EXP["F39"]) == (["--roi", "csv", "--name", "final"], {}),
+          "run_all: 최종 설정 실행에 config를 바꾸는 옵션이 붙음")
+
+
+def test_run_all_adoption():
+    """채택 표: 각 단계를 직전 채택 단계와 개발셋·전처리 끔으로 견준다. 규칙 2(균형 정확도가 오름)·3(우연을 뺀 균열 재현율이
+    1%p 넘게 안 떨어짐)을 넘으면 잠정 채택되어 다음 단계의 비교 기준이 되고, 규칙 1은 사람 확인, --reject로 뺀 단계는 채택하지 않는다.
+    꼭 1%p 떨어지면 통과, 균형 정확도가 같으면 못 넘음, 값이 없으면 계산 불가. 바꿀 config 값은 잠정 채택 방법과 지금 config의 차이다."""
+    from tools import run_all as ra
+
+    def row(sens, fp, balanced, net):
+        return {"sensitivity": sens, "fp_per_image": fp, "balanced": balanced, "crack_ctr_recall_net": net}
+
+    off = {"E0": row(0.20, 8.0, 0.50, 0.016), "E1": row(0.18, 3.0, 0.55, 0.006),     # 균열 꼭 −1%p → 채택
+           "E1b": row(0.25, 4.0, 0.55, 0.020),                                       # 균형 정확도 같음 → 규칙 2
+           "E2": row(0.30, 2.0, 0.60, -0.0041),                                      # 균열 −1.01%p → 규칙 3
+           "E3": row(0.30, 1.0, 0.62, 0.010), "E3s": None, "E4": None}
+    states = {sid: {"status": "완료" if off[sid] else "아직 구현 전: x", "commit": "", "done": bool(off[sid])} for sid in off}
+    table, champion = ra.adoption(off, states)
+    got = dict(zip(table["stage_id"], zip(table["base"], table["verdict"])))
+    check(champion == "E3" and got["E1"] == ("E0", "잠정 채택 (규칙 1은 사람 확인)") and got["E1b"] == ("E1", "되돌림: 규칙 2 못 넘음")
+          and got["E2"] == ("E1", "되돌림: 규칙 3 못 넘음") and got["E3"][0] == "E1" and got["E3s"] == ("E3", "아직 구현 전: x"),
+          f"adoption: 직전 채택 단계나 판정이 틀림 ({got}, 채택 {champion})")
+    check(table.set_index("stage_id").loc["E1", "rule1"] == "사람 확인 (민감도↓·오검출↓)", "adoption: 규칙 1이 사람 확인이 아님")
+    table, champion = ra.adoption(off, states, reject=["E1"])
+    got = table.set_index("stage_id")
+    check(champion == "E3" and got.loc["E1", "verdict"] == "되돌림: 사람 확인(규칙 1)에서 뺌" and got.loc["E1b", "base"] == "E0"
+          and got.loc["E2", "changed"] == "검출 legacy→dark, 노면 마스크 켬→끔, 띠 위쪽 0.3→0.5" and got.loc["E3", "base"] == "E1b",
+          f"adoption --reject E1: 다음 단계의 비교 기준이 E0·E1b로 바뀌지 않음 ({dict(got['base'])})")
+    check(ra.passes(float("nan"), lambda d: d > 0) is None and ra.rule_text(None) == "계산 불가(값 없음)", "adoption: 값이 없을 때 계산 불가가 아님")
+    with patched(C, "USE_ROAD_MASK", False), patched(C, "DETECT_MODE", "legacy"), patched(C, "DARK_SIGMA_IN_ROAD", True), \
+            patched(C, "ROI_TOP_DEFAULT", 0.5):
+        changes = ra.config_changes(ra.EXP["E3"]["opts"])
+        same = ra.config_changes(ra.EXP["E0"]["opts"])
+    check([(n, v) for n, v, _ in changes] == [("USE_ROAD_MASK", True), ("DETECT_MODE", "dark")]
+          and changes[0][2].startswith("C 구역") and changes[1][2].startswith("B 구역") and same == [],
+          f"config_changes: 바꿀 값이나 구역 주인이 틀림 ({changes}, E0 {same})")
+    owners = ra.section_owners()
+    check(owners["ROI_TOP_DEFAULT"].startswith("공통") and owners["DARK_SIGMA_IN_ROAD"].startswith("B")
+          and owners["CANNY_LOW"] == owners["CANNY_HIGH"] == owners["DETECT_MODE"], "section_owners: config 구역을 잘못 읽음")
+
+
+def test_run_all_ready():
+    """dark 검출·노면 마스크가 자리인지 알아본다(자리 = NotImplementedError, 띠 전체 255). 구현 전인 기능이 필요한 실험은
+    그 이름을 돌려주어 건너뛰고, 매칭과 1차 방법은 늘 돌리며, E4(점수)는 자리다. 최종 설정 실험은 지금 config로 판단한다."""
+    from tools import run_all as ra
+
+    def not_yet(gray, road=None):
+        raise NotImplementedError("자리")
+
+    def half(bgr):
+        out = np.full(bgr.shape[:2], 255, np.uint8)
+        out[:, : bgr.shape[1] // 2] = 0
+        return out
+
+    with patched(detect, "detect_cracks", not_yet), patched(io_utils, "road_mask", lambda bgr: np.full(bgr.shape[:2], 255, np.uint8)):
+        before = (ra.dark_ready(), ra.mask_ready())
+    with patched(detect, "detect_cracks", lambda gray, road=None: ([], np.zeros_like(gray))), \
+            patched(detect, "detect_potholes", lambda gray, road=None: ([], np.zeros_like(gray))), patched(io_utils, "road_mask", half):
+        after = (ra.dark_ready(), ra.mask_ready())
+    check(before == (False, False) and after == (True, True), f"run_all: 구현 여부를 잘못 앎 (자리 {before}, 구현 {after})")
+    none, both = {"dark": False, "mask": False}, {"dark": True, "mask": True}
+    check(ra.unmet(ra.EXP["E3"], none) == ["dark 검출(B)", "노면 마스크(A)"] and ra.unmet(ra.EXP["E3"], both) == []
+          and ra.unmet(ra.EXP["E0"], none) == [] and ra.unmet(ra.EXP["FM"], none) == [] and ra.unmet(ra.EXP["E4"], both) == ["점수 τ(B, Should)"],
+          "run_all: 실험마다 필요한 기능을 잘못 셈")
+    with patched(C, "DETECT_MODE", "dark"), patched(C, "USE_ROAD_MASK", True):
+        check(ra.unmet(ra.EXP["F39"], none) == ["dark 검출(B)", "노면 마스크(A)"], "run_all: 최종 설정 실험이 config를 보지 않음")
+
+
+def test_run_all_refuse():
+    """dry-run은 실험·명령·폴더·예상 시간만 보여 주고 결과 폴더를 만들지 않는다. 재현은 test_once 결과가 없으면, 시험은 test_once가
+    이미 있으면(끝나지 않은 폴더라도) 아무것도 돌리지 않고 거부한다(끝 코드 2)."""
+    from tools import run_all as ra
+
+    def must_not_run(paths):
+        raise AssertionError("거부해야 하는데 실행 전 확인까지 감")    # 거부가 깨져도 시험셋을 실제로 돌리지 않게
+
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
+        paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            dry, repro = ra.main(["compare", "--dry-run"], paths), ra.main(["repro"], paths)
+        text = printed.getvalue()
+        check(dry == 0 and not os.path.exists(paths["results"]) and "e1_mask_dev" in text and "예상 합계" in text,
+              "run_all --dry-run: 계획을 보여 주지 않았거나 결과 폴더를 만듦")
+        check(repro == 2 and "시험 단계(test) 뒤에" in text, "run_all repro: test_once 없이도 돌았음")
+        os.makedirs(os.path.join(paths["results"], "test_once"))
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["test", "--yes"], paths)
+        check(code == 2 and "한 번만" in printed.getvalue() and "끝나지 않은 실행" in printed.getvalue()
+              and os.listdir(paths["results"]) == ["test_once"], f"run_all test: test_once가 있는데 거부하지 않음 ({code})")
+
+
+def test_run_all_report_empty():
+    """결과 폴더가 하나도 없어도 표 만들기(1~8번, 채택 표, summary.md)가 끝까지 돌고, 실험마다 상태만 적으며 잠정 채택은 E0다."""
+    from tools import run_all as ra
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
+        report = ra.build_report(paths)
+        out = Path(tmp) / "results" / ra.REPORT_DIR
+        expect = {f"table{i}_{n}.csv" for i, n in enumerate(["stages", "by_country", "by_condition", "preprocess", "matching",
+                                                            "provided_vs_own", "degrade", "39_images"], 1)}
+        check(expect | {"adoption.csv", "summary.md", "reject.txt"} == set(os.listdir(out)), f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
+        text = (out / "summary.md").read_text(encoding="utf-8")
+        check(report["champion"] == "E0" and not any(s["done"] for s in report["states"].values())
+              and "아직 안 돌림" in text and "아직 구현 전: 점수 τ" in text, "build_report: 결과가 없을 때 상태를 적지 않음")
+
+
+def test_run_all_judgement():
+    """39장 상태 판정 검증: 켬 행의 상태 지표로 전처리를 다시 골라 사람 태그(blur → 샤프닝)에 맞는지 보고, 같은 장소 정상·흔들림 쌍은
+    흔들림 쪽만 샤프닝이면 맞음. 다시 고른 전처리가 실행 때 적힌 글과 다르면(코드가 바뀜) 적중 칸을 비운다."""
+    from tools import run_all as ra
+    sharp = {**analyze.NO_STEPS, "sharpen": True}
+    pick = lambda q: sharp if q["lap_var"] < 100 else dict(analyze.NO_STEPS)  # noqa: E731
+    keys = list(analyze.measure_quality(np.zeros((32, 32), np.uint8)))
+    rows = []
+    for file, cond, lap, text in (("own_05_a_blur.jpg", "blur", 50, None), ("own_05_a_normal.jpg", "normal", 500, None),
+                                  ("own_06_a_blur.jpg", "blur", 50, None), ("own_06_a_normal.jpg", "normal", 50, None),
+                                  ("own_07_a_blur.jpg", "blur", 50, "가우시안"), ("own_08_a_blur.jpg", "blur", 500, None),
+                                  ("Japan_1.jpg", math.nan, 50, None)):
+        steps = sharp if lap < 100 else analyze.NO_STEPS
+        quality = {k: 1.0 for k in keys} | {"lap_var": float(lap)}
+        for mode in ("off", "on"):
+            rows.append({"file": file, "condition": cond, "preprocess": mode, **quality,
+                         "steps": text or analyze.steps_to_text(steps if mode == "on" else analyze.NO_STEPS)})
+    with patched(analyze, "choose_steps", pick):
+        judge = ra.judgements(pd.DataFrame(rows))
+    check((judge["own_05_a_blur.jpg"]["hit"], judge["own_08_a_blur.jpg"]["hit"], judge["own_07_a_blur.jpg"]["hit"]) == (True, False, None)
+          and judge["own_05_a_normal.jpg"]["expect"] == "" and judge["Japan_1.jpg"]["condition"] == "unknown",
+          f"judgements: 태그에 맞는 전처리 적중이 틀림 ({ {f: j['hit'] for f, j in judge.items()} })")
+    pairs = ra.blur_pairs(judge)                                    # 06은 정상 사진까지 샤프닝이라 틀림, 07·08은 짝이 없음
+    check([(s, ok) for s, _, _, ok in pairs] == [("05", True), ("06", False)], f"blur_pairs: 정상·흔들림 쌍 판정이 틀림 ({pairs})")
+
+
 def main():
     """시험 함수를 차례로 돌려 실패를 모아 보여 준다. @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
     skips = []
@@ -1079,7 +1242,9 @@ def main():
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
-               test_degrade_option_and_judge, test_degrade_main):
+               test_degrade_option_and_judge, test_degrade_main,
+               test_run_all_plan, test_run_all_adoption, test_run_all_ready, test_run_all_refuse, test_run_all_report_empty,
+               test_run_all_judgement):
         try:
             fn()
         except unittest.SkipTest as e:
