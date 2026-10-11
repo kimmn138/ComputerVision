@@ -15,8 +15,9 @@
 실행 옵션은 config.py 파일을 고치지 않고 실행 중에만 값을 바꾼 뒤 끝나면 되돌린다. 옵션을 주지 않으면 1차와 같은 조건이다.
 - --roi csv(기본): roi.csv에 사진마다 정한 띠. auto: roi.csv의 범위를 쓰지 않고 모든 사진에 기본 띠(ROI_TOP_DEFAULT~ROI_BOTTOM_DEFAULT)
 - --mask on|off: USE_ROAD_MASK, --detect legacy|dark: DETECT_MODE, --roi-top: ROI_TOP_DEFAULT(--roi auto와 함께만. csv에서는 39장에 효과가 없어 거부)
-- --auto-band on|off: AUTO_BAND_TOP(자동 띠 높이). 켜면 pipeline이 띠 위쪽 경계를 사진 전체 노면 마스크를 보고 위로 넓힌다.
-  --roi auto면 기본 띠(0.5)에서, --roi csv면 roi.csv의 위쪽 경계에서 시작한다. 실제로 쓴 띠 높이는 metrics의 roi_pixels(띠 픽셀 수)로 알 수 있다
+- --auto-band on|off: AUTO_BAND_TOP(자동 띠 높이). 켜면 pipeline이 띠 위쪽 경계를 사진 전체 노면 마스크를 보고 기본 띠(0.5)에서 위로 넓힌다.
+  자동 띠는 기본 띠를 쓰는 사진에만 쓴다(--roi auto의 모든 사진, --roi csv에서 roi.csv에 없는 사진). roi.csv에 사람이 사진마다 정한 띠는
+  넓히지 않는다(band_overrides). 실제로 쓴 띠 높이는 metrics의 roi_pixels(띠 픽셀 수)로 알 수 있다
 - --band-texture on|off: AUTO_BAND_USE_TEXTURE(자동 띠의 결 조건). 자동 띠 높이가 켜져 있을 때만 효과가 있다
 - --roi auto와 노면 마스크는 따로 켠다(한 단계씩 끄고 켜며 비교하려고). 둘 다 쓰려면 --roi auto --mask on
 처리 시간(t_pre_ms·t_detect_ms·t_road_ms·t_band_ms)은 끔·켬을 각각 C.TIME_REPEAT번 돌린 중앙값이고, 나머지 값은 첫 결과다.
@@ -163,6 +164,12 @@ def get_roi(file_name, roi_table, mode="csv"):
     return {"top": C.ROI_TOP_DEFAULT, "bottom": C.ROI_BOTTOM_DEFAULT, "condition": condition}, True
 
 
+def band_overrides(used_default):
+    """사진 1장에만 쓸 config 값: roi.csv에 사람이 정한 띠(used_default 거짓)는 자동 띠 높이로 넓히지 않도록 AUTO_BAND_TOP을 끈다.
+    자동 띠는 자동 ROI(기본 띠)의 기능이고, 손으로 정한 띠는 그 사진에 맞춘 값이라 그대로 둔다. 기본 띠면 빈 dict(config 그대로)."""
+    return {} if used_default else {"AUTO_BAND_TOP": False}
+
+
 def repeat_pipeline(bgr, roi, use_preprocess):
     """한 설정(끔 또는 켬)을 C.TIME_REPEAT번 돌린 결과 list. 처리 시간의 중앙값을 내려고 반복한다."""
     return [pipeline.run_pipeline(bgr, roi["top"], roi["bottom"], use_preprocess)
@@ -258,7 +265,8 @@ def save_figure(path, file_name, off, on):
 
 def process_image(path, roi_table, fig_dir, roi_mode="csv"):
     """사진 1장을 끔·켬으로 반복 처리해 metrics 2행을 만들고 비교 그림을 저장한다. 오류는 main이 잡는다.
-    (행 2개, 기본 띠를 썼는지)를 돌려준다. --roi auto면 모든 사진이 일부러 기본 띠를 쓰므로 경고하지 않는다."""
+    (행 2개, 기본 띠를 썼는지)를 돌려준다. --roi auto면 모든 사진이 일부러 기본 띠를 쓰므로 경고하지 않는다.
+    roi.csv의 띠를 쓰는 사진은 자동 띠 높이를 끄고 돈다(band_overrides)."""
     file_name = os.path.basename(path)
     roi, used_default = get_roi(file_name, roi_table, roi_mode)
     if used_default and roi_mode == "csv":
@@ -266,7 +274,11 @@ def process_image(path, roi_table, fig_dir, roi_mode="csv"):
     info = io_utils.parse_name(path)
     bgr = io_utils.load_image(path)
 
-    runs = {use: repeat_pipeline(bgr, roi, use) for use in (False, True)}   # 끔 n번 → 켬 n번
+    backup = apply_overrides(band_overrides(used_default))    # roi.csv 띠는 자동 띠로 넓히지 않음
+    try:
+        runs = {use: repeat_pipeline(bgr, roi, use) for use in (False, True)}   # 끔 n번 → 켬 n번
+    finally:
+        restore_overrides(backup)
     for use, outs in runs.items():
         bad = unstable_keys(outs)
         if bad:

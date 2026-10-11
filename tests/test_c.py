@@ -469,7 +469,7 @@ def test_run_main_options():
     --detect dark는 2장을 모두 처리해 0으로 끝나고 결과 표를 낸다. 검출기가 오류를 내면(가짜 검출기) 같은 오류를 한 줄로 묶어
     알리고 1로 끝나며, 두 경우 모두 config는 되돌아온다."""
     rng = np.random.default_rng(1)
-    times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
+    times = ["t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms"]
     before = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
     with tempfile.TemporaryDirectory() as tmp:
         dirs = {"provided": os.path.join(tmp, "provided"), "own": os.path.join(tmp, "own")}
@@ -493,7 +493,8 @@ def test_run_main_options():
             with open(os.path.join(res, name, "config_used.txt"), encoding="utf-8") as f:
                 return metrics, f.read().splitlines()
 
-        with patched(C, "TIME_REPEAT", 1), patched(rx, "load_gt_for", gts.get):
+        # 띠 높이 옵션(--roi·--roi-top)을 보는 시험이라 자동 띠 높이는 끈다(자동 띠의 roi.csv 규칙은 test_auto_band_csv_rule)
+        with patched(C, "TIME_REPEAT", 1), patched(rx, "load_gt_for", gts.get), patched(C, "AUTO_BAND_TOP", False):
             defaults = ["--mask", "on" if C.USE_ROAD_MASK else "off", "--detect", C.DETECT_MODE]  # 지금 config 기본값을 직접 줌
             codes = [run(argv)[0] for argv in ([], ["--name", "explicit", "--roi", "csv", *defaults],
                                                ["--name", "auto", "--roi", "auto", "--mask", "on", "--roi-top", "0.3"])]
@@ -649,7 +650,7 @@ def test_demo_main_save():
         gray = cv.GaussianBlur(rng.integers(90, 160, (480, 640), dtype=np.uint8), (0, 0), 1.5)
         cv.imwrite(path, cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
         with contextlib.redirect_stdout(io.StringIO()) as printed:
-            code = demo.main([path, "--mask", "on", "--save", saved])
+            code = demo.main([path, "--mask", "on", "--auto-band", "off", "--save", saved])   # 띠 0.5 위는 칠하지 않는지 봄
         after = (C.USE_ROAD_MASK, C.DETECT_MODE)
         view = cv.imdecode(np.fromfile(saved, np.uint8), cv.IMREAD_COLOR) if os.path.exists(saved) else None
         with contextlib.redirect_stdout(io.StringIO()) as dark_printed, patched(detect, "detect_cracks", broken_detector):
@@ -882,7 +883,7 @@ def test_pipeline_road():
 def test_road_mask_switch_off():
     """USE_ROAD_MASK가 꺼져 있으면 노면 마스크가 무엇이든 결과가 같고, 검출 함수에 road를 넘기지 않는다(1차 결과 보존)."""
     bgr, seen = road_scene(), []
-    with patched(C, "USE_ROAD_MASK", False):
+    with patched(C, "USE_ROAD_MASK", False), patched(C, "AUTO_BAND_TOP", False):    # 띠 0.5 고정에서 노면 마스크만 봄
         base = summary(pipeline.run_pipeline(bgr, 0.5, 1.0, False))
         with patched(io_utils, "road_mask", left_half), \
                 patched(detect, "detect_cracks", spy(detect.detect_cracks, seen)), \
@@ -897,9 +898,9 @@ def test_road_mask_switch_on():
     """USE_ROAD_MASK를 켜면 road를 검출 함수에 넘기고, bbox 중심이 노면 밖인 후보만 지운 뒤 row를 센다.
     지금 임시 road_mask(전부 255)면 끈 것과 결과가 같다."""
     bgr, seen = road_scene(), []
-    with patched(C, "USE_ROAD_MASK", False):
+    with patched(C, "USE_ROAD_MASK", False), patched(C, "AUTO_BAND_TOP", False):    # 띠 0.5 고정에서 노면 마스크만 봄
         off = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
-    with patched(C, "USE_ROAD_MASK", True):
+    with patched(C, "USE_ROAD_MASK", True), patched(C, "AUTO_BAND_TOP", False):
         full = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
         with patched(io_utils, "road_mask", left_half), \
                 patched(detect, "detect_cracks", spy(detect.detect_cracks, seen)), \
@@ -1004,6 +1005,31 @@ def test_auto_band_cloudy_sky():
         check(top == 0.0, f"auto_band_top: 결 조건을 껐는데 노면 비율만으로 넓어지지 않음 ({top})")
     tex = pipeline.local_std(np.full((20, 20), 7, np.uint8), C.AUTO_BAND_TEX_KSIZE)
     check(tex.shape == (20, 20) and float(tex.max()) < 1e-3, f"local_std: 평평한 영상의 결이 0이 아님 ({float(tex.max())})")
+
+
+def test_auto_band_csv_rule():
+    """자동 띠 높이는 기본 띠를 쓰는 사진에만: run_experiment.main을 노면만 찍힌 합성 사진 2장(roi.csv에 있는 직접 촬영 1장(0.5),
+    없는 제공 1장)으로 돌리면, 자동 띠를 켰을 때 roi.csv 사진은 0.5 그대로(240행)이고 기본 띠 사진만 맨 위까지(480행) 넓어진다.
+    --roi auto면 두 장 모두 넓어지고, 끝나면 AUTO_BAND_TOP이 원래 값으로 돌아온다."""
+    assert rx.band_overrides(True) == {} and rx.band_overrides(False) == {"AUTO_BAND_TOP": False}
+    with tempfile.TemporaryDirectory() as tmp:
+        dirs = {"provided": os.path.join(tmp, "provided"), "own": os.path.join(tmp, "own")}
+        for folder, name in (("provided", "Japan_900001.jpg"), ("own", "own_90_crack_normal.jpg")):
+            os.makedirs(dirs[folder])
+            cv.imwrite(os.path.join(dirs[folder], name), band_scene(0.0))
+        roi_path, res = os.path.join(tmp, "roi.csv"), os.path.join(tmp, "results")
+        with open(roi_path, "w", encoding="utf-8") as f:
+            f.write("file,roi_top,roi_bottom,condition\nown_90_crack_normal.jpg,0.5,1.0,normal\n")
+        rows = {}
+        with patched(C, "TIME_REPEAT", 1), patched(C, "AUTO_BAND_TOP", False):
+            for name, argv in (("csv", ["--auto-band", "on"]), ("auto", ["--roi", "auto", "--auto-band", "on"])):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rx.main(["--name", name] + argv, dirs, roi_path, res)
+                m = pd.read_csv(os.path.join(res, name, "metrics.csv"), encoding="utf-8-sig").set_index(["file", "preprocess"])
+                rows[name] = (m.loc[("own_90_crack_normal.jpg", "off"), "roi_pixels"] // 640, m.loc[("Japan_900001.jpg", "off"), "roi_pixels"] // 640)
+            after = C.AUTO_BAND_TOP
+    check(rows.get("csv") == (240, 480) and rows.get("auto") == (480, 480) and after is False,
+          f"자동 띠: roi.csv 띠를 넓히거나 기본 띠를 넓히지 않음, 또는 config가 되돌아오지 않음 ({rows}, AUTO_BAND_TOP {after})")
 
 
 def test_auto_band_options():
@@ -1289,7 +1315,7 @@ def test_degrade_main():
             for name, argv in (("plain", []), ("none", ["--degrade", "none"]), ("dark", ["--degrade", "dark"])):
                 with contextlib.redirect_stdout(io.StringIO()):
                     et.main(["--split", "all", "--name", name] + argv)
-        times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
+        times = ["t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms"]
         plain, none = read("plain", et.DETAIL_NAME), read("none", et.DETAIL_NAME)
         check(plain.drop(columns=times).equals(none.drop(columns=times)), "evaluate_train: 옵션 없음과 --degrade none의 결과가 다름")
         check(all(c in plain.columns for c in ["degrade", "steps"] + et.MEASURE_COLUMNS + ["judge_hit", "judge_base"]),
@@ -1602,7 +1628,7 @@ def main():
                test_demo_dialog_args, test_demo_read_error_text, test_demo_dialog_loop, test_demo_no_tkinter,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
-               test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_cloudy_sky, test_auto_band_options,
+               test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_cloudy_sky, test_auto_band_csv_rule, test_auto_band_options,
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,

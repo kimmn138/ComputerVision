@@ -7,7 +7,8 @@
 - --list: 선택 창 대신 data 아래 사진 목록을 번호로 보여 주고 고르게 한다(예전 방식).
 - ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다. --roi auto면 roi.csv 없이 기본 띠(run_experiment와 같음).
 - --mask·--detect·--auto-band·--band-texture(자동 띠의 결 조건)는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
-  --auto-band on(자동 띠 높이)이면 고른 띠의 위쪽 경계에서 시작해 노면만 이어지는 만큼 위로 넓히고, 화면 아래 띠에 넓힌 경계를 적는다.
+  자동 띠 높이(config AUTO_BAND_TOP, --auto-band)가 켜져 있으면 기본 띠(0.5)에서 시작해 노면만 이어지는 만큼 위로 넓히고, 화면 아래 띠에
+  넓힌 경계를 적는다. 명령행 비율이나 roi.csv로 정한 띠는 넓히지 않는다(run_experiment와 같음). 선택 창(--roi auto)은 config를 따른다.
 - 창: 끔·켬 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보. 위 띠에 고른 전처리, 아래 띠에 상태 판정 값과 설정.
 - 콘솔에도 상태 판정 값·고른 전처리·설정과 끔·켬의 row(9열)를 출력하고, 창은 아무 키나 누르거나 X로 닫는다.
 - --save를 주면 창을 띄우지 않고 같은 화면을 그림 파일로 저장한다(확인·보고서용).
@@ -28,6 +29,7 @@ from src import analyze, io_utils, pipeline, visualize
 from src import config as C
 
 ROI_PATH = "data/roi.csv"
+DEFAULT_SOURCES = ("config 기본값", "기본 띠, --roi auto")    # choose_roi가 기본 띠를 골랐을 때의 출처 글. 자동 띠 높이는 이때만 쓴다
 WINDOW_NAME = "demo"            # 윈도 HighGUI에서 한글 창 제목이 깨질 수 있어 ASCII로
 KEY_POLL_MS = 100               # 키·창 닫힘을 확인하는 간격
 FONT_NAME = "sans"              # OpenCV 5 내장 유니코드 글꼴
@@ -306,7 +308,8 @@ def demo_one(path, args, show_fn=None, warn=None):
         report(f"{ROI_PATH} 형식 오류: {e}")
         return 1
 
-    backup = rx.apply_overrides(rx.runtime_overrides(args))
+    used_default = roi_source in DEFAULT_SOURCES             # roi.csv·명령행으로 정한 띠는 자동 띠로 넓히지 않음(run_experiment와 같음)
+    backup = rx.apply_overrides({**rx.runtime_overrides(args), **rx.band_overrides(used_default)})
     try:
         try:
             outs = {use: pipeline.run_pipeline(bgr, top, bottom, use) for use in (False, True)}
