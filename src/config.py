@@ -98,3 +98,6 @@ ROAD_OVERLAY_ALPHA = 0.35           # 비율(0~1), 노면 픽셀에 초록을 �
 AUTO_BAND_TOP = False               # 자동 띠 높이 켬·끔. True면 pipeline이 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 받은 top에서 위로 넓힘. 끄면 지금 결과 그대로 (docs/part_C.md)
 AUTO_BAND_STEP = 0.1                # 비율(사진 높이 대비), 한 번에 살펴보고 넓히는 구간 높이. 0.5에서 0.0까지 다섯 구간
 AUTO_BAND_ROAD_MIN = 0.95           # 비율, 바로 위 구간에서 노면 마스크 픽셀이 이 비율 이상이면 그 구간까지 넓힘. 후보 0.8·0.9·0.95 중 개발셋 652장에서 채택 규칙 2·3을 모두 넘은 값 (docs/part_C.md)
+AUTO_BAND_USE_TEXTURE = True       # 자동 띠의 결 조건 켬·끔. True면 넓힐 구간 노면 픽셀의 결이 시작 띠 노면과 비슷할 때만 넓힘(흐린 하늘·나무가 노면 마스크에 든 차량 시점을 막으려고). AUTO_BAND_TOP이 꺼져 있으면 효과 없음 (docs/part_C.md)
+AUTO_BAND_TEX_KSIZE = 7             # px, 결 = 흑백 640px 사진의 이 크기 창 안 표준편차(국소 표준편차). Plan.md 3.3의 보닛 규칙과 같은 7×7
+AUTO_BAND_TEX_RATIO = 1.5           # 배, 구간 결 중앙값 ÷ 시작 띠 노면 결 중앙값이 1/1.5 ~ 1.5 안이면 비슷함. 후보 1.25·1.5·2.0을 개발셋에서만 견줌 (docs/part_C.md)

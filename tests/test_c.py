@@ -977,6 +977,35 @@ def test_auto_band_sky():
     check(top == 0.2, f"auto_band_top: 기준값을 낮췄는데(0.4) 노면이 반인 0.2~0.3까지 넓어지지 않음 ({top})")
 
 
+def cloudy_scene():
+    """흐린 하늘 합성 사진 480×640: 위 절반은 아스팔트와 같은 회색(115)이지만 매끈하고(잡음 σ 1), 아래 절반은 결이 있는 회색 노면(σ 12).
+    색·밝기가 같아 노면 마스크가 하늘까지 칠하므로, 결로만 하늘을 구별할 수 있다."""
+    rng = np.random.default_rng(6)
+    road = cv.GaussianBlur(rng.normal(115, 12, (480, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.2)
+    sky = rng.normal(115, 1, (240, 640)).clip(0, 255).astype(np.uint8)
+    gray = np.vstack([sky, road[240:]])
+    return cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+
+
+def test_auto_band_cloudy_sky():
+    """위쪽이 아스팔트와 같은 회색이지만 매끈한 '흐린 하늘'이면, 노면 마스크가 하늘을 칠해도 결 조건(AUTO_BAND_USE_TEXTURE)이 막아 0.5에 머문다.
+    결 조건을 끄면 노면 비율만 보므로 맨 위까지 넓어진다(결 조건이 하는 일). 노면만 찍힌 사진은 결 조건을 켜도 맨 위까지 넓어진다."""
+    small = io_utils.resize_width(cloudy_scene())
+    road = io_utils.road_mask(small)
+    check(np.count_nonzero(road[:240]) >= 0.95 * road[:240].size,
+          "시험 영상: 노면 마스크가 흐린 하늘을 노면으로 칠하지 않음(결 조건을 시험할 수 없음)")
+    with patched(C, "AUTO_BAND_USE_TEXTURE", True):
+        top = pipeline.auto_band_top(small, 0.5)
+        check(top == 0.5, f"auto_band_top: 결 조건을 켰는데 매끈한 흐린 하늘까지 넓어짐 ({top})")
+        top = pipeline.auto_band_top(io_utils.resize_width(band_scene(0.0)), 0.5)
+        check(top == 0.0, f"auto_band_top: 결 조건을 켰더니 노면만 있는 사진이 맨 위까지 넓어지지 않음 ({top})")
+    with patched(C, "AUTO_BAND_USE_TEXTURE", False):
+        top = pipeline.auto_band_top(small, 0.5)
+        check(top == 0.0, f"auto_band_top: 결 조건을 껐는데 노면 비율만으로 넓어지지 않음 ({top})")
+    tex = pipeline.local_std(np.full((20, 20), 7, np.uint8), C.AUTO_BAND_TEX_KSIZE)
+    check(tex.shape == (20, 20) and float(tex.max()) < 1e-3, f"local_std: 평평한 영상의 결이 0이 아님 ({float(tex.max())})")
+
+
 def test_auto_band_options():
     """자동 띠 높이 실행 옵션: run_experiment와 demo의 --auto-band on|off가 이번 실행에만 쓸 AUTO_BAND_TOP 값이 되고,
     run_notes에 남는다. 옵션을 빼면 바꾸는 값이 없다(config 그대로)."""
@@ -989,6 +1018,13 @@ def test_auto_band_options():
     off = parse_quietly(rx.parse_args, ["--auto-band", "off"])
     check(off is not None and rx.runtime_overrides(off) == {"AUTO_BAND_TOP": False}, "run_experiment: --auto-band off를 못 읽음")
     check(parse_quietly(rx.parse_args, ["--auto-band", "yes"]) is None, "run_experiment: 잘못된 --auto-band 값을 받아들임")
+    tex = parse_quietly(rx.parse_args, ["--roi", "auto", "--auto-band", "on", "--band-texture", "off"])
+    check(tex is not None and rx.runtime_overrides(tex) == {"AUTO_BAND_TOP": True, "AUTO_BAND_USE_TEXTURE": False}
+          and rx.run_notes(tex, {})[0] == "실행 옵션: --roi auto --auto-band on --band-texture off",
+          f"run_experiment: --band-texture off를 config 값으로 못 바꾸거나 실행 조건 줄에 없음 ({tex})")
+    d = parse_quietly(demo.parse_args, ["a.jpg", "--auto-band", "on", "--band-texture", "on"])
+    check(d is not None and rx.runtime_overrides(d) == {"AUTO_BAND_TOP": True, "AUTO_BAND_USE_TEXTURE": True},
+          f"demo: --band-texture on을 못 읽음 ({d})")
     d = parse_quietly(demo.parse_args, ["a.jpg", "--roi", "auto", "--auto-band", "on"])
     check(d is not None and rx.runtime_overrides(d) == {"AUTO_BAND_TOP": True}, f"demo: --auto-band on을 못 읽음 ({d})")
     d = parse_quietly(demo.parse_args, ["a.jpg"])
@@ -1566,7 +1602,7 @@ def main():
                test_demo_dialog_args, test_demo_read_error_text, test_demo_dialog_loop, test_demo_no_tkinter,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
-               test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_options,
+               test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_cloudy_sky, test_auto_band_options,
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,

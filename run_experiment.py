@@ -1,8 +1,10 @@
 """(파트 C) 제공·직접 촬영 영상 전체를 전처리 끔·켬으로 처리해 지표 표·비교 그림·요약 표를 저장한다.
 사용법: 맨 위 폴더에서  python run_experiment.py --name <이름>  [--only provided|own]
                         [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3] [--auto-band on|off]
+                        [--band-texture on|off]
 결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
-- metrics.csv: 영상마다 끔·켬 2행 (영상 정보, 상태 지표, row 9열, 노면 안 에지 수 edges_road·노면 마스크 시간 t_road_ms,
+- metrics.csv: 영상마다 끔·켬 2행 (영상 정보, 상태 지표, row 9열, 노면 안 에지 수 edges_road·노면 마스크 시간 t_road_ms·
+  자동 띠 경계 시간 t_band_ms(사진 전체 노면 마스크, 자동 띠 높이가 꺼져 있으면 0),
   정답 비교 tp·fp·found·fn(IoU), 영상 단위 판정 has_gt·has_damage·n_pred·hit_same·hit_any·correct(중심 기준).
   정답 파일이 없는 사진은 판정 칸(has_damage·hit_same·hit_any·correct)과 정답 비교 칸이 빈칸)
 - figures/<영상 이름>.png: 위 줄 끔·아래 줄 켬 비교 그림
@@ -15,8 +17,9 @@
 - --mask on|off: USE_ROAD_MASK, --detect legacy|dark: DETECT_MODE, --roi-top: ROI_TOP_DEFAULT(--roi auto와 함께만. csv에서는 39장에 효과가 없어 거부)
 - --auto-band on|off: AUTO_BAND_TOP(자동 띠 높이). 켜면 pipeline이 띠 위쪽 경계를 사진 전체 노면 마스크를 보고 위로 넓힌다.
   --roi auto면 기본 띠(0.5)에서, --roi csv면 roi.csv의 위쪽 경계에서 시작한다. 실제로 쓴 띠 높이는 metrics의 roi_pixels(띠 픽셀 수)로 알 수 있다
+- --band-texture on|off: AUTO_BAND_USE_TEXTURE(자동 띠의 결 조건). 자동 띠 높이가 켜져 있을 때만 효과가 있다
 - --roi auto와 노면 마스크는 따로 켠다(한 단계씩 끄고 켜며 비교하려고). 둘 다 쓰려면 --roi auto --mask on
-처리 시간(t_pre_ms·t_detect_ms·t_road_ms)은 끔·켬을 각각 C.TIME_REPEAT번 돌린 중앙값이고, 나머지 값은 첫 결과다.
+처리 시간(t_pre_ms·t_detect_ms·t_road_ms·t_band_ms)은 끔·켬을 각각 C.TIME_REPEAT번 돌린 중앙값이고, 나머지 값은 첫 결과다.
 영상 하나가 실패해도 나머지를 계속 처리하고, 실패가 있으면 끝에 같은 오류끼리 묶어 출력하고 종료 코드 1로 끝난다.
 """
 import argparse
@@ -45,8 +48,9 @@ TIME_COLUMNS = ("t_pre_ms", "t_detect_ms")
 KINDS = ("crack", "pothole")
 COUNT_KEYS = ("tp", "fp", "found", "fn")
 GT_COLUMNS = [f"{kind}_{key}" for kind in KINDS for key in COUNT_KEYS]
-# row 9열 밖의 측정값: 노면 마스크 안의 에지 수, 노면 마스크 시간(반복 중앙값). row는 1차와 같은 뜻으로 두려고 따로 붙인다
-EXTRA_COLUMNS = ["edges_road", "t_road_ms"]
+# row 9열 밖의 측정값: 노면 마스크 안의 에지 수, 노면 마스크 시간·자동 띠 경계 시간(반복 중앙값). row는 1차와 같은 뜻으로 두려고 따로 붙인다
+EXTRA_COLUMNS = ["edges_road", "t_road_ms", "t_band_ms"]
+RESULT_TIMES = ("t_road_ms", "t_band_ms")   # row 밖 결과 키인 처리 시간: row의 두 시간 열처럼 반복의 중앙값으로 바꾼다
 # 영상 단위 판정(evaluate.image_verdict, 중심 기준 = evaluate_train과 같음). has_gt·n_pred는 정답과 상관없이 채운다
 VERDICT_COLUMNS = ["has_gt", "has_damage", "n_pred", "hit_same", "hit_any", "correct"]
 VERDICT_BOOL = ["has_damage", "hit_same", "hit_any", "correct"]     # 정답 파일이 없으면 빈칸이 되는 판정 칸
@@ -54,7 +58,7 @@ VERDICT_BOOL = ["has_damage", "hit_same", "hit_any", "correct"]     # 정답 파
 VERDICT_PAIRS = ["correct", "hit_same", "hit_any"]
 # 요약 표에서 끔·켬을 비교하는 지표. 면적 %는 add_ratios가 더한다
 SUMMARY_METRICS = ["edges", "edges_road", "harris", "n_crack", "area_crack", "area_crack_pct",
-                   "n_pothole", "area_pothole", "area_pothole_pct", "t_pre_ms", "t_detect_ms", "t_road_ms"]
+                   "n_pothole", "area_pothole", "area_pothole_pct", "t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms"]
 PR_METRICS = [f"{kind}_{name}" for kind in KINDS for name in ("precision", "recall")]
 # source·condition 표의 영상 단위 지표(정답 있는 영상만). 정답률(accuracy) 바로 뒤에는 기준선 열 baseline_none을 둔다
 IMAGE_METRICS = ["sensitivity", "specificity", "accuracy"]
@@ -76,7 +80,7 @@ def check_name(parser, name):
 
 
 def parse_args(argv=None):
-    """결과 폴더 이름(--name)·사진 묶음(--only)·노면 띠 방식(--roi)과, 이번 실행에만 바꿀 config 값(--mask·--detect·--roi-top·--auto-band)을 읽는다.
+    """결과 폴더 이름(--name)·사진 묶음(--only)·노면 띠 방식(--roi)과, 이번 실행에만 바꿀 config 값(--mask·--detect·--roi-top·--auto-band·--band-texture)을 읽는다.
     1차 결과 폴더 이름과, 효과가 없는 조합(--roi csv에서 --roi-top)·범위 밖 값은 거부한다(마지막 일괄 실행에서 조용히 안 먹는 옵션이 없게)."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬 비교 실험")
     parser.add_argument("--name", default=DEFAULT_NAME, help=f"결과 폴더 이름 (results/<name>/, 기본 {DEFAULT_NAME})")
@@ -89,6 +93,8 @@ def parse_args(argv=None):
                         help="기본 띠의 위쪽 비율(ROI_TOP_DEFAULT)을 이번 실행에만 바꿈. --roi auto와 함께만. 예: 0.3 (E1b)")
     parser.add_argument("--auto-band", choices=("on", "off"),
                         help="자동 띠 높이(AUTO_BAND_TOP)를 이번 실행에만 켬·끔. 켜면 노면만 이어지는 만큼 띠 위쪽 경계를 위로 넓힘")
+    parser.add_argument("--band-texture", choices=("on", "off"),
+                        help="자동 띠의 결 조건(AUTO_BAND_USE_TEXTURE)을 이번 실행에만 켬·끔. 켜면 결이 시작 띠 노면과 비슷한 구간만 넓힘")
     args = parser.parse_args(argv)
     check_name(parser, args.name)
     if args.roi_top is not None:
@@ -111,6 +117,8 @@ def runtime_overrides(args):
         overrides["ROI_TOP_DEFAULT"] = args.roi_top
     if getattr(args, "auto_band", None) is not None:      # demo도 이 함수를 쓰므로 옵션이 없는 args도 받는다
         overrides["AUTO_BAND_TOP"] = args.auto_band == "on"
+    if getattr(args, "band_texture", None) is not None:
+        overrides["AUTO_BAND_USE_TEXTURE"] = args.band_texture == "on"
     return overrides
 
 
@@ -132,7 +140,7 @@ def run_notes(args, overrides):
     """config_used.txt 끝에 붙일 실행 조건 두 줄: 준 옵션과, 그 옵션으로 바꾼 config 값. 결과 폴더만 보고도 조건을 알 수 있게 한다."""
     options = [f"--roi {args.roi}"] + [f"--{flag} {value}" for flag, value in
                                        (("only", args.only), ("mask", args.mask), ("detect", args.detect), ("roi-top", args.roi_top),
-                                        ("auto-band", args.auto_band))
+                                        ("auto-band", args.auto_band), ("band-texture", args.band_texture))
                                        if value is not None]
     changed = ", ".join(f"{name}={value!r}" for name, value in overrides.items()) or "없음"
     return [f"실행 옵션: {' '.join(options)}", f"실행 옵션으로 바꾼 config 값: {changed}"]
@@ -164,13 +172,14 @@ def repeat_pipeline(bgr, roi, use_preprocess):
 def median_times(outs):
     """첫 결과를 쓰되 처리 시간만 반복 전체의 중앙값으로 바꾼 새 결과를 돌려준다.
     한 번 잰 시간은 캐시·다른 프로그램 때문에 튀므로 중앙값으로 튀는 값을 버린다(받은 결과는 바꾸지 않음).
-    row의 두 시간 열과, row 밖 결과 키인 노면 마스크 시간 t_road_ms를 같은 규칙으로 바꾼다(인계 메모 4.4)."""
+    row의 두 시간 열과, row 밖 결과 키인 노면 마스크 시간 t_road_ms·자동 띠 경계 시간 t_band_ms를 같은 규칙으로 바꾼다(인계 메모 4.4)."""
     row = dict(outs[0]["row"])
     for key in TIME_COLUMNS:
         row[key] = round(statistics.median(o["row"][key] for o in outs), 2)
     out = {**outs[0], "row": row}
-    if all("t_road_ms" in o for o in outs):
-        out["t_road_ms"] = round(statistics.median(o["t_road_ms"] for o in outs), 2)
+    for key in RESULT_TIMES:
+        if all(key in o for o in outs):
+            out[key] = round(statistics.median(o[key] for o in outs), 2)
     return out
 
 
@@ -225,13 +234,13 @@ def verdict_columns(out, gt):
 
 
 def make_row(file_name, info, roi, use_preprocess, out, quality, counts, verdict):
-    """metrics.csv 한 행: 영상 정보 + 상태 지표 + row 9열 + 노면 안 에지 수·노면 마스크 시간 + 정답 비교 개수 + 영상 단위 판정."""
+    """metrics.csv 한 행: 영상 정보 + 상태 지표 + row 9열 + 노면 안 에지 수·노면 마스크 시간·자동 띠 경계 시간 + 정답 비교 개수 + 영상 단위 판정."""
     return {"file": file_name, "source": info["source"],
             "condition": info.get("condition") or roi["condition"],
             "preprocess": "on" if use_preprocess else "off",
             "steps": analyze.steps_to_text(out["steps"]),
             **quality, **out["row"],
-            "edges_road": edges_on_road(out["edges"], out["road"]), "t_road_ms": out["t_road_ms"],
+            "edges_road": edges_on_road(out["edges"], out["road"]), "t_road_ms": out["t_road_ms"], "t_band_ms": out["t_band_ms"],
             **counts, **verdict}
 
 
@@ -282,7 +291,7 @@ def quality_columns(rows):
 
 
 def metrics_frame(rows):
-    """행 list를 열 순서가 정해진 표로 만든다: 영상 정보 → 상태 지표 → row 9열 → edges_road·t_road_ms → 정답 비교 개수 → 영상 단위 판정.
+    """행 list를 열 순서가 정해진 표로 만든다: 영상 정보 → 상태 지표 → row 9열 → edges_road·t_road_ms·t_band_ms → 정답 비교 개수 → 영상 단위 판정.
     개수는 빈칸을 허용하는 정수형(Int64)이라 1.0이 아닌 1로, 판정은 빈칸을 허용하는 boolean이라 정답 파일이 없으면 빈칸으로 저장된다."""
     columns = INFO_COLUMNS + quality_columns(rows) + ROW_COLUMNS + EXTRA_COLUMNS + GT_COLUMNS + VERDICT_COLUMNS
     types = {col: "Int64" for col in GT_COLUMNS + ["edges_road", "n_pred"]}
