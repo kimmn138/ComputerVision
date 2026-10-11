@@ -165,8 +165,84 @@ def extract_dark_regions(gray, road=None):
     6. 영역마다 area(픽셀 수), P(바깥 + 구멍 윤곽 길이, cv.RETR_CCOMP), thickness = 2A/P, dt_width, circ_inv = P²/(4πA),
        elong·fill·solidity(describe_regions), contrast = 영역 안 D의 평균 / σ, darkness(region_darkness)를 잰다.
     TODO(B): WP2에서 구현한다. 지금은 자리만 있다."""
-    raise NotImplementedError("TODO(B): extract_dark_regions는 WP2에서 구현 (Plan.md 3.4 (2), docs/tasks/B.md)")
+    if not isinstance(gray, np.ndarray) or gray.ndim != 2 or gray.dtype != np.uint8:
+        raise ValueError("gray는 2차원 uint8 배열이어야 합니다.")
+    if gray.size == 0:
+        raise ValueError("gray는 빈 영상일 수 없습니다.")
+    if road is not None and np.shape(road) != gray.shape:
+        raise ValueError("road와 gray의 크기가 같아야 합니다.")
+    if C.DARK_BG_DOWNSCALE < 1 or C.DARK_SIGMA_MIN <= 0:
+        raise ValueError("축소 배율은 1 이상, σ 하한은 양수여야 합니다.")
+    if not (0 < C.DARK_K_LO <= C.DARK_K_HI):
+        raise ValueError("0 < DARK_K_LO <= DARK_K_HI여야 합니다.")
+    if C.DARK_ABS_MIN <= 0 or C.DARK_MIN_AREA < 1:
+        raise ValueError("절대 문턱은 양수, 최소 넓이는 1 이상이어야 합니다.")
+    
+    h, w = gray.shape
+    scale = C.DARK_BG_DOWNSCALE
+    small_size = (max(1, int(round(w / scale))), max(1, int(round(h / scale))))
 
+    def median_background(image, small_window):
+        """축소 영상에서 중앙값 배경을 구해 큰 창의 계산량을 줄인다."""
+        ksize = max(1, int(round(small_window)))
+        if ksize % 2 == 0:
+            ksize += 1
+        small = cv.resize(image, small_size, interpolation=cv.INTER_AREA)
+        filtered = cv.medianBlur(small, ksize) if ksize > 1 else small
+        return cv.resize(filtered, (w, h), interpolation=cv.INTER_LINEAR).astype(np.float32)
+
+
+    #비교와 잔차 계산은 float32로 한다.
+    coarse = median_background(gray, C.DARK_BG_KSIZE_SMALL)
+    gray_float = gray.astype(np.float32)
+    bright = gray_float > coarse + C.DARK_BRIGHT_DELTA
+    g2 = gray.copy()
+    g2[bright] = coarse[bright].astype(np.uint8)
+    bg_small = median_background(g2, h * C.DARK_BG_FRAC / scale)
+    bg_large = median_background(g2, h * C.DARK_BG_FRAC_LARGE / scale)
+    residual = np.maximum(bg_small, bg_large) - g2.astype(np.float32)
+
+    samples = residual.ravel()
+    if road is not None and C.DARK_SIGMA_IN_ROAD:
+        road_pixels = np.asarray(road) > 0
+        if np.any(road_pixels):
+            samples = residual[road_pixels]
+    median = np.median(samples)
+    sigma = max(1.4826 * float(np.median(np.abs(samples - median))), C.DARK_SIGMA_MIN)
+    darkness = np.maximum(residual, 0)
+    strong = darkness >= max(C.DARK_K_HI * sigma, C.DARK_ABS_MIN)
+    weak = (darkness >= C.DARK_K_LO * sigma).astype(np.uint8)
+    count, weak_labels = cv.connectedComponents(weak, connectivity=8)
+    keep = np.zeros(count, dtype=bool)
+    keep[np.unique(weak_labels[strong])] = True
+    keep[0] = False  # 배경 라벨은 후보에서 제외한다
+    mask = (keep[weak_labels].astype(np.uint8) * 255)
+
+    kernel = cv.getStructuringElement(
+        cv.MORPH_ELLIPSE, (C.DARK_CLOSE_KSIZE, C.DARK_CLOSE_KSIZE)
+    )
+    mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+    count, labels, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
+    keep = stats[:, cv.CC_STAT_AREA] >= C.DARK_MIN_AREA
+    keep[0] = False
+    mask = keep[labels].astype(np.uint8) * 255
+    regions = describe_regions(mask, C.DARK_MIN_AREA, gray)
+
+    for region in regions:
+        x, y, rw, rh = region["bbox"]
+        px, py = region["contour"][0, 0]
+        label = labels[py, px]
+        component = labels[y:y + rh, x:x + rw] == label
+        local_mask = component.astype(np.uint8) * 255
+        contours, _ = cv.findContours(local_mask, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE)
+        perimeter = sum(cv.arcLength(contour, True) for contour in contours)
+        area = region["area"]
+        if perimeter > 0:
+            region["thickness"] = float(2.0 * area / perimeter)
+            region["circ_inv"] = float(perimeter ** 2 / (4.0 * np.pi * area))
+        region["contrast"] = float(darkness[y:y + rh, x:x + rw][component].mean() / sigma)
+        # score는 선택 과제 S1: 점수식을 합의하기 전까지 기존 NaN을 유지한다.
+    return regions, mask
 
 def detect_cracks(gray, road=None):
     """가늘고 긴 어두운 선을 균열 후보로 찾는다. (후보 list, 캐니 에지 uint8 0/255)를 돌려준다.
@@ -177,10 +253,12 @@ def detect_cracks(gray, road=None):
     두 조건을 함께 요구하면(그리고) 가장 흔한 곧은 균열을 놓친다.
     마지막으로 주변보다 CRACK_MIN_DARKNESS 이상 어둡지 않은 후보(흰 차선·횡단보도 점선 같은 밝은 선)는 뺀다."""
     if _detect_mode() == "dark":
-        # TODO(B) WP2·WP3: extract_dark_regions(gray, road)의 영역 중 circ_inv ≥ CRACK_MIN_CIRC_INV인 것을 균열로.
-        # 에지는 row의 edges를 1차 결과와 비교할 수 있게 지금과 같은 Canny로 계산해 함께 돌려준다.
-        raise NotImplementedError("TODO(B): DETECT_MODE='dark' 균열 후보 (Plan.md 3.4·3.5, docs/tasks/B.md)")
-
+        regions, _ = extract_dark_regions(gray, road)
+        
+        candidates = [r for r in regions if r["circ_inv"] >= C.CRACK_MIN_CIRC_INV]
+        edges = cv.Canny(gray, C.CANNY_LOW, C.CANNY_HIGH)
+        return candidates, edges
+    
     edges=cv.Canny(
         gray, 
         C.CANNY_LOW,
@@ -221,11 +299,16 @@ def detect_potholes(gray, road=None):
     """주변보다 어두운 덩어리를 포트홀 후보로 찾는다. (후보 list, 이진 마스크 uint8 0/255)를 돌려준다.
     road: 노면 마스크 또는 None(기본값, 지금과 같음). DETECT_MODE "legacy"(DoG 방식)는 road를 쓰지 않는다."""
     if _detect_mode() == "dark":
-        # TODO(B) WP2·WP3: extract_dark_regions(gray, road)의 영역 중 circ_inv ≤ POT_MAX_CIRC_INV이고
-        # solidity ≥ POT_MIN_SOLIDITY인 것을 포트홀로. 마스크는 어두운 영역 마스크(0/255)를 돌려준다.
-        raise NotImplementedError("TODO(B): DETECT_MODE='dark' 포트홀 후보 (Plan.md 3.4·3.5, docs/tasks/B.md)")
 
-    # TODO(B): DoG → 이진화 → 열림 → 모양으로 거르기, (후보, 마스크) 반환
+        regions, mask = extract_dark_regions(gray, road)
+        
+        candidates = [
+            r for r in regions
+            if r["circ_inv"] <= C.POT_MAX_CIRC_INV
+            and r["solidity"] >= C.POT_MIN_SOLIDITY
+        ]
+        return candidates, mask
+    
     sigma_small, sigma_large = C.DOG_SIGMAS
 
     blur_small = cv.GaussianBlur(
