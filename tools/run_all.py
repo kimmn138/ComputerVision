@@ -2057,7 +2057,9 @@ def time_lines(table):
         return lines + ["아직 결과 없음 (최종 단계 뒤)", ""]
     rows = [[d["run"], d["folder"], "끔" if d["preprocess"] == "off" else "켬"] + [num(d[m]) for m in TIME39] + [num(d["total"])]
             for _, d in table.iterrows()]
-    return lines + md_table(["설정", "폴더", "전처리", "전처리 ms", "검출 ms", "노면 마스크 ms", "띠 경계 ms", "합 ms"], rows)
+    return lines + md_table(["설정", "폴더", "전처리", "전처리 ms", "검출 ms", "노면 마스크 ms", "띠 경계 ms", "합 ms"], rows)[:-1] + [
+        "", "최종 실행은 두 번 돌렸다: 첫 실행에서 코드가 같은 1차 설정도 40.5 → 121.8 ms로 약 3배 느려져, 컴퓨터 상태 문제로 보고 다시 쟀다"
+            "(위 표는 두 번째 실행, docs/part_C.md).", ""]
 
 
 def judge_lines(table):

@@ -796,6 +796,7 @@ def summarize_verdicts(verdicts):
 - road를 검출 함수에 넘긴다: `detect_cracks(proc, road)`, `detect_potholes(proc, road)`. 잡음 σ를 노면 안에서 재기 위해서다(3.4 (1), 3.9 6번).
 - 검출은 지금처럼 흑백 띠 전체에서 한다. 마스크 밖을 0으로 칠하면 경계에 가짜 에지가 생기기 때문이다.
 - 후보의 bbox 중심이 road 안에 있는 것만 남긴다. config C 구역에 `ROAD_KEEP_RULE = "center"`를 둔다. (Should) 윤곽 픽셀의 50% 이상이 노면 안에 있어야 하는 규칙과 비교한다.
+  - (10/12 변경) 개발셋 비교 뒤 ratio를 규칙 2의 예외로 채택해 ROAD_KEEP_RULE = "ratio"로 바꿈. 근거는 docs/part_C.md
 - out에 `road`, `t_road_ms` 키를 더한다(3장 6번 규칙상 키 추가는 가능).
 - row 9열은 그대로 둔다. 다만 n_crack 등은 걸러 낸 뒤의 개수다.
 - 마스크는 전처리와 상관없이 컬러에서 계산한다. 그래서 '끔·켬의 차이는 steps 하나뿐'이라는 약속이 그대로 지켜진다.
