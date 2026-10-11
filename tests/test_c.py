@@ -1073,6 +1073,63 @@ def test_keep_on_road():
         pass
 
 
+def test_keep_on_road_ratio():
+    """keep_on_road('ratio'): 후보 영역(윤곽 안쪽까지 채운 픽셀)의 ROAD_KEEP_RATIO_MIN 이상이 노면이면 남긴다.
+    노면 경계가 비스듬하면 바깥 후보의 상자 중심이 노면에 떨어져 'center'로는 남는다(Japan_000107 켬). 그런 후보를 'ratio'는 지우고,
+    상자 중심만 노면 밖인 L자 후보는 남긴다. 받은 list는 바꾸지 않고, 기본 규칙(config 'center') 결과는 그대로다."""
+    road = np.zeros((100, 200), np.uint8)
+    cv.fillPoly(road, [np.array([[0, 99], [0, 0], [100, 0], [199, 99]], np.int32)], 255)  # 왼쪽 위가 노면, 경계는 오른쪽 아래로 비스듬
+
+    def region(points):
+        contour = np.array(points, np.int32).reshape(-1, 1, 2)
+        return {"bbox": tuple(int(v) for v in cv.boundingRect(contour)), "contour": contour}
+
+    outside = region([[95, 0], [199, 0], [199, 99], [194, 99], [194, 4], [95, 4]])     # 노면 밖을 도는 ㄱ자, 상자 중심 (147, 50)은 노면
+    inside = region([[5, 5], [60, 5], [60, 95], [50, 95], [50, 15], [5, 15]])            # 노면 안 ㄱ자
+    corner = region([[0, 0], [90, 0], [90, 10], [10, 10], [10, 99], [0, 99]])            # 상자 중심 (45, 50)은 노면, 영역 전부 노면
+    regions = [outside, inside, corner]
+    center = pipeline.keep_on_road(regions, road, "center")
+    ratio = pipeline.keep_on_road(regions, road, "ratio")
+    check(outside in center, "keep_on_road: 시험 전제가 틀림(비스듬한 경계 밖 후보의 상자 중심이 노면 밖)")
+    check(pipeline.road_ratio(outside, road) < 0.5 <= pipeline.road_ratio(inside, road),
+          f"road_ratio: 노면 안 비율이 틀림 ({pipeline.road_ratio(outside, road):.2f}, {pipeline.road_ratio(inside, road):.2f})")
+    check(ratio == [inside, corner], f"keep_on_road('ratio'): 남은 후보가 틀림 ({[r['bbox'] for r in ratio]})")
+    check(len(regions) == 3, "keep_on_road('ratio')가 받은 list를 바꿈")
+    with_ratio = {"ROAD_KEEP_RULE": "ratio"}
+    backup = rx.apply_overrides(with_ratio)
+    try:
+        check(pipeline.keep_on_road(regions, road) == [inside, corner], "keep_on_road: config ROAD_KEEP_RULE='ratio'를 읽지 않음")
+    finally:
+        rx.restore_overrides(backup)
+    check(C.ROAD_KEEP_RULE == "center" and pipeline.keep_on_road(regions, road) == center, "keep_on_road: 기본 규칙이 'center'가 아님")
+
+
+def test_set_option():
+    """run_experiment·demo의 --set NAME=VALUE: 그 밖의 config 값(남기기 규칙·차선 스위치)을 이번 실행에만 바꾼다(evaluate_train --set과 같은 모양).
+    값은 파이썬 값(True·0.5)이나 글자(ratio)로 읽고, config에 없는 이름·모양이 틀린 값은 거부하며, 실행 조건 줄에 남는다."""
+    args = parse_quietly(rx.parse_args, ["--roi", "auto", "--set", "ROAD_KEEP_RULE=ratio", "--set", "ROAD_LANE_BRIDGE=True"])
+    check(args is not None and rx.runtime_overrides(args) == {"ROAD_KEEP_RULE": "ratio", "ROAD_LANE_BRIDGE": True},
+          f"run_experiment: --set을 config 값으로 못 바꿈 ({args})")
+    if args is not None:
+        check(rx.run_notes(args, {})[0] == "실행 옵션: --roi auto --set ROAD_KEEP_RULE=ratio --set ROAD_LANE_BRIDGE=True",
+              f"run_notes: --set이 실행 조건 줄에 없음 ({rx.run_notes(args, {})})")
+    for bad in (["--set", "NO_SUCH_NAME=1"], ["--set", "ROAD_KEEP_RULE"], ["--set", "road_keep_rule=ratio"]):
+        check(parse_quietly(rx.parse_args, bad) is None, f"run_experiment: 잘못된 --set을 받아들임 ({' '.join(bad)})")
+        check(parse_quietly(demo.parse_args, ["a.jpg"] + bad) is None, f"demo: 잘못된 --set을 받아들임 ({' '.join(bad)})")
+    d = parse_quietly(demo.parse_args, ["a.jpg", "--set", "ROAD_CLOSE_BEFORE_SEED=True"])
+    check(d is not None and rx.runtime_overrides(d) == {"ROAD_CLOSE_BEFORE_SEED": True}, f"demo: --set을 못 읽음 ({d})")
+    check(parse_quietly(rx.parse_args, []).set == [] and demo.road_extra() == [],
+          "--set이 없는데 바꾸는 값이 있거나, 기본 설정인데 시연 설정 줄에 보완 표시가 붙음")
+    backup = rx.apply_overrides({"ROAD_KEEP_RULE": "ratio", "ROAD_LANE_BRIDGE": True})
+    try:
+        line = demo.make_footer({"mean": 100.0}, 0.5, 1.0, "roi.csv", True)[1]
+        ascii_line = demo.make_footer({"mean": 100.0}, 0.5, 1.0, "roi.csv", False)[1]
+        check("남기기 ratio" in line and "차선 (가)" in line and ascii_line.isascii() and "lane bright" in ascii_line,
+              f"make_footer: 켠 보완(남기기 규칙·차선)이 설정 줄에 없음 ({line} / {ascii_line})")
+    finally:
+        rx.restore_overrides(backup)
+
+
 def test_draw_road_copy():
     """draw_road는 같은 크기의 새 영상을 돌려주고 받은 영상은 바꾸지 않는다(약속 표). 칠하는 일은 WP5에서."""
     bgr = np.full((300, 640, 3), 128, np.uint8)
@@ -1674,7 +1731,7 @@ def main():
                test_demo_options, test_demo_footer, test_demo_main_save,
                test_demo_dialog_args, test_demo_read_error_text, test_demo_dialog_loop, test_demo_no_tkinter,
                test_match_group, test_match_row_and_figure, test_match_main,
-               test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
+               test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_keep_on_road_ratio, test_set_option, test_draw_road_copy,
                test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_cloudy_sky, test_auto_band_csv_rule, test_auto_band_options,
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,

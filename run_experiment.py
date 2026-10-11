@@ -1,7 +1,7 @@
 """(파트 C) 제공·직접 촬영 영상 전체를 전처리 끔·켬으로 처리해 지표 표·비교 그림·요약 표를 저장한다.
 사용법: 맨 위 폴더에서  python run_experiment.py --name <이름>  [--only provided|own]
                         [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3] [--auto-band on|off]
-                        [--band-texture on|off]
+                        [--band-texture on|off] [--set NAME=VALUE ...]
 결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
 - metrics.csv: 영상마다 끔·켬 2행 (영상 정보, 상태 지표, row 9열, 노면 안 에지 수 edges_road·노면 마스크 시간 t_road_ms·
   자동 띠 경계 시간 t_band_ms(사진 전체 노면 마스크, 자동 띠 높이가 꺼져 있으면 0),
@@ -19,11 +19,14 @@
   자동 띠는 기본 띠를 쓰는 사진에만 쓴다(--roi auto의 모든 사진, --roi csv에서 roi.csv에 없는 사진). roi.csv에 사람이 사진마다 정한 띠는
   넓히지 않는다(band_overrides). 실제로 쓴 띠 높이는 metrics의 roi_pixels(띠 픽셀 수)로 알 수 있다
 - --band-texture on|off: AUTO_BAND_USE_TEXTURE(자동 띠의 결 조건). 자동 띠 높이가 켜져 있을 때만 효과가 있다
+- --set NAME=VALUE: 그 밖의 config 값 하나를 이번 실행에만 바꾼다(여러 번 가능, evaluate_train의 --set과 같은 모양).
+  예: --set ROAD_KEEP_RULE=ratio --set ROAD_LANE_BRIDGE=True
 - --roi auto와 노면 마스크는 따로 켠다(한 단계씩 끄고 켜며 비교하려고). 둘 다 쓰려면 --roi auto --mask on
 처리 시간(t_pre_ms·t_detect_ms·t_road_ms·t_band_ms)은 끔·켬을 각각 C.TIME_REPEAT번 돌린 중앙값이고, 나머지 값은 첫 결과다.
 영상 하나가 실패해도 나머지를 계속 처리하고, 실패가 있으면 끝에 같은 오류끼리 묶어 출력하고 종료 코드 1로 끝난다.
 """
 import argparse
+import ast
 import glob
 import math
 import os
@@ -96,14 +99,40 @@ def parse_args(argv=None):
                         help="자동 띠 높이(AUTO_BAND_TOP)를 이번 실행에만 켬·끔. 켜면 노면만 이어지는 만큼 띠 위쪽 경계를 위로 넓힘")
     parser.add_argument("--band-texture", choices=("on", "off"),
                         help="자동 띠의 결 조건(AUTO_BAND_USE_TEXTURE)을 이번 실행에만 켬·끔. 켜면 결이 시작 띠 노면과 비슷한 구간만 넓힘")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                        help="config 값 하나를 이번 실행에만 바꿈(여러 번 가능). 예: --set ROAD_KEEP_RULE=ratio")
     args = parser.parse_args(argv)
     check_name(parser, args.name)
+    check_sets(parser, args.set)
     if args.roi_top is not None:
         if args.roi != "auto":
             parser.error("--roi-top은 --roi auto와 함께만 쓴다: --roi csv에서는 39장 모두 roi.csv의 범위를 써서 효과가 없다")
         if not 0 <= args.roi_top < C.ROI_BOTTOM_DEFAULT:
             parser.error(f"--roi-top은 0 이상 {C.ROI_BOTTOM_DEFAULT}(ROI_BOTTOM_DEFAULT) 미만이어야 함 ({args.roi_top})")
     return args
+
+
+def parse_set(item):
+    """'NAME=VALUE' 하나를 (이름, 값)으로 읽는다. 값은 파이썬 값(False·0.3·(3, 12))으로 읽고, 안 되면 글자 그대로(ratio).
+    config에 없는 이름은 오타일 수 있으므로 ValueError(조용히 안 먹는 옵션이 없게). evaluate_train.parse_set과 같은 규칙이다."""
+    name, sep, text = item.partition("=")
+    name = name.strip()
+    if not sep or not name.isupper() or not hasattr(C, name):
+        raise ValueError(f"--set은 config에 있는 대문자 이름=값이어야 함: {item!r}")
+    try:
+        value = ast.literal_eval(text.strip())
+    except (ValueError, SyntaxError):
+        value = text.strip()
+    return name, value
+
+
+def check_sets(parser, items):
+    """--set 값들을 미리 읽어 보고, 잘못된 것이 있으면 사용법과 함께 멈춘다(run_experiment·demo 공통)."""
+    for item in items:
+        try:
+            parse_set(item)
+        except ValueError as e:
+            parser.error(str(e))
 
 
 def runtime_overrides(args):
@@ -120,6 +149,9 @@ def runtime_overrides(args):
         overrides["AUTO_BAND_TOP"] = args.auto_band == "on"
     if getattr(args, "band_texture", None) is not None:
         overrides["AUTO_BAND_USE_TEXTURE"] = args.band_texture == "on"
+    for item in getattr(args, "set", []):
+        name, value = parse_set(item)
+        overrides[name] = value
     return overrides
 
 
@@ -142,7 +174,7 @@ def run_notes(args, overrides):
     options = [f"--roi {args.roi}"] + [f"--{flag} {value}" for flag, value in
                                        (("only", args.only), ("mask", args.mask), ("detect", args.detect), ("roi-top", args.roi_top),
                                         ("auto-band", args.auto_band), ("band-texture", args.band_texture))
-                                       if value is not None]
+                                       if value is not None] + [f"--set {item}" for item in getattr(args, "set", [])]
     changed = ", ".join(f"{name}={value!r}" for name, value in overrides.items()) or "없음"
     return [f"실행 옵션: {' '.join(options)}", f"실행 옵션으로 바꾼 config 값: {changed}"]
 

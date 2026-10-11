@@ -1,12 +1,12 @@
 """(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 노면 마스크와 검출 결과를 한 창에 나란히 띄운다.
 사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark]
-                                        [--auto-band on|off] [--band-texture on|off] [--save 그림 경로] [--list]
+                                        [--auto-band on|off] [--band-texture on|off] [--set NAME=VALUE ...] [--save 그림 경로] [--list]
 - 영상 경로를 빼면(VS Code ▶ 버튼) 파일 선택 창(맨 앞, 처음 폴더 data/)으로 사진을 고르고 --roi auto로 띄운다.
   결과 창을 닫으면 다시 선택 창이 뜨고, 취소하면 끝난다. 못 읽는 사진(HEIC 등)은 안내 창을 띄우고 다음 사진을 고르게 한다.
   tkinter를 쓸 수 없는 컴퓨터면 안내 문구를 낸 뒤 번호 목록으로 넘어간다.
 - --list: 선택 창 대신 data 아래 사진 목록을 번호로 보여 주고 고르게 한다(예전 방식).
 - ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다. --roi auto면 roi.csv 없이 기본 띠(run_experiment와 같음).
-- --mask·--detect·--auto-band·--band-texture(자동 띠의 결 조건)는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
+- --mask·--detect·--auto-band·--band-texture(자동 띠의 결 조건)·--set NAME=VALUE(그 밖의 config 값, run_experiment와 같음)는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
   자동 띠 높이(config AUTO_BAND_TOP, --auto-band)가 켜져 있으면 기본 띠(0.5)에서 시작해 노면만 이어지는 만큼 위로 넓히고, 화면 아래 띠에
   넓힌 경계를 적는다. 명령행 비율이나 roi.csv로 정한 띠는 넓히지 않는다(run_experiment와 같음). 선택 창(--roi auto)은 config를 따른다.
 - 창: 끔·켬 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보. 위 띠에 고른 전처리, 아래 띠에 상태 판정 값과 설정.
@@ -63,10 +63,13 @@ def parse_args(argv=None):
                         help="자동 띠 높이(AUTO_BAND_TOP)를 이번 실행에만 켬·끔. 켜면 노면만 이어지는 만큼 띠 위쪽 경계를 위로 넓힘. 빼면 config")
     parser.add_argument("--band-texture", choices=("on", "off"),
                         help="자동 띠의 결 조건(AUTO_BAND_USE_TEXTURE)을 이번 실행에만 켬·끔. 켜면 결이 시작 띠 노면과 비슷한 구간만 넓힘")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                        help="config 값 하나를 이번 실행에만 바꿈(여러 번 가능). 예: --set ROAD_LANE_BRIDGE=True. 빼면 config")
     parser.add_argument("--save", metavar="그림 경로", help="창을 띄우지 않고 같은 화면을 그림 파일(.png)로 저장")
     parser.add_argument("--list", action="store_true", help="선택 창 대신 data 아래 사진 목록에서 번호로 고름(예전 방식)")
     parser.set_defaults(roi_top=None)       # run_experiment.runtime_overrides와 같은 모양(시연은 띠를 ROI 비율로 정함)
     args = parser.parse_args(argv)
+    rx.check_sets(parser, args.set)
     if args.list and args.path is not None:
         parser.error("--list는 사진 경로 없이 쓸 것(경로를 주면 목록이 필요 없음)")
     if args.save and args.path is None and not args.list:
@@ -247,11 +250,27 @@ def make_footer(quality, top, bottom, roi_source, unicode_ok):
     lang = 0 if unicode_ok else 1
     values = [f"{QUALITY_NAMES.get(key, (key, key))[lang]} {format_value(value)}" for key, value in quality.items()]
     mask = C.USE_ROAD_MASK
+    extra = road_extra()
     if unicode_ok:
         return ["상태 판정: " + " · ".join(values),
-                f"설정: ROI {top:.2f}~{bottom:.2f}({roi_source}) · 노면 마스크 {'켬' if mask else '끔'} · 검출 {C.DETECT_MODE}"]
+                f"설정: ROI {top:.2f}~{bottom:.2f}({roi_source}) · 노면 마스크 {'켬' if mask else '끔'} · 검출 {C.DETECT_MODE}"
+                + "".join(f" · {ko}" for ko, _ in extra)]
     return ["quality: " + " / ".join(values),
-            f"ROI {top:.2f}-{bottom:.2f}{' (auto band)' if C.AUTO_BAND_TOP else ''} / mask {'on' if mask else 'off'} / detect {C.DETECT_MODE}"]
+            f"ROI {top:.2f}-{bottom:.2f}{' (auto band)' if C.AUTO_BAND_TOP else ''} / mask {'on' if mask else 'off'} / detect {C.DETECT_MODE}"
+            + "".join(f" / {en}" for _, en in extra)]
+
+
+def road_extra():
+    """설정 줄에 덧붙일 노면 마스크 보완 [(한글, 영문)]: 남기기 규칙이 'center'가 아니거나 차선 스위치(A 구역 (가)·(나))가 켜졌을 때만.
+    기본 설정이면 빈 list라 예전 화면과 같다. 고치기 전·후 시연 그림을 화면만 보고 가르려고 둔다."""
+    extra = []
+    if C.ROAD_KEEP_RULE != "center":
+        extra.append((f"남기기 {C.ROAD_KEEP_RULE}", f"keep {C.ROAD_KEEP_RULE}"))
+    lanes = [name for name, on in (("가", C.ROAD_LANE_BRIDGE), ("나", C.ROAD_CLOSE_BEFORE_SEED)) if on]
+    if lanes:
+        extra.append(("차선 " + "+".join(f"({n})" for n in lanes),
+                      "lane " + "+".join({"가": "bright", "나": "preclose"}[n] for n in lanes)))
+    return extra
 
 
 def save_image(path, img):
@@ -325,7 +344,8 @@ def demo_one(path, args, show_fn=None, warn=None):
         print(f"영상: {path}")
         print(f"ROI: top {top}, bottom {bottom} ({roi_source})")
         band_text = f"켬(결 조건 {'켬' if C.AUTO_BAND_USE_TEXTURE else '끔'})" if C.AUTO_BAND_TOP else "끔"
-        print(f"설정: 노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}, 검출 {C.DETECT_MODE}, 자동 띠 높이 {band_text}")
+        print(f"설정: 노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}, 검출 {C.DETECT_MODE}, 자동 띠 높이 {band_text}"
+              + "".join(f", {ko}" for ko, _ in road_extra()))
         print(make_footer(outs[True]["quality"], top, bottom, roi_source, True)[0])
         print(f"고른 전처리: {steps_text}")
         with pd.option_context("display.width", 200, "display.max_columns", None):

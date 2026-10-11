@@ -50,17 +50,33 @@ def auto_band_top(small, top):
 def keep_on_road(regions, road, rule=None):
     """노면 마스크 밖의 후보를 지워, 노면 밖 배경(건물·차·풀숲·보닛)에서 나온 오검출을 뺀다. 받은 list는 바꾸지 않고 새 list를 돌려준다.
     rule(기본 config C 구역의 ROAD_KEEP_RULE) "center": 후보 bbox의 중심 픽셀이 노면(255)이면 남긴다. 후보와 road는 둘 다 노면 띠 좌표다.
-    다른 규칙(예: 윤곽 픽셀의 50% 이상이 노면 안)은 C가 WP5에서 비교한다(Plan.md 3.3 (7), Should)."""
+    "ratio": 후보 영역(윤곽 안쪽까지 채운 픽셀) 중 노면 안 비율이 ROAD_KEEP_RATIO_MIN 이상이면 남긴다. 노면 경계가 비스듬하면
+    바깥 후보의 상자 중심이 노면에 떨어져 "center"로는 남기 때문이다(Plan.md 3.3 (7)). 그 밖의 규칙은 ValueError."""
     rule = C.ROAD_KEEP_RULE if rule is None else rule
-    if rule != "center":
-        raise ValueError(f"ROAD_KEEP_RULE은 지금 'center'만 됨 ({rule!r})")
+    if rule not in ("center", "ratio"):
+        raise ValueError(f"ROAD_KEEP_RULE은 'center'·'ratio'만 됨 ({rule!r})")
     h, w = road.shape
     kept = []
     for r in regions:
         x, y, bw, bh = r["bbox"]
-        if road[min(int(y + bh / 2), h - 1), min(int(x + bw / 2), w - 1)] > 0:
+        if rule == "center":
+            on = road[min(int(y + bh / 2), h - 1), min(int(x + bw / 2), w - 1)] > 0
+        else:
+            on = road_ratio(r, road) >= C.ROAD_KEEP_RATIO_MIN
+        if on:
             kept.append(r)
     return kept
+
+
+def road_ratio(region, road):
+    """후보 하나의 영역(윤곽 안쪽까지 채운 픽셀) 중 노면(255) 안 비율을 잰다. 'ratio' 남기기 규칙과 확인용 표가 같은 계산을 쓰게 따로 둔다.
+    bbox 크기의 작은 영상에 윤곽을 채워 그려 사진 전체 크기 배열을 만들지 않는다. 채운 픽셀이 없으면 0.0."""
+    x, y, bw, bh = region["bbox"]
+    fill = np.zeros((bh, bw), np.uint8)
+    cv.drawContours(fill, [region["contour"]], -1, 255, -1, offset=(-x, -y))
+    inside = fill > 0
+    n = np.count_nonzero(inside)
+    return float(np.count_nonzero(road[y:y + bh, x:x + bw][inside])) / n if n else 0.0
 
 
 def run_pipeline(bgr, top, bottom, use_preprocess):
