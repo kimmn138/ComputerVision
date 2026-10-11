@@ -1,12 +1,17 @@
-"""(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 검출 결과를 한 창에 나란히 띄운다.
-사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]]
+"""(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 노면 마스크와 검출 결과를 한 창에 나란히 띄운다.
+사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark]
+                                        [--save 그림 경로]
 - 영상 경로를 빼면(VS Code ▶ 버튼 등) data 아래 사진 목록을 번호로 보여 주고 고르게 한다.
-- ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다.
-- 콘솔에 고른 전처리와 끔·켬의 row(9열)를 출력하고, 창은 아무 키나 누르거나 X로 닫는다.
+- ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다. --roi auto면 roi.csv 없이 기본 띠(run_experiment와 같음).
+- --mask·--detect는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
+- 창: 끔·켬 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보. 위 띠에 고른 전처리, 아래 띠에 상태 판정 값과 설정.
+- 콘솔에도 상태 판정 값·고른 전처리·설정과 끔·켬의 row(9열)를 출력하고, 창은 아무 키나 누르거나 X로 닫는다.
+- --save를 주면 창을 띄우지 않고 같은 화면을 그림 파일로 저장한다(확인·보고서용).
 화면 표시는 이 파일에서만 한다(src/ 함수는 창을 띄우지 않음).
 """
 import argparse
 import glob
+import math
 import os
 import sys
 
@@ -26,20 +31,32 @@ LABEL_COLOR = (255, 255, 255)   # 제목 띠 글자: 흰색 (BGR)
 LABEL_X = 8
 DATA_DIR = "data"
 EXCLUDE_DIRS = ("train",)       # data/train은 B의 훈련 사진 804장이라 고르는 목록에서 뺌
+# 아래 띠에 적을 상태 판정 값의 이름(한글, 한글을 못 쓸 때의 영문). measure_quality에 키가 늘면 키 이름 그대로 붙는다
+QUALITY_NAMES = {"mean": ("평균", "mean"), "std": ("표준편차", "std"), "lap_var": ("라플라시안 분산", "lap_var"),
+                 "noise": ("잡티", "noise"), "blur_ratio": ("재흐림 비율", "blur_ratio")}
 
 
 def parse_args(argv=None):
-    """영상 경로와 선택 ROI 비율 2개를 읽고, 비율이 1개이거나 0 <= top < bottom <= 1이 아니면 사용법과 함께 멈춘다.
+    """영상 경로, 선택 ROI 비율 2개, 노면 띠 방식(--roi), 이번 실행에만 바꿀 config 값(--mask·--detect), 저장 경로(--save)를 읽는다.
+    비율이 1개이거나 0 <= top < bottom <= 1이 아니면, 또는 비율과 --roi auto를 함께 주면 사용법과 함께 멈춘다.
     영상 경로를 빼면 path는 None(main이 목록에서 고르게 함)."""
-    parser = argparse.ArgumentParser(description="전처리 끔·켬 검출 결과를 한 창에 띄우는 발표 시연")
+    parser = argparse.ArgumentParser(description="전처리 끔·켬의 노면 마스크와 검출 결과를 한 창에 띄우는 발표 시연")
     parser.add_argument("path", nargs="?", help="영상 경로. 빼면 data 아래 사진 목록에서 번호로 고름")
     parser.add_argument("roi", nargs="*", type=float, metavar="roi_top roi_bottom",
                         help="노면 비율 2개(0~1). 빼면 roi.csv, 없으면 config 기본값")
+    parser.add_argument("--roi", dest="roi_mode", choices=rx.ROI_MODES, default="csv",
+                        help="노면 띠: csv = roi.csv에 사진마다 정한 범위(기본), auto = roi.csv 없이 기본 띠(run_experiment와 같음)")
+    parser.add_argument("--mask", choices=("on", "off"), help="노면 마스크(USE_ROAD_MASK)를 이번 실행에만 켬·끔. 빼면 config")
+    parser.add_argument("--detect", choices=("legacy", "dark"), help="검출 방식(DETECT_MODE)을 이번 실행에만 바꿈. 빼면 config")
+    parser.add_argument("--save", metavar="그림 경로", help="창을 띄우지 않고 같은 화면을 그림 파일(.png)로 저장")
+    parser.set_defaults(roi_top=None)       # run_experiment.runtime_overrides와 같은 모양(시연은 띠를 ROI 비율로 정함)
     args = parser.parse_args(argv)
     if len(args.roi) not in (0, 2):
         parser.error(f"ROI 비율은 0개 또는 2개여야 함 ({len(args.roi)}개)")
     if args.roi and not 0 <= args.roi[0] < args.roi[1] <= 1:
         parser.error(f"ROI 비율은 0 <= top < bottom <= 1 이어야 함 ({args.roi[0]}, {args.roi[1]})")
+    if args.roi and args.roi_mode == "auto":
+        parser.error("ROI 비율과 --roi auto는 함께 줄 수 없음(어느 띠를 쓸지 헷갈림). 둘 중 하나만 줄 것")
     return args
 
 
@@ -70,11 +87,14 @@ def pick_image(root=DATA_DIR, input_fn=input):
         print("목록에 있는 번호를 입력")
 
 
-def choose_roi(path, roi_args, roi_table):
-    """명령행 비율 → roi.csv → config 기본값 순서로 노면 범위를 정한다. (top, bottom, 출처 글)을 돌려준다."""
+def choose_roi(path, roi_args, roi_table, mode="csv"):
+    """명령행 비율 → roi.csv → config 기본값 순서로 노면 범위를 정한다. mode가 auto면 roi.csv 없이 config 기본 띠
+    (run_experiment --roi auto와 같음). (top, bottom, 출처 글)을 돌려준다."""
     if roi_args:
         return roi_args[0], roi_args[1], "명령행"
-    roi, used_default = rx.get_roi(os.path.basename(path), roi_table)
+    roi, used_default = rx.get_roi(os.path.basename(path), roi_table, mode)
+    if mode == "auto":
+        return roi["top"], roi["bottom"], "기본 띠, --roi auto"
     return roi["top"], roi["bottom"], "config 기본값" if used_default else "roi.csv"
 
 
@@ -116,26 +136,32 @@ def fit_to_screen(img, max_w, max_h):
     return cv.resize(img, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv.INTER_AREA)
 
 
-def add_label(img, text, unicode_ok):
-    """영상 위에 검은 제목 띠를 붙인 새 영상을 돌려준다. 영상을 가리지 않게 글자는 띠에만 쓴다.
+def text_band(width, text, unicode_ok):
+    """글자 한 줄을 쓴 검은 띠(높이 DEMO_LABEL_HEIGHT)를 만든다. 영상을 가리지 않게 글자는 띠에만 쓴다.
     한글을 못 쓰는 OpenCV면 text 대신 같은 뜻의 영문을 받아 Hershey 글꼴로 쓴다."""
-    band = np.zeros((C.DEMO_LABEL_HEIGHT, img.shape[1], 3), np.uint8)
+    band = np.zeros((C.DEMO_LABEL_HEIGHT, width, 3), np.uint8)
     y = (C.DEMO_LABEL_HEIGHT + C.DEMO_FONT_SIZE) // 2 - 2       # 글자 기준선을 띠 가운데쯤에
     if unicode_ok:
         cv.putText(band, text, (LABEL_X, y), LABEL_COLOR, cv.FontFace(FONT_NAME), C.DEMO_FONT_SIZE)
     else:
         cv.putText(band, text, (LABEL_X, y), cv.FONT_HERSHEY_SIMPLEX, C.DEMO_FONT_SIZE / 30, LABEL_COLOR, 1, cv.LINE_AA)
-    return cv.vconcat([band, img])
+    return band
 
 
-def build_view(off_img, on_img, labels, screen, unicode_ok):
-    """끔·켬 그림을 같은 비율로 화면에 맞게 줄이고 각각 제목 띠를 붙여 가로로 잇는다.
-    라벨은 줄인 뒤에 붙여 화면 크기와 상관없이 글자 크기가 같다."""
+def add_label(img, text, unicode_ok):
+    """영상 위에 검은 제목 띠를 붙인 새 영상을 돌려준다. 영상을 가리지 않게 글자는 띠에만 쓴다."""
+    return cv.vconcat([text_band(img.shape[1], text, unicode_ok), img])
+
+
+def build_view(off_img, on_img, labels, screen, unicode_ok, footer=()):
+    """끔·켬 그림을 같은 비율로 화면에 맞게 줄이고 각각 제목 띠를 붙여 가로로 잇는다. footer 줄이 있으면 아래에 띠로 붙인다.
+    라벨은 줄인 뒤에 붙여 화면 크기와 상관없이 글자 크기가 같고, 아래 띠 높이까지 화면 안에 들어가게 줄인다."""
     max_w = screen[0] * C.DEMO_SCREEN_MARGIN / 2
-    max_h = screen[1] * C.DEMO_SCREEN_MARGIN - C.DEMO_LABEL_HEIGHT
+    max_h = screen[1] * C.DEMO_SCREEN_MARGIN - C.DEMO_LABEL_HEIGHT * (1 + len(footer))
     panels = [add_label(fit_to_screen(img, max_w, max_h), text, unicode_ok)
               for img, text in zip((off_img, on_img), labels)]
-    return cv.hconcat(panels)
+    view = cv.hconcat(panels)
+    return cv.vconcat([view] + [text_band(view.shape[1], line, unicode_ok) for line in footer])
 
 
 def make_labels(steps_text, unicode_ok):
@@ -143,6 +169,36 @@ def make_labels(steps_text, unicode_ok):
     if unicode_ok:
         return "전처리 끔", f"전처리 켬: {steps_text}"
     return "Preprocess OFF", "Preprocess ON"
+
+
+def format_value(value):
+    """상태 판정 값 한 개를 짧은 글로: 아직 계산하지 않는 값(NaN)은 '-', 100 이상은 정수, 그 밖은 소수 한 자리."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "-"
+    return f"{value:.0f}" if abs(value) >= 100 else f"{value:.1f}"
+
+
+def make_footer(quality, top, bottom, roi_source, unicode_ok):
+    """화면 아래 띠 두 줄: 상태 판정 값(전처리를 고른 근거)과 이번 시연의 설정(ROI·노면 마스크·검출 방식).
+    설정은 실행 옵션을 적용한 뒤의 config 값을 읽어 적으므로 화면만 보고도 어떤 조건인지 안다. 한글을 못 쓰면 영문으로."""
+    lang = 0 if unicode_ok else 1
+    values = [f"{QUALITY_NAMES.get(key, (key, key))[lang]} {format_value(value)}" for key, value in quality.items()]
+    mask = C.USE_ROAD_MASK
+    if unicode_ok:
+        return ["상태 판정: " + " · ".join(values),
+                f"설정: ROI {top:.2f}~{bottom:.2f}({roi_source}) · 노면 마스크 {'켬' if mask else '끔'} · 검출 {C.DETECT_MODE}"]
+    return ["quality: " + " / ".join(values),
+            f"ROI {top:.2f}-{bottom:.2f} / mask {'on' if mask else 'off'} / detect {C.DETECT_MODE}"]
+
+
+def save_image(path, img):
+    """화면 그림을 파일로 저장한다(창을 띄우지 않는 확인·보고서용). 윈도의 한글 경로에서도 되도록 imencode + tofile로 쓴다."""
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    ok, data = cv.imencode(os.path.splitext(path)[1] or ".png", img)
+    if not ok:
+        raise ValueError(f"그림으로 바꿀 수 없음: {path}")
+    data.tofile(path)
 
 
 def report_table(row_off, row_on):
@@ -164,7 +220,8 @@ def show(img):
 
 
 def main(argv=None):
-    """영상 1장을 끔·켬으로 처리해 콘솔에 전처리와 row를 출력하고 결과 두 장을 한 창에 띄운다. 종료 코드를 돌려준다."""
+    """영상 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
+    (--save면 창 대신 그림 파일로 저장). --mask·--detect는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다. 종료 코드를 돌려준다."""
     args = parse_args(argv)
     if args.path is None:
         args.path = pick_image()
@@ -173,7 +230,7 @@ def main(argv=None):
             return 0
     try:
         bgr = io_utils.load_image(args.path)
-        top, bottom, roi_source = choose_roi(args.path, args.roi, io_utils.load_roi_table(ROI_PATH))
+        top, bottom, roi_source = choose_roi(args.path, args.roi, io_utils.load_roi_table(ROI_PATH), args.roi_mode)
     except FileNotFoundError:
         print(f"파일을 읽을 수 없음: {args.path}")
         return 1
@@ -181,17 +238,35 @@ def main(argv=None):
         print(f"{ROI_PATH} 형식 오류: {e}")
         return 1
 
-    outs = {use: pipeline.run_pipeline(bgr, top, bottom, use) for use in (False, True)}
-    steps_text = analyze.steps_to_text(outs[True]["steps"])
-    print(f"영상: {args.path}")
-    print(f"ROI: top {top}, bottom {bottom} ({roi_source})")
-    print(f"고른 전처리: {steps_text}")
-    with pd.option_context("display.width", 200, "display.max_columns", None):
-        print(report_table(outs[False]["row"], outs[True]["row"]))
+    backup = rx.apply_overrides(rx.runtime_overrides(args))
+    try:
+        try:
+            outs = {use: pipeline.run_pipeline(bgr, top, bottom, use) for use in (False, True)}
+        except NotImplementedError as e:            # 예: 아직 구현 전인 --detect dark
+            print(f"아직 구현되지 않은 설정이라 시연할 수 없음: {e}")
+            return 1
+        unicode_ok = has_unicode_text()
+        steps_text = analyze.steps_to_text(outs[True]["steps"])
+        footer = make_footer(outs[True]["quality"], top, bottom, roi_source, unicode_ok)
+        print(f"영상: {args.path}")
+        print(f"ROI: top {top}, bottom {bottom} ({roi_source})")
+        print(f"설정: 노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}, 검출 {C.DETECT_MODE}")
+        print(make_footer(outs[True]["quality"], top, bottom, roi_source, True)[0])
+        print(f"고른 전처리: {steps_text}")
+        with pd.option_context("display.width", 200, "display.max_columns", None):
+            print(report_table(outs[False]["row"], outs[True]["row"]))
 
-    drawn = [visualize.draw_candidates(o["small"], o["cracks"], o["potholes"], o["y0"]) for o in outs.values()]
-    unicode_ok = has_unicode_text()
-    show(build_view(drawn[0], drawn[1], make_labels(steps_text, unicode_ok), screen_size(), unicode_ok))
+        drawn = [visualize.draw_candidates(visualize.draw_road(o["small"], o["road"], o["y0"]), o["cracks"], o["potholes"], o["y0"])
+                 for o in outs.values()]
+        view = build_view(drawn[0], drawn[1], make_labels(steps_text, unicode_ok), screen_size(), unicode_ok, footer)
+    finally:
+        rx.restore_overrides(backup)
+
+    if args.save:
+        save_image(args.save, view)
+        print(f"화면을 저장함: {args.save}")
+    else:
+        show(view)
     return 0
 
 

@@ -14,5 +14,7 @@
 | 2026-10-04 | DEMO_LABEL_HEIGHT, DEMO_FONT_SIZE | (없음) | 40, 22 | 패널 위 제목 띠(영상을 가리지 않음). 가장 좁은 패널 463px에도 '전처리 켬: 가우시안+감마 0.53'이 한 줄에 들어감 | 합성 회색 패널 463px |
 | 2026-10-10 | USE_ROAD_MASK, ROAD_KEEP_RULE | (없음) | False, "center" | pipeline의 노면 마스크 켬·끔과 노면 안 후보 규칙(Plan.md 3.3 (7)). 끄면 road를 검출 함수에 넘기지 않고 후보도 지우지 않아 1차와 같음. E1에서 채택되면 True로 바꾸고 이 표에 적는다 | 39장(끔·켬, 5번 반복)·804장(끔·켬) 메모리 비교: row·후보·요약이 main과 같음. True로 켜도(임시 마스크 전부 255) 같음 |
 | 2026-10-10 | DEGRADE_BLUR_SIGMA, DEGRADE_DARK_GAMMA, DEGRADE_BRIGHT_GAMMA, DEGRADE_NOISE_SIGMA, DEGRADE_SEED | (없음) | 2.0, 2.2, 0.5, 10.0, 0 | 인위 저하 실험 E6 값(Plan.md 3.2 (6)). evaluate_train --degrade에서 쓸 값(C 작업) | 아직 쓰이지 않음. 참고 구현으로 128 → dark 57·bright 181 확인(test_c의 @todo 시험) |
+| 2026-10-11 | DEGRADE_SEED (쓰는 방식) | 0 (모든 사진에 같은 seed) | 0 + 사진 바이트의 crc32 (값 0은 그대로) | 크기가 같은 사진에 모두 같은 잡음 무늬가 들어가 결과가 그 무늬 하나에 좌우될 수 있었음. 같은 사진은 늘 같은 무늬 | 학습 사진 Japan 2장(640×640): 같은 사진 두 번 같음, 두 사진의 잡음 값이 같은 픽셀 2.8%(독립인 잡음의 우연 일치 수준), 잡음 표준편차 10.01. dark는 감마 표 반올림으로 128 → 56(시험 기대 57±1 안) |
+| 2026-10-11 | ROAD_OVERLAY_COLOR, ROAD_OVERLAY_ALPHA | (없음) | (0, 255, 0), 0.35 | 시연·비교 그림에서 노면 마스크를 반투명 초록으로 칠함(draw_road, Plan.md 3.7). 초록은 균열(빨강)·포트홀(파랑)·노면 시작선(노랑)과 헷갈리지 않고, 0.35는 노면 결과 후보 윤곽이 비쳐 보이는 옅기 | 회색 128 → (83, 172, 83). demo 화면 저장으로 Japan_013055·United_States_004830(띠 아래 0.95~1.0은 칠하지 않음)·own_03_pothole_blur(세로)·--roi auto --mask on, run_experiment 비교 그림 United_States_004952를 눈으로 확인 |
 
 ## 알고리즘 설명과 설정 근거 (보고서·발표용)

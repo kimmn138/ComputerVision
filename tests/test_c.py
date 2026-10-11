@@ -54,6 +54,16 @@ def patched(obj, name, value):
         setattr(obj, name, old)
 
 
+def parse_quietly(parse, argv):
+    """명령행 읽기 함수 parse(argv)를 부른다. 거부되면(argparse의 SystemExit) None. 오류 문구는 화면에 내지 않는다.
+    SystemExit은 Exception이 아니라 main의 except가 못 잡아 시험 전체가 멈추므로 여기서 None으로 바꾼다."""
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return parse(argv)
+    except SystemExit:
+        return None
+
+
 def square(size, value):
     """검은 바탕에 회색 사각형 하나: 해리스 코너 4개, SIFT 특징점이 아주 적은 영상."""
     img = np.zeros((240, 640), np.uint8)
@@ -292,6 +302,215 @@ def test_summary_tables():
           "요약 표: 0장일 때 머리글이나 all 행이 없음")
 
 
+def test_run_options():
+    """run_experiment 실행 옵션: 아무것도 안 주면 roi.csv 띠에 바꾸는 config 값이 없다(1차와 같은 조건).
+    --mask·--detect·--roi-top은 이번 실행에만 쓸 config 값이 되고, --roi auto는 마스크를 저절로 켜지 않는다(한 단계씩 비교하려고).
+    --roi-top은 --roi auto와 함께만 받는다(--roi csv에서는 39장에 효과가 없음). 범위 밖·모르는 값도 거부하고, 바꾼 값은 되돌아온다."""
+    args = parse_quietly(rx.parse_args, [])
+    check(args is not None and args.roi == "csv" and rx.runtime_overrides(args) == {},
+          f"run_experiment: 옵션이 없는데 roi.csv 띠가 아니거나 바꾸는 값이 있음 ({args})")
+    auto = parse_quietly(rx.parse_args, ["--roi", "auto"])
+    check(auto is not None and rx.runtime_overrides(auto) == {}, "run_experiment: --roi auto가 마스크 등 다른 값까지 바꿈")
+    args = parse_quietly(rx.parse_args, ["--roi", "auto", "--mask", "on", "--detect", "dark", "--roi-top", "0.3"])
+    expect = {"USE_ROAD_MASK": True, "DETECT_MODE": "dark", "ROI_TOP_DEFAULT": 0.3}
+    check(args is not None and rx.runtime_overrides(args) == expect, f"run_experiment: 실행 옵션을 config 값으로 못 바꿈 ({args})")
+    off = parse_quietly(rx.parse_args, ["--mask", "off", "--detect", "legacy"])
+    check(off is not None and rx.runtime_overrides(off) == {"USE_ROAD_MASK": False, "DETECT_MODE": "legacy"},
+          "run_experiment: --mask off·--detect legacy를 config 값으로 못 바꿈")
+    for bad in (["--roi-top", "0.3"], ["--roi", "csv", "--roi-top", "0.3"], ["--roi", "auto", "--roi-top", "1.0"],
+                ["--roi", "auto", "--roi-top", "-0.1"], ["--roi", "manual"], ["--detect", "fast"], ["--mask", "yes"]):
+        check(parse_quietly(rx.parse_args, bad) is None, f"run_experiment: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
+    if args is not None:
+        notes = rx.run_notes(args, expect)
+        check(notes == ["실행 옵션: --roi auto --mask on --detect dark --roi-top 0.3",
+                        "실행 옵션으로 바꾼 config 값: USE_ROAD_MASK=True, DETECT_MODE='dark', ROI_TOP_DEFAULT=0.3"],
+              f"run_notes: 실행 조건 줄이 틀림 ({notes})")
+    before = {name: getattr(C, name) for name in expect}
+    backup = rx.apply_overrides(expect)
+    try:
+        check(C.USE_ROAD_MASK is True and C.DETECT_MODE == "dark" and C.ROI_TOP_DEFAULT == 0.3, "apply_overrides: config에 적용되지 않음")
+    finally:
+        rx.restore_overrides(backup)
+    check({name: getattr(C, name) for name in expect} == before, "restore_overrides: 바꾼 config 값이 되돌아가지 않음")
+
+
+def test_get_roi_auto():
+    """--roi auto: roi.csv의 범위는 쓰지 않고 모든 사진에 config 기본 띠를 쓴다. 상태 태그(condition)는 사진의 성질이라 roi.csv에서 그대로 가져온다.
+    기본 띠는 import 때가 아니라 부를 때 config를 읽어야 --roi-top이 먹는다(인계 메모 5.3)."""
+    table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": "dark"}}
+    roi, used = rx.get_roi("a.jpg", table, "auto")
+    check(used and (roi["top"], roi["bottom"], roi["condition"]) == (C.ROI_TOP_DEFAULT, C.ROI_BOTTOM_DEFAULT, "dark"),
+          f"get_roi auto: roi.csv 범위를 쓰거나 상태 태그를 잃음 ({roi})")
+    roi, used = rx.get_roi("b.jpg", table, "auto")
+    check(used and roi["condition"] == "", f"get_roi auto: roi.csv에 없는 사진의 상태 태그가 빈칸이 아님 ({roi})")
+    check(rx.get_roi("a.jpg", table, "csv") == rx.get_roi("a.jpg", table) == (table["a.jpg"], False), "get_roi: 기본 방식이 csv가 아님")
+    with patched(C, "ROI_TOP_DEFAULT", 0.3):
+        check(rx.get_roi("a.jpg", table, "auto")[0]["top"] == 0.3, "get_roi auto: 실행 중에 바꾼 ROI_TOP_DEFAULT를 읽지 않음")
+
+
+def test_median_road_time():
+    """노면 마스크 시간 t_road_ms도 row의 두 시간 열처럼 반복의 중앙값으로 바꾼다(인계 메모 4.4). 받은 결과는 바꾸지 않는다."""
+    outs = [{"row": {"edges": 1, "t_pre_ms": 1.0, "t_detect_ms": 1.0}, "t_road_ms": t} for t in (5.0, 1.0, 3.0)]
+    out = rx.median_times(outs)
+    check(out["t_road_ms"] == 3.0 and outs[0]["t_road_ms"] == 5.0,
+          f"median_times: t_road_ms가 중앙값이 아니거나 받은 결과를 바꿈 ({out['t_road_ms']})")
+
+
+def test_edges_on_road():
+    """노면 안 에지 수: 에지(0/255) 중 노면(255) 위에 있는 것만 센다. 노면이 띠 전체(지금의 road_mask 자리)면 띠 전체 에지 수와 같다."""
+    edges = np.zeros((10, 20), np.uint8)
+    edges[:, ::2] = 255                                              # 에지 100개
+    road = np.zeros((10, 20), np.uint8)
+    road[:, :10] = 255                                               # 왼쪽 절반만 노면 → 에지 50개
+    before = (edges.copy(), road.copy())
+    full = np.full((10, 20), 255, np.uint8)
+    check(rx.edges_on_road(edges, full) == features.count_edges(edges) == 100, "edges_on_road: 노면이 띠 전체인데 띠 전체 에지 수와 다름")
+    check(rx.edges_on_road(edges, road) == 50, f"edges_on_road: 노면 안 에지만 세지 않음 ({rx.edges_on_road(edges, road)})")
+    check(np.array_equal(edges, before[0]) and np.array_equal(road, before[1]), "edges_on_road가 받은 영상을 바꿈")
+
+
+def test_verdict_columns():
+    """영상 단위 판정 열: 정답이 있으면 image_verdict(중심 기준)로 채우고, 정답 파일이 없으면 판정 4칸은 빈칸(has_gt·n_pred는 채움).
+    metrics.csv에서 판정은 빈칸을 허용하는 boolean, 개수는 Int64로 저장되고, 새 열은 상태 지표 열로 섞이지 않고 정한 자리에 온다."""
+    out = {"cracks": [{"bbox": (40, 0, 10, 10)}], "potholes": [], "y0": 40}     # 640px 전체 좌표 (40, 40, 10, 10), 중심 (45, 45)
+    v = rx.verdict_columns(out, [(0, 0, 100, 100, "crack")])
+    check(v == {"has_gt": True, "has_damage": True, "n_pred": 1, "hit_same": True, "hit_any": True, "correct": True},
+          f"verdict_columns: 정답 있는 사진의 판정이 틀림 ({v})")
+    none = rx.verdict_columns(out, None)
+    check(none["has_gt"] is False and none["n_pred"] == 1 and all(math.isnan(none[k]) for k in rx.VERDICT_BOOL),
+          f"verdict_columns: 정답 파일이 없는데 판정 칸이 빈칸이 아님 ({none})")
+    rows = [{**metric_row("a.jpg", "own", "dark", "off", 10, 5, 100, (1, 0, 1, 0)), "edges_road": 8, "t_road_ms": 0.5, **v},
+            {**metric_row("b.jpg", "own", "dark", "off", 10, 5, 100), "edges_road": 9, "t_road_ms": 0.5, **none}]
+    df = rx.metrics_frame(rows)
+    types = {c: str(df[c].dtype) for c in ("has_gt", "correct", "n_pred", "edges_road")}
+    check(types == {"has_gt": "boolean", "correct": "boolean", "n_pred": "Int64", "edges_road": "Int64"}, f"metrics_frame: 새 열의 형이 틀림 ({types})")
+    check(list(df["has_gt"]) == [True, False] and df["correct"].isna().tolist() == [False, True],
+          "metrics_frame: 정답 없는 사진의 판정이 빈칸이 아님")
+    lines = df.to_csv(index=False).splitlines()
+    head, b_row = lines[0].split(","), lines[2].split(",")
+    check(b_row[head.index("correct")] == "" and b_row[head.index("n_pred")] == "1",
+          f"metrics.csv: 정답 없는 사진의 판정 칸이 빈칸으로 저장되지 않음 (correct={b_row[head.index('correct')]!r})")
+    check(not set(rx.quality_columns(rows)) & set(rx.VERDICT_COLUMNS + rx.EXTRA_COLUMNS), "quality_columns: 새 열이 상태 지표 열로 섞임")
+    cols = list(df.columns)
+    check(cols.index("t_road_ms") == cols.index("t_detect_ms") + 2 and cols[-len(rx.VERDICT_COLUMNS):] == rx.VERDICT_COLUMNS,
+          "metrics_frame: 새 열이 row 9열 뒤(edges_road·t_road_ms)·정답 비교 열 뒤(판정)에 오지 않음")
+
+
+def test_group_verdict_tables():
+    """source·condition 표: 정답 있는 영상만으로 민감도·특이도·영상 단위 정답률의 끔·켬·차이를 내고, 정답률 바로 옆에 기준선을 둔다.
+    정답 없는 영상(c)은 영상 수에는 들고 판정에서는 빠진다."""
+    def row(file, source, pre, damage, correct):
+        """damage None = 정답 파일 없음."""
+        r = metric_row(file, source, "dark", pre, 10, 5, 100, None if damage is None else (1, 0, 1, 0))
+        r.update({"edges_road": 10, "t_road_ms": 0.5, "has_gt": damage is not None, "n_pred": 1})
+        r.update({k: (math.nan if damage is None else val) for k, val in
+                  (("has_damage", damage), ("hit_same", correct and bool(damage)), ("hit_any", correct and bool(damage)), ("correct", correct))})
+        return r
+
+    rows = [row("a.jpg", "provided", "off", True, True), row("a.jpg", "provided", "on", True, False),
+            row("b.jpg", "own", "off", False, True), row("b.jpg", "own", "on", False, True),
+            row("c.jpg", "own", "off", None, None), row("c.jpg", "own", "on", None, None)]
+    df = rx.metrics_frame(rows)
+    src = rx.table_by_group(df, "source", fake_pr)
+    cols = list(src.columns)
+    check(cols[:5] == ["source", "n_images", "n_gt", "n_damage", "n_none"] and cols.index("baseline_none") == cols.index("accuracy_diff") + 1,
+          f"table_by_source: 영상 단위 열이 앞에 없거나 정답률 바로 옆에 기준선이 없음 ({cols[:16]})")
+    t = src.set_index("source")
+    p, o, a = t.loc["provided"], t.loc["own"], t.loc["all"]
+    check((p["sensitivity_off"], p["sensitivity_on"], p["sensitivity_diff"], p["accuracy_on"], p["baseline_none"]) == (1.0, 0.0, -1.0, 0.0, 0.0)
+          and math.isnan(p["specificity_off"]), "table_by_source: 제공 행(손상 1장)의 민감도·정답률·기준선이 틀림")
+    check((o["n_images"], o["n_gt"], o["n_none"], o["specificity_on"], o["accuracy_off"], o["baseline_none"]) == (2, 1, 1, 1.0, 1.0, 1.0)
+          and math.isnan(o["sensitivity_on"]), "table_by_source: 직접 촬영 행(무손상 1장 + 정답 없음 1장)이 틀림")
+    check((a["n_gt"], a["n_damage"], a["n_none"], a["accuracy_off"], a["accuracy_on"], a["accuracy_diff"], a["baseline_none"])
+          == (2, 1, 1, 1.0, 0.5, -0.5, 0.5), "table_by_source: all 행의 정답률·기준선이 틀림")
+    cond = rx.table_by_group(df, "condition", fake_pr)
+    check(list(cond["condition"]) == ["dark", "all"] and cond.iloc[1]["accuracy_on"] == 0.5 and cond.iloc[1]["baseline_none"] == 0.5,
+          "table_by_condition: 영상 단위 지표가 틀림")
+
+
+def test_image_table_verdicts():
+    """table_by_image: 영상마다 정답 유무·손상 유무와 판정(correct·hit_same·hit_any)의 끔·켬을 머리 열 바로 뒤에 둔다.
+    정답 파일이 없는 영상은 판정 칸이 빈칸(CSV에서도 빈칸)이고, 있던 열(지표 끔·켬·차이)은 그대로다."""
+    def row(file, pre, verdict):
+        r = metric_row(file, "own", "blur", pre, 10, 5, 100, None if verdict is None else (1, 0, 1, 0))
+        r.update({"edges_road": 10, "t_road_ms": 0.5, "n_pred": 2, "has_gt": verdict is not None})
+        r.update({k: (math.nan if verdict is None else verdict[i]) for i, k in enumerate(("has_damage", "correct", "hit_same", "hit_any"))})
+        return r
+
+    rows = [row("a.jpg", "off", (True, True, True, True)), row("a.jpg", "on", (True, False, False, True)),
+            row("b.jpg", "off", None), row("b.jpg", "on", None)]
+    img = rx.table_by_image(rx.metrics_frame(rows), fake_pr)
+    cols = list(img.columns)
+    pairs = ["has_gt", "has_damage", "correct_off", "correct_on", "hit_same_off", "hit_same_on", "hit_any_off", "hit_any_on"]
+    start = cols.index("roi_pixels") + 1
+    check(cols[start:start + len(pairs)] == pairs and "edges_diff" in cols and "crack_recall_on" in cols,
+          f"table_by_image: 판정 끔·켬 열이 머리 열 바로 뒤에 없거나 있던 열이 빠짐 ({cols[start:start + len(pairs)]})")
+    a = img.iloc[0]
+    check((bool(a["has_gt"]), bool(a["correct_off"]), bool(a["correct_on"]), bool(a["hit_same_on"]), bool(a["hit_any_on"]))
+          == (True, True, False, False, True), "table_by_image: 정답 있는 영상의 끔·켬 판정이 틀림")
+    b = img.iloc[1]
+    check(not bool(b["has_gt"]) and all(pd.isna(b[c]) for c in pairs[1:]), "table_by_image: 정답 없는 영상의 판정이 빈칸이 아님")
+    line = img.to_csv(index=False).splitlines()[2].split(",")
+    check(line[cols.index("correct_on")] == "", "table_by_image: 정답 없는 영상의 판정이 CSV에서 빈칸이 아님")
+
+
+def test_run_main_options():
+    """run_experiment.main을 임시 폴더의 합성 사진 2장(roi.csv에 있는 직접 촬영 1장, 없는 제공 1장)으로 끝까지 돌린다(TIME_REPEAT 1).
+    옵션 없음과 기본값을 직접 준 실행은 시간 열 말고 같고, 실행 옵션·바꾼 값이 config_used.txt 끝에 남으며, 끝나면 config가 되돌아온다.
+    정답 없는 사진은 판정 칸이 빈칸이고, 지금 노면 마스크(전부 255)에서는 edges_road = edges. --roi auto·--roi-top은 roi.csv 띠 대신 기본 띠를 쓴다.
+    --detect dark(아직 구현 전)는 같은 오류를 한 줄로 묶어 알리고 1로 끝나며, 그래도 config는 되돌아온다."""
+    rng = np.random.default_rng(1)
+    times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
+    before = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+    with tempfile.TemporaryDirectory() as tmp:
+        dirs = {"provided": os.path.join(tmp, "provided"), "own": os.path.join(tmp, "own")}
+        for folder, name in (("provided", "Japan_900001.jpg"), ("own", "own_90_crack_normal.jpg")):
+            os.makedirs(dirs[folder])
+            gray = cv.GaussianBlur(rng.integers(90, 160, (480, 640), dtype=np.uint8), (0, 0), 1.5)
+            cv.line(gray, (60, 380), (580, 400), 40, 3)
+            cv.imwrite(os.path.join(dirs[folder], name), cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
+        roi_path, res = os.path.join(tmp, "roi.csv"), os.path.join(tmp, "results")
+        with open(roi_path, "w", encoding="utf-8") as f:
+            f.write("file,roi_top,roi_bottom,condition\nown_90_crack_normal.jpg,0.2,1.0,normal\n")
+        gts = {"own_90_crack_normal.jpg": [(50, 360, 540, 60, "crack")]}
+
+        def run(argv):
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                code = rx.main(argv, dirs, roi_path, res)
+            return code, printed.getvalue()
+
+        def read(name):
+            metrics = pd.read_csv(os.path.join(res, name, "metrics.csv"), encoding="utf-8-sig").set_index(["file", "preprocess"])
+            with open(os.path.join(res, name, "config_used.txt"), encoding="utf-8") as f:
+                return metrics, f.read().splitlines()
+
+        with patched(C, "TIME_REPEAT", 1), patched(rx, "load_gt_for", gts.get):
+            codes = [run(argv)[0] for argv in ([], ["--name", "explicit", "--roi", "csv", "--mask", "off", "--detect", "legacy"],
+                                               ["--name", "auto", "--roi", "auto", "--mask", "on", "--roi-top", "0.3"])]
+            after = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+            dark_code, dark_out = run(["--name", "dark", "--detect", "dark"])
+            after_dark = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+        (m0, c0), (m1, c1), (m2, c2) = read("latest"), read("explicit"), read("auto")
+        check(codes == [0, 0, 0] and after == before and after_dark == before,
+              f"main: 끝 코드({codes})이 0이 아니거나 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
+        check(m0.drop(columns=times).equals(m1.drop(columns=times)), "main: 옵션 없음과 기본값을 직접 준 실행의 결과가 다름")
+        check(c0[-2:] == ["# 실행 옵션: --roi csv", "# 실행 옵션으로 바꾼 config 값: 없음"], f"config_used: 옵션 없는 실행의 조건 줄이 틀림 ({c0[-2:]})")
+        check("USE_ROAD_MASK = True" in c2 and "ROI_TOP_DEFAULT = 0.3" in c2
+              and c2[-1] == "# 실행 옵션으로 바꾼 config 값: USE_ROAD_MASK=True, ROI_TOP_DEFAULT=0.3",
+              f"config_used: 바꾼 값이 남지 않음 ({c2[-2:]})")
+        own, provided = ("own_90_crack_normal.jpg", "off"), ("Japan_900001.jpg", "off")
+        check(bool(m0.loc[own, "has_gt"]) and not pd.isna(m0.loc[own, "correct"])
+              and not bool(m0.loc[provided, "has_gt"]) and pd.isna(m0.loc[provided, "correct"]) and m0.loc[provided, "n_pred"] >= 0,
+              "main: 정답 있는 사진의 판정이 비었거나 정답 없는 사진의 판정이 빈칸이 아님")
+        check((m0["edges_road"] == m0["edges"]).all() and (m0["t_road_ms"] >= 0).all(),
+              "main: 노면 마스크가 띠 전체인데 edges_road가 edges와 다르거나 t_road_ms가 없음")
+        check((m0.loc[own, "roi_pixels"], m0.loc[provided, "roi_pixels"]) == (384 * 640, 240 * 640)
+              and (m2.loc[own, "roi_pixels"], m2.loc[provided, "roi_pixels"]) == (336 * 640, 336 * 640),
+              "main: --roi csv(roi.csv 0.2·기본 0.5)와 --roi auto --roi-top 0.3의 띠 높이가 틀림")
+        check(dark_code == 1 and dark_out.count("NotImplementedError") == 1 and "2장" in dark_out,
+              f"main: dark의 '아직 구현 안 됨' 오류를 한 줄로 묶어 알리지 않음 ({dark_out.strip().splitlines()[-2:]})")
+
+
 def test_demo_args_roi():
     """ROI는 명령행 → roi.csv → config 기본값 순서. 비율이 1개이거나 top >= bottom이면 멈춤."""
     table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": ""}}
@@ -360,6 +579,73 @@ def test_demo_report():
     t = demo.report_table(off, on)
     check(list(t.columns) == rx.ROW_COLUMNS and list(t.index) == ["끔", "켬", "차이"], "report_table: 열·줄이 틀림")
     check(t.loc["차이", "edges"] == 3 and t.loc["차이", "n_crack"] == 0, "report_table: 차이가 켬 − 끔이 아님")
+
+
+def test_demo_options():
+    """demo 실행 옵션: 기본은 roi.csv 띠에 config 그대로(바꾸는 값 없음). --roi auto는 기본 띠, --mask·--detect는 이번 실행에만 쓸
+    config 값이 된다(run_experiment와 같은 방식). ROI 비율과 --roi auto를 함께 주면 어느 띠를 쓸지 헷갈리므로 거부한다."""
+    args = parse_quietly(demo.parse_args, ["a.jpg"])
+    check(args is not None and args.roi_mode == "csv" and args.save is None and rx.runtime_overrides(args) == {},
+          f"demo.parse_args: 옵션이 없는데 roi.csv 띠가 아니거나 바꾸는 값이 있음 ({args})")
+    args = parse_quietly(demo.parse_args, ["a.jpg", "--roi", "auto", "--mask", "on", "--detect", "dark", "--save", "v.png"])
+    check(args is not None and args.roi_mode == "auto" and args.save == "v.png"
+          and rx.runtime_overrides(args) == {"USE_ROAD_MASK": True, "DETECT_MODE": "dark"},
+          f"demo.parse_args: --roi·--mask·--detect·--save를 읽지 못함 ({args})")
+    ratio = parse_quietly(demo.parse_args, ["a.jpg", "0.4", "1", "--mask", "off"])
+    check(ratio is not None and ratio.roi == [0.4, 1.0] and rx.runtime_overrides(ratio) == {"USE_ROAD_MASK": False},
+          "demo.parse_args: ROI 비율과 --mask를 함께 읽지 못함")
+    check(parse_quietly(demo.parse_args, ["a.jpg", "0.4", "1", "--roi", "auto"]) is None,
+          "demo.parse_args: ROI 비율과 --roi auto를 함께 받아들임")
+    table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": ""}}
+    check(demo.choose_roi("x/a.jpg", [], table, "auto") == (C.ROI_TOP_DEFAULT, C.ROI_BOTTOM_DEFAULT, "기본 띠, --roi auto"),
+          "demo.choose_roi: --roi auto인데 roi.csv 띠를 씀")
+
+
+def test_demo_footer():
+    """시연 화면 아래 띠 두 줄: 상태 판정 값(아직 없는 값은 '-')과, 실행 옵션을 적용한 뒤의 설정(ROI·노면 마스크·검출 방식).
+    한글을 못 쓰면 영문(ASCII)으로 쓰고, 아래 띠까지 화면 안에 들어가게 줄인다."""
+    quality = {"mean": 116.04, "std": 28.33, "lap_var": 412.7, "noise": 2.31, "blur_ratio": math.nan}
+    lines = demo.make_footer(quality, 0.5, 1.0, "roi.csv", True)
+    check(len(lines) == 2 and "평균 116" in lines[0] and "표준편차 28.3" in lines[0] and "라플라시안 분산 413" in lines[0]
+          and "재흐림 비율 -" in lines[0] and f"노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}" in lines[1]
+          and f"검출 {C.DETECT_MODE}" in lines[1] and "0.50~1.00" in lines[1], f"make_footer: 두 줄의 내용이 틀림 ({lines})")
+    with patched(C, "USE_ROAD_MASK", True):
+        check("노면 마스크 켬" in demo.make_footer(quality, 0.5, 1.0, "roi.csv", True)[1], "make_footer: 실행 중에 바꾼 마스크 설정을 읽지 않음")
+    ascii_lines = demo.make_footer(quality, 0.5, 1.0, "roi.csv", False)
+    check(all(line.isascii() for line in ascii_lines) and "mask" in ascii_lines[1], f"make_footer: 영문 줄이 ASCII가 아님 ({ascii_lines})")
+    tall = np.full((1138, 640, 3), 128, np.uint8)
+    view = demo.build_view(tall, tall, ("OFF", "ON"), (1707, 960), False, ascii_lines)
+    check(view.shape[0] <= 960 * C.DEMO_SCREEN_MARGIN and view[-C.DEMO_LABEL_HEIGHT:].any() and view[-2 * C.DEMO_LABEL_HEIGHT:-C.DEMO_LABEL_HEIGHT].any(),
+          f"build_view: 아래 띠 두 줄이 없거나 화면을 넘음 ({view.shape})")
+
+
+def test_demo_main_save():
+    """demo.main --save: 창을 띄우지 않고 화면(끔·켬 두 칸 + 위 제목 띠 + 아래 두 줄)을 그림 파일로 저장하고 0으로 끝난다.
+    회색 합성 사진이라 띠(기본 0.5~1.0)는 초록이 섞이고 띠 위는 회색 그대로다. --mask on은 실행 중에만 적용되고 끝나면 되돌아오며,
+    아직 구현 전인 --detect dark는 알기 쉬운 문구와 함께 1로 끝나고 그림을 저장하지 않으며 config는 되돌아온다."""
+    rng = np.random.default_rng(5)
+    before = (C.USE_ROAD_MASK, C.DETECT_MODE)
+    with tempfile.TemporaryDirectory() as tmp:
+        path, saved, dark = (os.path.join(tmp, name) for name in ("Japan_900001.jpg", "view.png", "dark.png"))
+        gray = cv.GaussianBlur(rng.integers(90, 160, (480, 640), dtype=np.uint8), (0, 0), 1.5)
+        cv.imwrite(path, cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = demo.main([path, "--mask", "on", "--save", saved])
+        after = (C.USE_ROAD_MASK, C.DETECT_MODE)
+        view = cv.imdecode(np.fromfile(saved, np.uint8), cv.IMREAD_COLOR) if os.path.exists(saved) else None
+        with contextlib.redirect_stdout(io.StringIO()) as dark_printed:
+            dark_code = demo.main([path, "--detect", "dark", "--save", dark])
+        after_dark, dark_saved = (C.USE_ROAD_MASK, C.DETECT_MODE), os.path.exists(dark)
+    check(code == 0 and view is not None and "노면 마스크 켬" in printed.getvalue(), f"demo.main --save: 저장하지 못함 (끝 코드 {code})")
+    if view is not None:
+        panel_h = view.shape[0] - 3 * C.DEMO_LABEL_HEIGHT                        # 위 제목 띠 1줄 + 아래 띠 2줄을 뺀 사진 높이
+        band = view[C.DEMO_LABEL_HEIGHT + int(panel_h * 0.8), : view.shape[1] // 2].astype(int)
+        above = view[C.DEMO_LABEL_HEIGHT + int(panel_h * 0.2), : view.shape[1] // 2].astype(int)
+        check(band[:, 1].mean() > band[:, 2].mean() + 20 and abs(above[:, 1].mean() - above[:, 2].mean()) < 3,
+              "demo 화면: 띠에 초록이 섞이지 않았거나 띠 위까지 칠함")
+    check(after == before and after_dark == before, f"demo.main: 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
+    check(dark_code == 1 and not dark_saved and "아직 구현되지 않은" in dark_printed.getvalue(),
+          "demo.main --detect dark: 알기 쉬운 문구와 1로 끝나지 않았거나 그림을 저장함")
 
 
 def fake_pair_name(path):
@@ -539,15 +825,6 @@ def test_result_folder_safety():
     1차 결과 폴더(base·tuning·diagnosis = 기준 수치의 출처)는 대소문자·하위 폴더까지 거부한다.
     evaluate_train의 기본 실행은 config 값 그대로 한 세트이고, 1차 튜닝 세트는 --param-set으로만 돈다."""
     from tools import evaluate_train as et
-
-    def parse_quietly(parse, argv):
-        """명령행을 읽는다. 거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
-        try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                return parse(argv)
-        except SystemExit:
-            return None
-
     parsers = {"run_experiment": rx.parse_args, "run_matching": rm.parse_args, "evaluate_train": et.parse_args}
     for tool, parse in parsers.items():
         args = parse_quietly(parse, [])
@@ -564,7 +841,6 @@ def test_result_folder_safety():
     check(et.select_param_sets("all") == et.PARAM_SETS and len(et.PARAM_SETS) == 5, "evaluate_train: --param-set all이 1차 5세트가 아님")
 
 
-@todo("C WP5: draw_road 구현 뒤 (Plan.md 3.7)")
 def test_draw_road_paint():
     """노면(road 255)은 y0만큼 내린 자리에 초록이 섞이고, 노면 밖과 띠 위쪽은 그대로다."""
     bgr = np.full((300, 640, 3), 128, np.uint8)
@@ -574,6 +850,39 @@ def test_draw_road_paint():
     b, g, r = (int(v) for v in out[150, 100])                        # 노면 안 (띠 좌표 y 50 → 전체 좌표 y 150)
     check(g > 128 and b <= 128 and r <= 128, f"draw_road: 노면이 초록으로 칠해지지 않음 ({b}, {g}, {r})")
     check((out[150, 500] == 128).all() and (out[50, 100] == 128).all(), "draw_road: 노면 밖이나 띠 위쪽이 바뀜")
+
+
+def test_draw_road_short_band():
+    """road 높이만큼만 칠한다: 띠 아래(roi_bottom < 1, 미국 3장 0.95)와 띠 위는 그대로이고,
+    노면은 config C 구역의 색(ROAD_OVERLAY_COLOR)을 비율(ROAD_OVERLAY_ALPHA)만큼 섞은 값이다."""
+    bgr = np.full((100, 64, 3), 128, np.uint8)
+    road = np.full((50, 64), 255, np.uint8)                         # y0 40부터 50줄 → 40~89만 노면, 90~99는 띠 아래
+    out = visualize.draw_road(bgr, road, 40)
+    alpha, color = C.ROAD_OVERLAY_ALPHA, np.array(C.ROAD_OVERLAY_COLOR, float)
+    expect = np.round((1 - alpha) * 128 + alpha * color).astype(np.uint8)
+    check((out[40:90] == expect).all(), f"draw_road: 노면 색이 config의 색·비율로 섞이지 않음 ({out[60, 0]}, 기대 {expect})")
+    check((out[90:] == 128).all() and (out[:40] == 128).all() and (bgr == 128).all(),
+          "draw_road: 띠 아래·위를 칠했거나 받은 영상을 바꿈")
+
+
+def test_save_figure_road():
+    """run_experiment 비교 그림: 6칸 그대로이고, 끔·켬의 후보 칸에는 노면 마스크가 반투명 초록으로 깔린다(노면 밖·띠 위는 그대로)."""
+    small = np.full((100, 64, 3), 128, np.uint8)
+    road = np.zeros((50, 64), np.uint8)
+    road[:, :32] = 255
+    out = {"small": small, "road": road, "y0": 50, "cracks": [], "potholes": [],
+           "proc": np.full((50, 64), 128, np.uint8), "edges": np.zeros((50, 64), np.uint8),
+           "steps": {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}}
+    captured = []
+    with patched(visualize, "save_comparison", lambda path, title, panels: captured.append(panels)):
+        rx.save_figure("unused.png", "a.jpg", out, out)
+    panels = captured[0] if captured else []
+    check(len(panels) == 6, f"save_figure: 비교 그림이 6칸이 아님 ({len(panels)})")
+    if len(panels) == 6:
+        for name, img in (panels[0], panels[3]):
+            check(int(img[70, 10, 1]) > int(img[70, 10, 0]) and (img[70, 50] == 128).all() and (img[20, 10] == 128).all()
+                  and "노면" in name, f"save_figure: '{name}' 칸에 노면이 초록으로 깔리지 않았거나 노면 밖을 칠함")
+        check((small == 128).all(), "save_figure가 받은 영상을 바꿈")
 
 
 def test_image_verdict():
@@ -622,24 +931,16 @@ def test_train_options():
     """evaluate_train 실행 옵션: --mask·--roi-top·--detect·--set은 이번 실행에만 쓸 config 값 {이름: 값}이 되고(--set 값은 파이썬 값으로,
     안 되면 글자로 읽음), config에 없는 이름·소문자 이름·범위 밖 띠·튜닝 세트와 겹치는 값은 거부한다. 백업으로 원래 값이 돌아온다."""
     from tools import evaluate_train as et
-
-    def parse_quietly(argv):
-        """거부되면(argparse의 SystemExit) None. SystemExit은 Exception이 아니라 main이 못 잡으므로 여기서 바꾼다."""
-        try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                return et.parse_args(argv)
-        except SystemExit:
-            return None
-
-    args = parse_quietly(["--mask", "on", "--roi-top", "0.3", "--detect", "legacy",
-                          "--set", "DARK_SIGMA_IN_ROAD=False", "--set", "DETECT_MODE=dark"])
+    args = parse_quietly(et.parse_args, ["--mask", "on", "--roi-top", "0.3", "--detect", "legacy",
+                                         "--set", "DARK_SIGMA_IN_ROAD=False", "--set", "DETECT_MODE=dark"])
     expect = {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.3, "DETECT_MODE": "dark", "DARK_SIGMA_IN_ROAD": False}
     check(args is not None and args.overrides == expect, f"evaluate_train: 실행 옵션을 config 값으로 못 바꿈 ({args and args.overrides})")
-    check(parse_quietly([]).overrides == {} and parse_quietly([]).split == "dev", "evaluate_train: 옵션이 없는데 바꾸는 값이 있거나 기본 분할이 dev가 아님")
+    plain = parse_quietly(et.parse_args, [])
+    check(plain.overrides == {} and plain.split == "dev", "evaluate_train: 옵션이 없는데 바꾸는 값이 있거나 기본 분할이 dev가 아님")
     for bad in (["--set", "NO_SUCH_NAME=1"], ["--set", "use_road_mask=True"], ["--set", "USE_ROAD_MASK"], ["--roi-top", "1.2"],
                 ["--param-set", "base", "--set", "CANNY_LOW=10"], ["--split", "train"]):
-        check(parse_quietly(bad) is None, f"evaluate_train: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
-    check(parse_quietly(["--param-set", "base", "--set", "USE_ROAD_MASK=True"]) is not None,
+        check(parse_quietly(et.parse_args, bad) is None, f"evaluate_train: 잘못된 옵션을 받아들임 ({' '.join(bad)})")
+    check(parse_quietly(et.parse_args, ["--param-set", "base", "--set", "USE_ROAD_MASK=True"]) is not None,
           "evaluate_train: 튜닝 세트와 겹치지 않는 --set까지 거부함")
     if args is None:
         return
@@ -671,9 +972,8 @@ def test_chance_control():
           f"chance_found: 찾은 정답·비교한 정답·뺀 사진 수가 틀림 ({found}, {truth}, {skipped})")
 
 
-@todo("C E6: tools/evaluate_train.py에 인위 저하(degrade)를 넣은 뒤 (Plan.md 3.2 (6))")
 def test_degrade():
-    """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 57), bright는 입력^0.5(128 → 181),
+    """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 56), bright는 입력^0.5(128 → 181),
     noise는 seed가 고정이라 두 번 해도 같다. 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다. 값은 config C 구역 DEGRADE_*."""
     from tools import evaluate_train as et
     a, _ = texture()
@@ -691,17 +991,95 @@ def test_degrade():
           "degrade: noise가 seed 고정이 아니거나 잡음이 들어가지 않음")
 
 
+def test_degrade_noise_per_photo():
+    """noise 저하의 잡음 무늬는 사진마다 다르고(seed = DEGRADE_SEED + 사진 바이트 crc32), 같은 사진은 언제 불러도 같다.
+    모든 사진에 같은 무늬가 들어가면 결과가 그 무늬 하나에 좌우될 수 있어서다. 0·255에 잘리지 않는 밝기(120·130)로 무늬만 비교한다."""
+    from tools import evaluate_train as et
+    a, b = np.full((64, 64, 3), 120, np.uint8), np.full((64, 64, 3), 130, np.uint8)
+    noise_a = et.degrade(a, "noise").astype(int) - 120
+    noise_b = et.degrade(b, "noise").astype(int) - 130
+    check(np.array_equal(et.degrade(a, "noise"), et.degrade(a, "noise")), "degrade noise: 같은 사진인데 잡음이 달라짐")
+    check((noise_a != noise_b).mean() > 0.5,
+          f"degrade noise: 크기가 같은 두 사진에 같은 잡음 무늬가 들어감 (같은 칸 {float((noise_a == noise_b).mean()):.2f})")
+
+
+def test_degrade_option_and_judge():
+    """--degrade는 기본 none이고 다섯 가지만 받는다. 상태 판정 적중의 기준(blur → 샤프닝, dark → 감마 < 1, bright → 감마 > 1,
+    noise → 잡티 제거)이 맞고, 끔 행(상태 판정을 하지 않음)과 저하 없음은 적중 칸이 빈칸이다. 모르는 저하는 오류."""
+    from tools import evaluate_train as et
+    check(parse_quietly(et.parse_args, []).degrade == "none" and parse_quietly(et.parse_args, ["--degrade", "dark"]).degrade == "dark",
+          "evaluate_train: --degrade 기본값이 none이 아니거나 dark를 받지 못함")
+    check(parse_quietly(et.parse_args, ["--degrade", "fog"]) is None, "evaluate_train: 모르는 저하(fog)를 받아들임")
+    none = {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}
+    picks = {"blur": {**none, "sharpen": True}, "dark": {**none, "tone": "gamma", "gamma": 0.5},
+             "bright": {**none, "tone": "gamma", "gamma": 2.0}, "noise": {**none, "denoise": True}}
+    table = {kind: {other: et.EXPECTED_STEPS[kind][1](steps) for other, steps in picks.items()} for kind in picks}
+    check(all(table[kind][other] == (kind == other) for kind in picks for other in picks)
+          and not any(rule(none) for _, rule in et.EXPECTED_STEPS.values()),
+          f"EXPECTED_STEPS: 저하마다 골라야 할 전처리 판정이 틀림 ({table})")
+    check(et.judge_columns("dark", picks["dark"], none, True) == {"judge_hit": True, "judge_base": False}
+          and et.judge_columns("dark", picks["dark"], none, False) == {"judge_hit": None, "judge_base": None}
+          and et.judge_columns("none", picks["dark"], none, True) == {"judge_hit": None, "judge_base": None},
+          "judge_columns: 켬 행만 적고 끔 행·저하 없음은 빈칸이어야 함")
+    try:
+        et.degrade(np.zeros((4, 4, 3), np.uint8), "fog")
+        check(False, "degrade: 모르는 저하(fog)에 ValueError가 나지 않음")
+    except ValueError:
+        pass
+
+
+def test_degrade_main():
+    """evaluate_train.main을 임시 폴더의 합성 사진 4장으로 끝까지 돌린다(평균 밝기 약 125 → 원래는 감마를 고르지 않음).
+    옵션 없음과 --degrade none은 처리 시간 열 말고 같고, --degrade dark는 켬에서 밝게 하는 감마를 고른 비율 1·원본 기준 0을 내며
+    끔 행은 적중 칸이 빈칸이다. 저하 종류는 config_used_train.txt에 남고, 영상별 측정값 열(steps·에지·해리스·시간)이 있다."""
+    from tools import evaluate_train as et
+    rng = np.random.default_rng(3)
+    with tempfile.TemporaryDirectory() as tmp:
+        img_dir, gt_dir = os.path.join(tmp, "img"), os.path.join(tmp, "gt")
+        os.makedirs(img_dir)
+        os.makedirs(gt_dir)
+        for i in range(4):
+            gray = cv.GaussianBlur(np.clip(rng.normal(125, 20, (240, 640)), 0, 255).astype(np.uint8), (0, 0), 1.0)
+            cv.imwrite(os.path.join(img_dir, f"Japan_90000{i}.jpg"), cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
+            with open(os.path.join(gt_dir, f"Japan_90000{i}.csv"), "w", encoding="utf-8", newline="") as f:
+                f.write("x,y,w,h,kind\n" + ("60,180,520,40,crack\n" if i % 2 == 0 else ""))
+        results = Path(tmp) / "results"
+
+        def read(name, file):
+            return pd.read_csv(results / name / file, encoding="utf-8-sig", keep_default_na=False)
+
+        with patched(C, "TRAIN_IMAGE_DIR", img_dir), patched(C, "TRAIN_GT_DIR", gt_dir), patched(et, "RESULTS_ROOT", results):
+            for name, argv in (("plain", []), ("none", ["--degrade", "none"]), ("dark", ["--degrade", "dark"])):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    et.main(["--split", "all", "--name", name] + argv)
+        times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
+        plain, none = read("plain", et.DETAIL_NAME), read("none", et.DETAIL_NAME)
+        check(plain.drop(columns=times).equals(none.drop(columns=times)), "evaluate_train: 옵션 없음과 --degrade none의 결과가 다름")
+        check(all(c in plain.columns for c in ["degrade", "steps"] + et.MEASURE_COLUMNS + ["judge_hit", "judge_base"]),
+              "evaluate_train: 영상별 측정값·적중 열이 없음")
+        dark = read("dark", et.SUMMARY_NAME).set_index("preprocess")
+        on, off = dark.loc["on"], dark.loc["off"]
+        check((on["degrade"], on["judge_expect"], float(on["judge_hit_rate"]), float(on["judge_base_rate"])) == ("dark", "밝게 하는 감마(< 1)", 1.0, 0.0)
+              and off["judge_hit_rate"] == "NaN" and float(on["edges_mean"]) >= 0 and float(on["t_pre_ms_mean"]) >= 0,
+              f"evaluate_train --degrade dark: 적중률·원본 기준 비율·끔 행이 틀림 ({on['judge_hit_rate']}, {on['judge_base_rate']}, {off['judge_hit_rate']})")
+        config = (results / "dark" / et.CONFIG_NAME).read_text(encoding="utf-8").splitlines()
+        check(config[-1].startswith("# 인위 저하: dark"), f"config_used_train: 저하 종류가 남지 않음 ({config[-1]})")
+
+
 def main():
     """시험 함수를 차례로 돌려 실패를 모아 보여 준다. @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
     skips = []
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
-               test_summary_tables, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
+               test_summary_tables, test_run_options, test_get_roi_auto, test_median_road_time, test_edges_on_road,
+               test_verdict_columns, test_group_verdict_tables, test_image_table_verdicts, test_run_main_options, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
+               test_demo_options, test_demo_footer, test_demo_main_save,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,
-               test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
-               test_train_options, test_chance_control, test_degrade):
+               test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
+               test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
+               test_degrade_option_and_judge, test_degrade_main):
         try:
             fn()
         except unittest.SkipTest as e:

@@ -191,16 +191,16 @@ Should: S1 `ROAD_KEEP_RULE` 50% 규칙(`pipeline.keep_on_road`에 규칙 추가.
 ```bash
 python tests/check_contract.py                      # 약속 검사
 python tests/test_c.py                              # C 시험 (A는 test_a, B는 test_b)
-python run_experiment.py --name <이름> [--only provided|own]   # 39장 끔·켬 → results/<이름>/
+python run_experiment.py --name <이름> [--only provided|own] [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3]   # 39장 끔·켬 → results/<이름>/
 python run_matching.py --name <이름>                # 쌍 사진 5쌍 매칭 → results/<이름>/matching.csv
-python demo.py [사진 경로 [roi_top roi_bottom]]     # 경로를 빼면 사진 목록에서 번호로 고름
+python demo.py [사진 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--save 그림.png]   # 경로를 빼면 사진 목록에서 번호로 고름. 옵션을 빼면 config 그대로
 python tools/label_gt.py [사진 경로]                # 정답 박스 (c 균열, p 포트홀, Enter, q 저장)
 python tools/evaluate_train.py --name <이름> [--split dev|test|all] [옵션]   # 학습 사진 평가 → results/<이름>/ (기본 개발셋, 5.2)
 python tools/convert_json_gt.py                     # data/train/ann JSON → gt/train CSV (이미 커밋됨)
 python tools/check_data.py                          # 사진·CSV 이름 검사
 ```
 
-실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--mask`·`--roi`·`--detect`는 M3, `--degrade`는 M6에서 만든다:
+실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--roi`·`--mask`·`--detect`·`--roi-top`은 M3에서, evaluate_train의 `--degrade`는 M6에서 만들었다(10/11):
 
 ```bash
 python tools/evaluate_train.py --split all --name e0_all                      # E0 재현, 804장 (C)
@@ -228,9 +228,13 @@ python run_matching.py --name final
 
 ### 4.3 결과 폴더
 
-- `run_experiment`: `results/<이름>/metrics.csv`(영상마다 끔·켬 2행), `figures/<사진>.png`, `table_by_image.csv`·`table_by_source.csv`·`table_by_condition.csv`, `config_used.txt`.
+- `run_experiment`: `results/<이름>/metrics.csv`(영상마다 끔·켬 2행), `figures/<사진>.png`(6칸, (10/11 M8) 후보 칸에 노면 마스크를 반투명 초록으로 깔고 그 위에 후보), `table_by_image.csv`·`table_by_source.csv`·`table_by_condition.csv`, `config_used.txt`.
+  - (10/11 M7) metrics.csv에 `edges_road`(노면 안 에지 수)·`t_road_ms`(반복 중앙값)가 row 9열 뒤에, 영상 단위 판정 `has_gt`·`has_damage`·`n_pred`·`hit_same`·`hit_any`·`correct`(evaluate.image_verdict, 중심 기준)가 정답 비교 열 뒤에 붙는다. 정답 파일이 없으면 판정 4칸(`has_damage`·`hit_same`·`hit_any`·`correct`)은 빈칸이고 `has_gt`·`n_pred`는 채운다.
+  - source·condition 표 앞쪽에 `n_damage`·`n_none`, 정답 있는 영상의 `sensitivity`·`specificity`·`accuracy`(끔·켬·차이)와 정답률 바로 옆에 `baseline_none`이 있다. SUMMARY_METRICS에 `edges_road`·`t_road_ms`가 더해져 세 표 모두 끔·켬·차이로 나온다.
+  - (10/11) table_by_image는 머리 열(상태 지표·roi_pixels) 바로 뒤에 `has_gt`·`has_damage`와 판정 `correct`·`hit_same`·`hit_any`의 `_off`·`_on`을 둔다. 포트홀처럼 개수가 적은 것을 영상별 사례로 보고하려는 것이고, 39장 최종 판정 표는 마지막 일괄 실행 스크립트에서 이것을 모아 만든다(사용자 계획).
+  - config_used.txt 맨 끝 두 줄: `# 실행 옵션: --roi …`, `# 실행 옵션으로 바꾼 config 값: …`(없으면 '없음').
 - `run_matching`: 같은 폴더에 `matching.csv`, `matches/<사진>_off.png`·`_on.png`, `config_used_matching.txt`.
-- `evaluate_train`: `results/<이름>/`에 `train_detail.csv`(영상별 개수·판정, split·source·height 열), `train_summary.csv`(끔·켬 요약: 종류·기준별 정밀도·재현율, 민감도·특이도·정답률·균형 정확도·기준선, 영상당 후보·오검출, 우연 대조군), `per_source.csv`(같은 요약을 국가별로), `config_used_train.txt`(config 값, 파라미터 세트, 실행 옵션으로 바꾼 값). 파일 이름이 run_experiment·run_matching과 겹치지 않는다.
+- `evaluate_train`: `results/<이름>/`에 `train_detail.csv`(영상별 개수·판정, split·source·height 열, (10/11 M6) 인위 저하 종류 `degrade`, 고른 전처리 `steps`, 에지·해리스·후보 면적·노면 픽셀·처리 시간, 상태 판정 적중 `judge_hit`·`judge_base`), `train_summary.csv`(끔·켬 요약: 종류·기준별 정밀도·재현율, 민감도·특이도·정답률·균형 정확도·기준선, 영상당 후보·오검출, 우연 대조군, 측정값의 영상당 평균 `*_mean`, 상태 판정 적중률 `judge_hit_rate`·`judge_base_rate`), `per_source.csv`(같은 요약을 국가별로), `config_used_train.txt`(config 값, 파라미터 세트, 실행 옵션으로 바꾼 값, 인위 저하 종류). 파일 이름이 run_experiment·run_matching과 겹치지 않는다.
 - 세 도구 모두 `--name`을 빼면 `results/latest`에 쓰고(매번 덮어씀), 1차 결과 폴더 이름(`base`·`tuning`·`diagnosis`)은 대소문자·하위 폴더까지 거부한다(`run_experiment.check_name`).
 - 쓸 이름(Plan.md 3.7): `e0_base`, `e1_mask`, `e1_mask_auto`, `e1b_top03`, `e2_dark`, `e3_dark_mask`, `e4_score`, `e6_degrade`, `final`. evaluate_train은 이름 끝에 데이터를 붙여(`e0_all`·`e1_mask_dev` 등) 39장 폴더와 나누고, 시험셋은 `test_once`(10/11)·`final_test`(10/12 재현 확인)로 쓴다(4.2).
 - 지금 있는 것(C 컴퓨터에만, Git에 없음):
@@ -263,7 +267,11 @@ python run_matching.py --name final
 - `data/shot_log.csv`는 어느 코드도 읽지 않는다(기록용). 실행에 쓰이는 것은 `data/roi.csv`뿐이다.
 - 제공 13장은 `parse_name`의 condition이 빈칸이고 roi.csv condition 칸도 비어 있어, `table_by_condition`에서 'unknown'으로 묶인다. A가 상태 태그를 넣으면 풀린다.
 
-### 5.2 evaluate_train (B 파일, C가 M2에서 고침, M6에서 `--degrade`를 더함)
+### 5.2 evaluate_train (B 파일, C가 M2에서 고치고 M6에서 `--degrade`를 더함)
+
+- (10/11 M6) `--degrade none|blur|dark|bright|noise`(기본 none): 640px로 맞춘 컬러 사진에 띠를 자르기 전 저하를 넣는다(`degrade`, 값은 config C 구역 DEGRADE_*). none은 복사본이라 옵션 없는 실행과 같다(`resize_width`는 이미 640px인 사진을 복사만 하므로 run_pipeline에 넘겨도 픽셀이 같음). dark·bright는 0~1 밝기에 감마를 건 표(반올림, 128 → 56·181), noise는 채널마다 σ 10 가우시안 잡음을 함수 안에서 seed = DEGRADE_SEED + 사진 바이트의 crc32로 만든다(10/11 고침. 처음엔 DEGRADE_SEED만 써서 크기가 같은 사진에 모두 같은 무늬가 들어갔다. 이제 사진마다 무늬가 다르고 같은 사진은 늘 같다. 파이썬 hash()는 실행마다 달라 쓰지 않음).
+- (10/11 M6) 상태 판정 적중률: 켬 행에서 저하 사진이 넣은 저하에 맞는 전처리를 고른 비율이 `judge_hit_rate`(blur → 샤프닝, dark → 감마 < 1, bright → 감마 > 1, noise → 잡티 제거), 같은 사진의 저하 없는 원본에서 같은 전처리를 고른 비율이 `judge_base_rate`다. 둘을 한 실행에서 함께 낸다(원래부터 그 전처리를 받던 사진이 섞여 있어서. 예: 804장의 29%가 저하 없이도 밝게 하는 감마). 끔 행과 none은 빈칸(NaN). 영상별 측정값의 처리 시간은 사진마다 한 번 잰 값이라 참고용이다.
+- (10/11 M6 검증, 임시 폴더, 개발 652장) 옵션 없음 = `--degrade none`(1,304행, 처리 시간 열 말고 같음). 옵션 없음은 M6 전 코드의 개발셋 결과와 같은 열 33개 × 1,304행이 모두 같았다. 다섯 가지 모두 오류 없이 1회 31~47초(noise가 가장 느림)였다. 원본 기준(`judge_base`)은 none 실행에서 실제로 고른 전처리와 네 가지 모두 652장이 같았다. 참고 적중률(저하 / 원본): blur → 샤프닝 1.00 / 0.05, dark → 감마 < 1 0.85 / 0.29, bright → 감마 > 1 0.32 / 0.03, noise → 잡티 제거 1.00 / 0.04. bright는 저하 뒤에도 평균 밝기가 과노출 기준(BRIGHT_MEAN_MIN 170)을 넘지 않는 사진이 많다. 진짜 E6 숫자는 마지막 일괄 실행에서 낸다.
 
 - (10/11) 결과 폴더는 `--name`으로 정하고(기본 `latest`), 1차 결과 폴더 이름은 거부한다. 10/06 기준 파일(`results/tuning`, Plan.md 1.2·부록 B의 출처)은 덮이지 않는다.
 - (10/11) 기본 실행은 config 값 한 세트(params 열 `config`)라 사진 한 장을 끔·켬 2번 돈다. 1차 튜닝 5세트는 `--param-set base|…|all`로만 돈다(all이면 10번). `base`는 config B 구역의 legacy 검출 값 13개를 숫자로 고정해 둔 것이라 B가 config를 바꾼 뒤에도 1차 값을 다시 낼 수 있다. 다만 `DETECT_MODE`·`USE_ROAD_MASK`·`ROI_TOP_DEFAULT`는 들어 있지 않으므로, 그때 E0를 다시 내려면 `--detect legacy --mask off`도 함께 준다.
@@ -291,12 +299,14 @@ python run_matching.py --name final
 
 ### 5.3 run_experiment·pipeline (C 파일)
 
-- `metrics.csv`의 정답 열(`crack_tp` 등)은 IoU 0.3 일대일(`count_matches`)이다. 계획서의 주 기준(중심)이 아니다. 39장의 영상 단위 판정은 M7에서 `image_verdict`(중심)로 새 열을 만든다. `evaluate_train`은 이미 iou·ctr 두 기준을 낸다.
-- `write_config`가 `main` 맨 처음에 불린다. 실행 중 바꾸는 값(`--mask` 등)을 먼저 적용한 뒤 써야 config_used.txt가 맞다. 끝나면 `finally`로 되돌린다.
+- `metrics.csv`의 정답 열(`crack_tp` 등)은 IoU 0.3 일대일(`count_matches`)이다. 계획서의 주 기준(중심)이 아니다. (10/11 M7) 39장의 영상 단위 판정은 `image_verdict`(중심)로 만든 새 열(`has_damage`·`hit_same`·`hit_any`·`correct`)을 본다. `evaluate_train`은 iou·ctr 두 기준을 다 낸다.
+- (10/11 M3에서 고침) `main`은 실행 옵션을 config에 적용한 뒤 config_used.txt를 쓰고, 처리와 표 저장을 `try`에 넣어 `finally`에서 되돌린다(실패해도 되돌아옴). 옵션이 없으면 바꾸는 값이 없어 1차와 같은 조건이다.
 - 실행 중 config 바꾸기는 `C.이름`을 그때그때 읽는 곳에만 먹힌다. `io_utils.crop_roi(top=C.ROI_TOP_DEFAULT)`·`resize_width(width=C.TARGET_WIDTH)`·`run_matching.timed_match(repeat=C.TIME_REPEAT)`의 기본값은 import 때 굳는다. 지금 경로는 `get_roi`가 그때 값을 읽어 `run_pipeline`에 top을 넘기므로 괜찮다.
-- `--roi-top`은 roi.csv에 없는 사진에만 먹힌다. 39장의 E1b는 `--roi auto`와 같이 쓴다. 개발셋은 모두 roi.csv에 없어 그대로 먹힌다.
-- `metrics_frame`은 row dict의 모르는 키를 `quality_columns()`로 상태 지표 뒤에 붙이고, 그 열은 `table_by_image`의 머리 열에도 들어간다. M7의 새 열은 열 목록을 따로 두고 위치를 정한다. 정답이 없을 때 빈칸이 되도록 형(Int64·boolean)도 정한다.
-- `median_times`는 row의 두 시간 열만 중앙값으로 바꾼다. `t_road_ms`는 결과의 맨 위 키라 따로 처리해야 한다.
+- `--roi-top`은 roi.csv에 없는 사진에만 먹힌다. 39장은 모두 roi.csv에 있으므로 (10/11) run_experiment는 `--roi csv`에서 `--roi-top`을 주면 오류로 멈추고, E1b는 `--roi auto --roi-top 0.3`으로 돈다. 개발셋은 모두 roi.csv에 없어 evaluate_train에서는 그대로 먹힌다.
+- `--roi auto`는 roi.csv의 띠 범위만 무시하고 상태 태그(condition)는 roi.csv에서 그대로 가져온다(A가 제공 13장 태그를 넣어도 auto에서 잃지 않게).
+- `metrics_frame`은 row dict의 모르는 키를 `quality_columns()`로 상태 지표 뒤에 붙이고, 그 열은 `table_by_image`의 머리 열에도 들어간다. (10/11 M7) 새 열은 `EXTRA_COLUMNS`(row 9열 뒤)·`VERDICT_COLUMNS`(정답 비교 열 뒤)로 자리를 정했고 두 함수의 '아는 열'에 넣었다. 판정은 빈칸을 허용하는 boolean, 개수는 Int64다.
+- (10/11 M7에서 고침) `median_times`는 row의 두 시간 열과 결과 맨 위 키인 `t_road_ms`를 모두 반복 중앙값으로 바꾼다.
+- 실패한 사진은 같은 오류끼리 한 줄로 묶어 출력한다(`failure_lines`). 아직 구현 전인 `--detect dark`로 돌리면 'NotImplementedError … (39장: …)' 한 줄이 나오고 종료 코드 1, config는 되돌아온다.
 - `save_comparison`은 패널이 정확히 6개여야 한다. 노면 표시는 7번째 칸이 아니라 '후보' 칸에 겹쳐 그린다(`draw_candidates(draw_road(...), ...)`).
 - `draw_road`는 `road.shape[0]`만큼만 칠한다. roi_bottom이 1보다 작으면(미국 3장 0.95) 띠 높이가 '사진 높이 − y0'보다 작다.
 - `USE_ROAD_MASK`가 꺼져 있으면 pipeline은 road를 검출 함수에 넘기지 않는다. E2('마스크 없음')에서 dark의 σ가 노면 안에서 재지지 않게 하고, 꺼진 상태가 어느 `DETECT_MODE`에서도 1차와 같게 하려는 결정이다.
@@ -308,6 +318,8 @@ python run_matching.py --name final
 - `run_matching`은 ROI 없이 640px 전체 흑백을 쓰고, 켬이면 기준 A를 포함한 모든 사진이 자기 상태에 맞는 전처리를 거친다.
 - 그림의 한글 글꼴은 `sys.platform`으로 고른다(윈도 맑은 고딕, 맥 AppleGothic, 그 밖은 □로 나옴). 최종 실행 컴퓨터가 윈도·맥이 아니면 그림 제목이 깨진다.
 - 데모 창 제목은 ASCII(`demo`)다. 윈도 HighGUI에서 한글 창 제목이 깨지기 때문이고, 패널의 한글은 OpenCV 5 내장 글꼴 `FontFace("sans")`로 그린다.
+- (10/11 M8) `visualize.draw_road`는 노면 마스크를 반투명 초록(config C 구역 `ROAD_OVERLAY_COLOR`·`ROAD_OVERLAY_ALPHA` 0.35)으로 `road.shape[0]`줄만 칠한다. run_experiment 비교 그림과 demo는 `draw_candidates(draw_road(...))`로 노면 위에 후보 윤곽을 그린다. 노면 마스크가 자리(전부 255)인 지금은 띠 전체가 초록이고, roi.csv에서 아래를 0.95로 자른 미국 3장은 띠 아래 줄이 칠해지지 않는다.
+- (10/11 M8) demo 화면: 위 띠 '전처리 끔'·'전처리 켬: 고른 전처리', 아래 띠 두 줄 '상태 판정: 평균·표준편차·라플라시안 분산·잡티·재흐림 비율(아직 없는 값은 -)'과 '설정: ROI(출처)·노면 마스크·검출'. 설정 줄은 옵션을 적용한 뒤의 config를 읽어 적으므로, 녹화한 데모만 보고도 조건을 안다. `--roi`·`--mask`·`--detect`는 실행 중에만 바꾸고 되돌리며 기본은 config를 따른다. ROI 비율과 `--roi auto`를 함께 주면 거부하고, 아직 없는 `--detect dark`는 '아직 구현되지 않은 설정' 문구와 끝 코드 1로 끝난다. `--save 그림.png`면 창 대신 같은 화면을 파일로 저장한다(한글 경로 대비 imencode + tofile).
 - `src/`에서 파일을 저장하는 함수는 `visualize.save_comparison` 하나다(Agg 백엔드, 저장 뒤 `plt.close`).
 
 ### 5.5 흩어진 판단의 이유
@@ -335,7 +347,8 @@ python run_matching.py --name final
 | `image_verdict`·`summarize_verdicts`를 약속 표에 | B·C | M2 PR 때 | C가 CONTRIBUTING 2장·check_contract |
 | evaluate_train 기본 세트(한 세트 vs 5세트) | B·C | M2 PR 리뷰 | (10/11) 사용자 결정으로 C가 config 한 세트로 구현, 1차 5세트는 `--param-set`. B 확인 대기 |
 | 우연 대조군에서 사진 1장뿐인 크기 묶음 | C | (10/11 정함) | 빼고 `chance_skipped`에 수를 적음. 학습 804장은 1장뿐인 묶음이 없어 0장(5.2), 보고서에 적음 |
-| `--roi auto`가 노면 마스크를 저절로 켤지 | C | M3 | Plan.md 명령은 둘을 함께 줌 |
+| `--roi auto`가 노면 마스크를 저절로 켤지 | C | (10/11 정함) | 묶지 않는다(사용자 결정). `--roi auto`는 띠만 바꾸고 마스크는 `--mask on`으로 따로 켠다. 마지막 일괄 실행에서 단계를 하나씩 끄고 켜며 비교하려는 것이고, 둘 다 쓰려면 명령에서 함께 준다(Plan.md 5장 명령처럼). `--roi csv`에서 `--roi-top`은 39장에 효과가 없어 오류로 막았다 |
+| `--roi auto`의 아래 경계 | 사용자 | (10/11 정함) | 기본값 1.0 그대로 둔다. 이 실험은 손으로 정한 ROI 없이 도는지 보는 것이라 보닛을 거르는 일은 노면 마스크 몫이고, 학습 804장도 아래 끝까지 같은 규칙으로 돈다. roi.csv에서 아래를 0.95로 자른 미국 3장(United_States_004830·004952·005996)은 보고서에서 '보닛이 띠에 들어오는 사례'로 따로 본다 |
 | 최종 방법을 고를 때 처리 시간을 어떻게 볼지 | 전원 | G4 전, 확정본 6장 | |
 | 계획서 3장 라플라시안 표기(3~5 vs 3.0~3.9) | 전원(확정본은 합의 뒤 수정) | 제출 전 | C가 `docs/plan_2nd.md` |
 | 계획서 1장 조 정보, 제출 | 전원 | 10/12 | 양식에 직접 |

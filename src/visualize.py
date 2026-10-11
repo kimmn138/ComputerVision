@@ -30,9 +30,17 @@ def draw_candidates(bgr, cracks, potholes, y0):
 
 def draw_road(bgr, road, y0):
     """노면 마스크를 640px 컬러 영상의 복사본에 반투명 초록으로 칠해, 노면으로 본 곳이 맞는지 눈으로 확인하게 한다(받은 영상은 바꾸지 않음).
-    road는 노면 띠 좌표 uint8 (H, W) 0/255라 y0만큼 내려 칠한다. 약속 함수 draw_candidates는 그대로 두고 따로 부른다(Plan.md 3.7).
-    TODO(C): WP5에서 구현한다. 지금은 형식만 맞춘 임시 버전으로, 칠하지 않은 복사본을 돌려준다."""
-    return bgr.copy()
+    road는 노면 띠 좌표 uint8 (H, W) 0/255라 y0만큼 내려 칠하고, road 높이만큼만 칠한다(roi_bottom이 1보다 작으면 띠 아래는 그대로).
+    색과 섞는 비율은 config C 구역의 ROAD_OVERLAY_COLOR·ROAD_OVERLAY_ALPHA. 약속 함수 draw_candidates는 그대로 두고 따로 부른다(Plan.md 3.7)."""
+    out = bgr.copy()
+    h = max(0, min(road.shape[0], out.shape[0] - y0))
+    w = min(road.shape[1], out.shape[1])
+    band = out[y0:y0 + h, :w]                       # out의 일부를 가리키므로 여기에 칠하면 out에 칠해진다
+    on_road = road[:h, :w] > 0
+    color = np.array(C.ROAD_OVERLAY_COLOR, np.float64)
+    alpha = C.ROAD_OVERLAY_ALPHA
+    band[on_road] = np.round((1 - alpha) * band[on_road] + alpha * color).astype(np.uint8)
+    return out
 
 
 def save_comparison(path, title, panels):
