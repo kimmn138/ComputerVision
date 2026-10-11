@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src import config as C
 from src import io_utils
 from src.evaluate import load_gt
+from tools.evaluate_train import DIAG35
 
 OUT_DIR = "results/road_mask"
 
@@ -45,13 +46,27 @@ def parse_args(argv=None):
     parser.add_argument("--out", default=OUT_DIR)
     return parser.parse_args(argv)
 
+def list_images(set_name):
+    """dev39 또는 diag35에 해당하는 영상 경로를 반환한다."""
 
-def list_images():
-    return (
-        sorted(glob.glob("data/provided/*.jpg"))
-        + sorted(glob.glob("data/own/*.jpg"))
+    if set_name == "dev39":
+        return (
+            sorted(glob.glob("data/provided/*.jpg"))
+            + sorted(glob.glob("data/own/*.jpg"))
+        )
+
+    if set_name == "diag35":
+        return [
+            os.path.join(
+                C.TRAIN_IMAGE_DIR,
+                f"{name}.jpg"
+            )
+            for name in DIAG35
+        ]
+
+    raise ValueError(
+        f"알 수 없는 set: {set_name}"
     )
-
 
 def draw_road(img, road, y0):
     out = img.copy()
@@ -134,11 +149,6 @@ def count_gt(gt, road, y0):
 def main(argv=None):
     args = parse_args(argv)
 
-    if args.set != "dev39":
-        raise NotImplementedError(
-            "현재는 dev39 확인만 구현했습니다."
-        )
-
     roi_table = io_utils.load_roi_table("data/roi.csv")
 
     out_dir = os.path.join(
@@ -153,7 +163,7 @@ def main(argv=None):
 
     rows = []
 
-    for path in list_images():
+    for path in list_images(args.set):
         name = os.path.basename(path)
 
         bgr = io_utils.load_image(path)
@@ -175,10 +185,18 @@ def main(argv=None):
 
         road = io_utils.road_mask(roi)
 
-        gt_path = os.path.join(
-            "gt",
-            f"{os.path.splitext(name)[0]}.csv"
-        )
+        stem = os.path.splitext(name)[0]
+
+        if args.set == "diag35":
+            gt_path = os.path.join(
+                C.TRAIN_GT_DIR,
+                f"{stem}.csv"
+            )
+        else:
+            gt_path = os.path.join(
+                "gt",
+                f"{stem}.csv"
+            )
 
         gt = load_gt(gt_path)
 
