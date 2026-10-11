@@ -456,11 +456,17 @@ def test_image_table_verdicts():
     check(line[cols.index("correct_on")] == "", "table_by_image: 정답 없는 영상의 판정이 CSV에서 빈칸이 아님")
 
 
+def broken_detector(gray, road=None):
+    """일부러 오류를 내는 가짜 검출기: 모든 사진이 같은 이유로 실패할 때 run_experiment·demo가 알기 쉽게 알리고 1로 끝나는지 보려고 쓴다."""
+    raise NotImplementedError("시험용 가짜 검출기")
+
+
 def test_run_main_options():
     """run_experiment.main을 임시 폴더의 합성 사진 2장(roi.csv에 있는 직접 촬영 1장, 없는 제공 1장)으로 끝까지 돌린다(TIME_REPEAT 1).
     옵션 없음과 기본값을 직접 준 실행은 시간 열 말고 같고, 실행 옵션·바꾼 값이 config_used.txt 끝에 남으며, 끝나면 config가 되돌아온다.
     정답 없는 사진은 판정 칸이 빈칸이고, 지금 노면 마스크(전부 255)에서는 edges_road = edges. --roi auto·--roi-top은 roi.csv 띠 대신 기본 띠를 쓴다.
-    --detect dark(아직 구현 전)는 같은 오류를 한 줄로 묶어 알리고 1로 끝나며, 그래도 config는 되돌아온다."""
+    --detect dark는 2장을 모두 처리해 0으로 끝나고 결과 표를 낸다. 검출기가 오류를 내면(가짜 검출기) 같은 오류를 한 줄로 묶어
+    알리고 1로 끝나며, 두 경우 모두 config는 되돌아온다."""
     rng = np.random.default_rng(1)
     times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
     before = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
@@ -492,9 +498,12 @@ def test_run_main_options():
             after = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
             dark_code, dark_out = run(["--name", "dark", "--detect", "dark"])
             after_dark = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
+            with patched(detect, "detect_cracks", broken_detector):
+                broken_code, broken_out = run(["--name", "broken", "--detect", "dark"])
+            after_broken = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
         (m0, c0), (m1, c1), (m2, c2) = read("latest"), read("explicit"), read("auto")
-        check(codes == [0, 0, 0] and after == before and after_dark == before,
-              f"main: 끝 코드({codes})이 0이 아니거나 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
+        check(codes == [0, 0, 0] and after == before and after_dark == before and after_broken == before,
+              f"main: 끝 코드({codes})이 0이 아니거나 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, {after_broken}, 원래 {before})")
         check(m0.drop(columns=times).equals(m1.drop(columns=times)), "main: 옵션 없음과 기본값을 직접 준 실행의 결과가 다름")
         check(c0[-2:] == ["# 실행 옵션: --roi csv", "# 실행 옵션으로 바꾼 config 값: 없음"], f"config_used: 옵션 없는 실행의 조건 줄이 틀림 ({c0[-2:]})")
         check("USE_ROAD_MASK = True" in c2 and "ROI_TOP_DEFAULT = 0.3" in c2
@@ -509,8 +518,14 @@ def test_run_main_options():
         check((m0.loc[own, "roi_pixels"], m0.loc[provided, "roi_pixels"]) == (384 * 640, 240 * 640)
               and (m2.loc[own, "roi_pixels"], m2.loc[provided, "roi_pixels"]) == (336 * 640, 336 * 640),
               "main: --roi csv(roi.csv 0.2·기본 0.5)와 --roi auto --roi-top 0.3의 띠 높이가 틀림")
-        check(dark_code == 1 and dark_out.count("NotImplementedError") == 1 and "2장" in dark_out,
-              f"main: dark의 '아직 구현 안 됨' 오류를 한 줄로 묶어 알리지 않음 ({dark_out.strip().splitlines()[-2:]})")
+        md, cd = read("dark") if dark_code == 0 else (None, [])
+        check(dark_code == 0 and "2/2장 처리" in dark_out and md is not None and len(md) == 4
+              and md[["n_crack", "n_pothole"]].notna().all().all() and (md[["n_crack", "n_pothole"]] >= 0).all().all()
+              and cd[-1:] == ["# 실행 옵션으로 바꾼 config 값: DETECT_MODE='dark'"],
+              f"main --detect dark: 2장을 끔·켬 모두 처리해 0으로 끝나지 않았거나 dark로 돈 기록이 없음 "
+              f"(끝 코드 {dark_code}, {dark_out.strip().splitlines()[-2:]}, {cd[-1:]})")
+        check(broken_code == 1 and broken_out.count("NotImplementedError") == 1 and "2장" in broken_out,
+              f"main: 모든 사진이 같은 오류로 실패할 때 한 줄로 묶어 알리지 않음 ({broken_out.strip().splitlines()[-2:]})")
 
 
 def test_demo_args_roi():
@@ -624,7 +639,7 @@ def test_demo_footer():
 def test_demo_main_save():
     """demo.main --save: 창을 띄우지 않고 화면(끔·켬 두 칸 + 위 제목 띠 + 아래 두 줄)을 그림 파일로 저장하고 0으로 끝난다.
     회색 합성 사진이라 띠(기본 0.5~1.0)는 초록이 섞이고 띠 위는 회색 그대로다. --mask on은 실행 중에만 적용되고 끝나면 되돌아오며,
-    아직 구현 전인 --detect dark는 알기 쉬운 문구와 함께 1로 끝나고 그림을 저장하지 않으며 config는 되돌아온다."""
+    검출기가 NotImplementedError를 내면(가짜 검출기) 알기 쉬운 문구와 함께 1로 끝나고 그림을 저장하지 않으며 config는 되돌아온다."""
     rng = np.random.default_rng(5)
     before = (C.USE_ROAD_MASK, C.DETECT_MODE)
     with tempfile.TemporaryDirectory() as tmp:
@@ -635,7 +650,7 @@ def test_demo_main_save():
             code = demo.main([path, "--mask", "on", "--save", saved])
         after = (C.USE_ROAD_MASK, C.DETECT_MODE)
         view = cv.imdecode(np.fromfile(saved, np.uint8), cv.IMREAD_COLOR) if os.path.exists(saved) else None
-        with contextlib.redirect_stdout(io.StringIO()) as dark_printed:
+        with contextlib.redirect_stdout(io.StringIO()) as dark_printed, patched(detect, "detect_cracks", broken_detector):
             dark_code = demo.main([path, "--detect", "dark", "--save", dark])
         after_dark, dark_saved = (C.USE_ROAD_MASK, C.DETECT_MODE), os.path.exists(dark)
     check(code == 0 and view is not None and "노면 마스크 켬" in printed.getvalue(), f"demo.main --save: 저장하지 못함 (끝 코드 {code})")
@@ -647,7 +662,7 @@ def test_demo_main_save():
               "demo 화면: 띠에 초록이 섞이지 않았거나 띠 위까지 칠함")
     check(after == before and after_dark == before, f"demo.main: 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
     check(dark_code == 1 and not dark_saved and "아직 구현되지 않은" in dark_printed.getvalue(),
-          "demo.main --detect dark: 알기 쉬운 문구와 1로 끝나지 않았거나 그림을 저장함")
+          "demo.main: 검출기 오류(가짜 검출기)에 알기 쉬운 문구와 1로 끝나지 않았거나 그림을 저장함")
 
 
 def fake_pair_name(path):
