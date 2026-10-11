@@ -70,11 +70,17 @@ def same_result(a, b):
             and np.array_equal(a[1], b[1]))
 
 
-def center_on_road(regions, road):
-    """후보 bbox의 중심 픽셀이 모두 노면(255) 안인지 (pipeline.keep_on_road의 'center' 규칙과 같은 계산)."""
-    h, w = road.shape
-    return all(road[min(int(y + bh / 2), h - 1), min(int(x + bw / 2), w - 1)] > 0
-               for x, y, bw, bh in (r["bbox"] for r in regions))
+def mostly_on_road(regions, road):
+    """후보마다 영역(윤곽 안쪽까지 채운 픽셀)의 ROAD_KEEP_RATIO_MIN(50%) 이상이 노면(255) 안인지 (약속: 10/12 'ratio' 규칙).
+    pipeline.road_ratio를 쓰지 않고 따로 계산해, 검사가 검사받는 코드에 기대지 않게 한다."""
+    for r in regions:
+        fill = np.zeros(road.shape, np.uint8)
+        cv.drawContours(fill, [r["contour"]], -1, 255, -1)
+        inside = fill > 0
+        n = np.count_nonzero(inside)
+        if n == 0 or np.count_nonzero(road[inside]) < C.ROAD_KEEP_RATIO_MIN * n:
+            return False
+    return True
 
 
 def check_a_names():
@@ -294,9 +300,9 @@ def check_c(name, bgr):
         on = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
     finally:
         C.USE_ROAD_MASK = use_mask
-    check("C", center_on_road(on["cracks"] + on["potholes"], on["road"]) and on["row"]["n_crack"] == len(on["cracks"])
+    check("C", mostly_on_road(on["cracks"] + on["potholes"], on["road"]) and on["row"]["n_crack"] == len(on["cracks"])
           and on["row"]["n_pothole"] == len(on["potholes"]),
-          "run_pipeline: USE_ROAD_MASK를 켰는데 bbox 중심이 노면 밖인 후보가 남거나 row 개수가 후보 수와 다름")
+          "run_pipeline: USE_ROAD_MASK를 켰는데 영역의 절반 넘게 노면 밖인 후보가 남거나 row 개수가 후보 수와 다름 (약속 변경 10/12 ratio)")
 
 
 def main():

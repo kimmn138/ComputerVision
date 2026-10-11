@@ -43,7 +43,7 @@
 | features.match_pair(g1, g2) | C | 흑백 2장 | {kp1, kp2, good, inliers, inlier_ratio, …} | 매칭이 안 돼도 오류 없이 0 |
 | visualize.draw_candidates(bgr, cracks, potholes, y0) | C | 640px 컬러, 후보, y0 | 그린 복사본 | 받은 영상은 바꾸지 않음 |
 | visualize.draw_road(bgr, road, y0) | C | 640px 컬러, 노면 마스크, y0 | 노면을 반투명 초록으로 칠한 복사본 | 받은 영상은 바꾸지 않음 |
-| pipeline.run_pipeline(bgr, top, bottom, use_preprocess) | C | 원본 컬러, ROI 비율, 끔/켬 | {small, y0, gray, proc, edges, cracks, potholes, steps, quality, row, road, t_road_ms} | 끔/켬의 차이는 steps 하나뿐. config C 구역의 USE_ROAD_MASK가 켜지면 road를 검출 함수에 넘기고, bbox 중심이 노면 밖인 후보를 지운 뒤 row를 셈 |
+| pipeline.run_pipeline(bgr, top, bottom, use_preprocess) | C | 원본 컬러, ROI 비율, 끔/켬 | {small, y0, gray, proc, edges, cracks, potholes, steps, quality, row, road, t_road_ms} | 끔/켬의 차이는 steps 하나뿐. config C 구역의 USE_ROAD_MASK가 켜지면 road를 검출 함수에 넘기고, 후보 영역(윤곽 안쪽까지 채운 픽셀) 중 노면 안이 50%(ROAD_KEEP_RATIO_MIN) 미만인 후보를 지운 뒤 row를 셈 (ROAD_KEEP_RULE "ratio") |
 
 row의 열은 edges, harris, n_crack, area_crack, n_pothole, area_pothole, roi_pixels, t_pre_ms, t_detect_ms 9개로 고정한다.
 노면 마스크(road)는 노면 띠와 같은 크기·좌표다. detect.extract_dark_regions(gray, road=None)는 B만 쓰는 내부 함수라 이 표에 넣지 않는다.
@@ -137,3 +137,4 @@ GitHub Desktop을 쓸 때 (위 명령과 같은 일)
 
 기록
 - 10/10 약속 변경 묶음(Plan.md 3.9): io_utils.road_mask 추가, quality에 blur_ratio, detect_*(gray, road=None), 후보에 thickness·dt_width·circ_inv·contrast·score, run_pipeline에 road·t_road_ms와 노면 밖 후보 제거(USE_ROAD_MASK), visualize.draw_road 추가, 3장 1·3번 문장. C가 문서·약속 검사와 A·B 파일의 자리(형식만 맞춘 임시 버전)를 한 번에 만들었다(c-foundation).
+- 10/12 run_pipeline의 노면 밖 후보 제거 규칙: bbox 중심 → 후보 영역의 50% 이상이 노면 안(ROAD_KEEP_RULE "ratio", Plan.md 3.3 (7)). 노면 경계가 비스듬하면 영역 대부분이 노면 밖인 후보도 상자 중심이 노면에 떨어져 남았다(Japan_000107: 노면 안 8%). 개발셋 규칙 2 미달(균형 정확도 31.17% → 31.05%)이지만 예외 채택(docs/part_C.md). C가 이 문서·약속 검사·pipeline을 고쳤고, A·B 파일은 바뀌지 않는다. 팀 동의 뒤 push.
