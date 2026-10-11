@@ -39,6 +39,7 @@ import argparse
 import ast
 import csv
 import sys
+import zlib
 from pathlib import Path
 
 import cv2 as cv
@@ -427,7 +428,9 @@ def degrade(bgr, kind):
     띠를 자르기 전에 넣어 상태 판정과 전처리가 사진 전체의 저하를 보게 한다. 값은 config C 구역 DEGRADE_*:
     none = 그대로(복사본), blur = 가우시안 σ DEGRADE_BLUR_SIGMA, dark = 0~1 밝기^DEGRADE_DARK_GAMMA(어두워짐),
     bright = 0~1 밝기^DEGRADE_BRIGHT_GAMMA(밝아짐, 과노출 흉내), noise = 채널마다 가우시안 잡음 σ DEGRADE_NOISE_SIGMA.
-    잡음은 함수 안에서 DEGRADE_SEED로 난수 생성기를 새로 만들므로 두 번 불러도 같다(같은 입력이면 같은 출력)."""
+    잡음은 함수 안에서 seed = DEGRADE_SEED + 사진 바이트의 crc32로 난수 생성기를 새로 만든다. 같은 사진은 언제 불러도 같고
+    (같은 입력이면 같은 출력), 사진마다 무늬가 달라 모든 사진에 같은 흠집 난 렌즈를 끼운 꼴이 되지 않는다.
+    파이썬 hash()는 실행마다 값이 달라져 쓰지 않는다."""
     if kind == "none":
         return bgr.copy()
 
@@ -439,7 +442,7 @@ def degrade(bgr, kind):
         return cv.LUT(bgr, gamma_lut(gamma))
 
     if kind == "noise":
-        rng = np.random.default_rng(C.DEGRADE_SEED)
+        rng = np.random.default_rng(C.DEGRADE_SEED + zlib.crc32(np.ascontiguousarray(bgr).tobytes()))
         noisy = bgr.astype(np.float64) + rng.normal(0.0, C.DEGRADE_NOISE_SIGMA, bgr.shape)
         return np.clip(np.round(noisy), 0, 255).astype(np.uint8)
 
@@ -453,7 +456,7 @@ def degrade_text(kind):
         "blur": f"가우시안 σ {C.DEGRADE_BLUR_SIGMA}",
         "dark": f"0~1 밝기^{C.DEGRADE_DARK_GAMMA}",
         "bright": f"0~1 밝기^{C.DEGRADE_BRIGHT_GAMMA}",
-        "noise": f"채널마다 가우시안 잡음 σ {C.DEGRADE_NOISE_SIGMA}, seed {C.DEGRADE_SEED}",
+        "noise": f"채널마다 가우시안 잡음 σ {C.DEGRADE_NOISE_SIGMA}, seed {C.DEGRADE_SEED} + 사진 바이트 crc32",
     }
 
     return texts[kind]
