@@ -1,5 +1,5 @@
 """(파트 C) E0~E6 실험을 단계마다 명령 하나로 돌리고, 보고서 표(CSV)와 요약(summary.md)을 만든다(Plan.md 3.7·3.10).
-사용법: 맨 위 폴더에서  python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes]
+사용법: 맨 위 폴더에서  python tools/run_all.py compare|band|final|test|repro|retest|retest_repro|tables [--dry-run] [--yes]
                                               [--accept E1b] [--reject E1,E3] [--force dark,mask]
 순서: compare(비교) → 사용자가 채택을 정하고 구역 주인이 config를 고침 → final(최종) → test(시험, 한 번만) → (10/12) repro(재현)
 - compare: 개발셋에서 E0(804장 재현 포함)·E1·E1b·E2·E3·E3σ를 차례로 돌리며, 끝날 때마다 채택 규칙 2·3으로 잠정 판정해 뒤 단계 설정에 반영한다.
@@ -16,14 +16,21 @@
 - test: 시험셋을 한 번만 잰다. results/test_once가 있으면 거부한다. 같은 시험셋에서 1차 방법(e0_test)을 먼저 돌려 전·후를 견준다.
   시작할 때 지금 config를 보여 주고 Enter를 기다린다(--yes면 건너뜀). 1차 방법이 실패하면 test_once를 돌리지 않는다.
 - repro: (10/12) 같은 코드로 시험셋을 다시 돌려(final_test) test_once와 같은지 본다. 다르면 원인만 찾고 다시 튜닝하지 않는다.
+- band: (10/12) 자동 띠 비교의 참고 실행. 결 조건 없는 자동 띠(B1 개발셋, B1_39 39장 자동 ROI). E3(띠 고정)·E5·F39a(자동 띠 + 결 = 최종)와
+  나란히 9번 표를 만든다.
+- retest: (10/12, 자동 띠 채택 뒤) 시험셋을 최종 설정(자동 띠 + 결)으로 한 번만 잰다(test_autoband). 이미 있거나, 지금 config가
+  최종 단계(e5_dev)를 돌린 config와 다르면 거부한다. test_once(띠 고정)는 그대로 둔다.
+- retest_repro: 같은 코드로 시험셋을 다시 돌려(final_test_autoband) test_autoband와 같은지 본다.
 - tables: 실험은 돌리지 않고 있는 결과 폴더로 표만 다시 만든다.
+자동 띠 높이(config AUTO_BAND_TOP): 띠 위쪽 비율을 옵션으로 정한 실험(E0~E3, 39장 1차 설정, 시험셋 1차)과 띠 고정 시절의 시험셋 실행
+(test_once·final_test)은 실행 중에만 AUTO_BAND_TOP=False로 고정해, 자동 띠를 켠 뒤에 다시 돌려도 처음과 같은 조건이다.
 --dry-run은 돌릴 실험·명령·결과 폴더·예상 시간만 보여 주고 아무것도 쓰지 않는다.
 실행 전 확인: 39장 정답 파일(빠지면 이름을 알리고 39장 표에 '미완'), 학습 사진 804장, 약속 검사, 커밋 안 된 변경. 뒤의 셋은 어기면 멈춘다.
 구현 여부: 노면 마스크·dark 검출은 A·B 시험의 해당 @todo가 지워졌는지(각 파트의 통과 기준)로 정하고, 합성 영상 검사는 어긋날 때 경고만 한다.
 구현 전 기능이 필요한 실험은 건너뛰고 표에 '아직 구현 전'으로 적되, 시작 전에 목록을 크게 보여 주고 Enter를 기다린다(--yes면 그대로 진행).
 --force dark,mask면 @todo가 남은 기능도 쓰고, 그 기능을 쓴 실험은 표에 '강제 실행(시험 미통과)'으로 남긴다(구현했지만 시험 하나를 아직 못 넘긴 경우).
 결과: 실험마다 results/<폴더>/ (도구의 결과·config_used*.txt와, run_all이 남기는 run_info*.txt: 커밋 해시·명령·옵션·고정한 값)
-      표는 results/report/: table1_stages … table8_39_images.csv, adoption.csv·adoption_grid.csv, summary.md(보고서용 요약),
+      표는 results/report/: table1_stages … table8_39_images.csv, table9_auto_band*.csv(자동 띠 비교), adoption.csv·adoption_grid.csv, summary.md(보고서용 요약),
       accept.txt·reject.txt(사람이 정한 채택·되돌림)."""
 import argparse
 import ast
@@ -49,7 +56,10 @@ from src import analyze, detect, io_utils  # noqa: E402
 from src import config as C  # noqa: E402
 from tools import evaluate_train as et  # noqa: E402
 
-STAGES = {"compare": "비교", "final": "최종", "test": "시험", "repro": "재현", "tables": "표만"}
+STAGES = {"compare": "비교", "band": "자동 띠 비교", "final": "최종", "test": "시험", "repro": "재현",
+          "retest": "시험(자동 띠)", "retest_repro": "재현(자동 띠)", "tables": "표만"}
+TEST_STAGES = ("test", "retest")        # 시험셋을 한 번만 재는 단계: 실패하면 다음 실험을 돌리지 않는다
+FINAL_CONFIG_EXP = "E5"                 # retest 전에 지금 config를 대조할 최종 단계 실험(config 그대로 돈 개발셋)
 REPORT_DIR = "report"               # 표는 results/report/
 DECISION_FILES = {"accept": "accept.txt", "reject": "reject.txt"}   # 사람이 정한 채택·되돌림(다음 단계에서 표를 다시 만들어도 유지되게)
 FORCED_MARK = "강제 실행(시험 미통과)"   # --force로 A·B 시험의 @todo가 남은 기능을 쓴 실험의 표시
@@ -127,9 +137,17 @@ EXPERIMENTS = [
            split="dev") for kind in et.DEGRADE_KINDS],
     # 시험 단계: 1차 방법을 먼저(실패하면 test_once 전에 멈춤), 그다음 최종 설정을 한 번만
     _exp("T0", "test", "train", "e0_test", "시험셋 1차 방법", FIRST, split="test"),
-    _exp("T", "test", "train", "test_once", "시험셋 최종 설정(한 번만)", split="test"),
+    _exp("T", "test", "train", "test_once", "시험셋 최종 설정(띠 고정, 한 번만)", split="test", fixed_band=True),
     # 재현 단계 (10/12): test_once와 같은 코드·설정으로 다시
-    _exp("R", "repro", "train", "final_test", "시험셋 재현 확인", split="test"),
+    _exp("R", "repro", "train", "final_test", "시험셋 재현 확인(띠 고정)", split="test", fixed_band=True),
+    # 자동 띠 비교 (10/12, 참고): 결 조건 없는 자동 띠. 띠 고정(E3·E3_39)과 자동 띠 + 결(E5·F39a, 최종)은 다른 단계의 결과를 쓴다
+    _exp("B1", "band", "train", "band_auto_dev", "자동 띠(결 없음) 개발셋 (참고)",
+         {**DARK, "mask": "on", "sigma_in_road": True, "auto_band": "on", "band_texture": "off"}, split="dev", reference=True),
+    _exp("B1_39", "band", "run39", "band_auto_auto", "자동 띠(결 없음) 39장 자동 ROI (참고)",
+         {**DARK, "mask": "on", "sigma_in_road": True, "auto_band": "on", "band_texture": "off"}, roi="auto", reference=True),
+    # 시험셋 다시 재기 (10/12, 자동 띠 채택 뒤): 최종 설정(config 그대로)으로 한 번만, 그다음 같은 코드로 재현 확인
+    _exp("TA", "retest", "train", "test_autoband", "시험셋 최종 설정(자동 띠 + 결, 한 번만)", split="test"),
+    _exp("RA", "retest_repro", "train", "final_test_autoband", "시험셋 재현 확인(자동 띠 + 결)", split="test"),
 ]
 EXP = {e["id"]: e for e in EXPERIMENTS}
 ADOPT_ORDER = [e["id"] for e in EXPERIMENTS if e.get("adopt")]       # E1, E1b, E2, E3, E3s, E4
@@ -139,18 +157,25 @@ METRICS = ["images", "n_damage", "n_none", "sensitivity", "specificity", "accura
            "crack_ctr_recall", "crack_ctr_recall_net", "crack_ctr_precision",
            "pothole_ctr_recall", "pothole_ctr_recall_net", "pothole_ctr_precision",
            "crack_iou_recall", "crack_iou_precision", "pothole_iou_recall", "pothole_iou_precision", "chance_skipped"]
-STAGE_IDS = ["E0_all", "E0", "E1", "E1b", "E2", "E3", "E3s", "E4", "E5", "T0", "T"]      # 1번 단계별 표의 행 순서
+STAGE_IDS = ["E0_all", "E0", "E1", "E1b", "E2", "E3", "E3s", "E4", "B1", "E5", "T0", "T", "TA"]   # 1번 단계별 표의 행 순서
 STAGE_HEAD = ["stage_id", "label", "data", "folder", "status", "commit"]
-COUNTRY_RUNS = (("E0", "1차"), ("E5", "최종"), ("T0", "1차"), ("T", "최종"))
-RUNS39 = (("F39e0", "1차 설정"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI)"),
-          ("E1_39", "E1 자동 ROI(참고)"), ("E3_39", "E3 자동 ROI(참고)"))
+COUNTRY_RUNS = (("E0", "1차"), ("E3", "띠 고정(E3)"), ("B1", "자동 띠(결 없음)"), ("E5", "최종(자동 띠 + 결)"),
+                ("T0", "1차"), ("T", "띠 고정"), ("TA", "최종(자동 띠 + 결)"))
+RUNS39 = (("F39e0", "1차 설정"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI, 자동 띠 + 결)"),
+          ("E1_39", "E1 자동 ROI(참고)"), ("E3_39", "E3 자동 ROI(참고, 띠 고정)"), ("B1_39", "자동 띠(결 없음) 자동 ROI(참고)"))
+# 9번 자동 띠 비교: (단계, 이름). 개발셋은 전처리 끔(채택 규칙의 조건), 39장은 자동 ROI 끔·켬
+BAND_DEV = (("E3", "띠 고정(E3)"), ("B1", "자동 띠"), ("E5", "자동 띠 + 결(최종)"))
+BAND_39 = (("E3_39", "띠 고정(E3)"), ("B1_39", "자동 띠"), ("F39a", "자동 띠 + 결(최종)"))
 IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"))
 GROUP39 = ["n_images", "n_gt", "n_damage", "n_none", "sensitivity_off", "sensitivity_on", "specificity_off", "specificity_on",
            "accuracy_off", "accuracy_on", "baseline_none"]
 SOURCE39 = GROUP39 + ["n_crack_off", "n_crack_on", "n_pothole_off", "n_pothole_on", "edges_off", "edges_on"]
 PRE39 = [("에지 수", "edges"), ("노면 안 에지 수", "edges_road"), ("해리스 코너 수", "harris"), ("균열 후보 수", "n_crack"),
          ("균열 면적 % (노면 대비)", "area_crack_pct"), ("포트홀 후보 수", "n_pothole"), ("포트홀 면적 % (노면 대비)", "area_pothole_pct"),
-         ("전처리 시간 ms", "t_pre_ms"), ("검출 시간 ms", "t_detect_ms"), ("노면 마스크 시간 ms", "t_road_ms")]
+         ("전처리 시간 ms", "t_pre_ms"), ("검출 시간 ms", "t_detect_ms"), ("노면 마스크 시간 ms", "t_road_ms"),
+         ("자동 띠 경계 시간 ms", "t_band_ms")]
+TIME39 = ("t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms")     # 39장 처리 시간 합(4번 표 '처리 시간 합')
+OPTIONAL_TIMES = ("t_band_ms",)     # 자동 띠 전에 돈 결과에는 없는 시간 열: 그때는 띠 경계를 계산하지 않았으므로 0으로 읽는다
 PRE_TRAIN = [("에지 수", "edges_mean"), ("해리스 코너 수", "harris_mean"), ("균열 후보 수", "pred_crack_mean"),
              ("균열 면적 (픽셀)", "area_crack_mean"), ("포트홀 후보 수", "pred_pothole_mean"), ("포트홀 면적 (픽셀)", "area_pothole_mean")]
 MATCH_ITEMS = [("SIFT 특징점 수(기준 A)", "kp_ref"), ("SIFT 특징점 수(대상)", "kp_target"), ("good 매칭 점 수", "good"),
@@ -160,7 +185,7 @@ DEGRADE_COLS = ["sensitivity", "specificity", "accuracy", "baseline_none", "bala
                 "crack_ctr_recall", "crack_ctr_recall_net", "pothole_ctr_recall", "pothole_ctr_recall_net",
                 "edges_mean", "harris_mean", "pred_crack_mean", "pred_pothole_mean", "area_crack_mean", "area_pothole_mean",
                 "judge_expect", "judge_hit_rate", "judge_base_rate"]
-TIME_MEANS = ["t_pre_ms_mean", "t_detect_ms_mean", "t_road_ms_mean"]   # 학습 데이터 처리 시간(사진마다 한 번 잰 값의 평균): 참고용
+TIME_MEANS = ["t_pre_ms_mean", "t_detect_ms_mean", "t_road_ms_mean", "t_band_ms_mean"]   # 학습 데이터 처리 시간(사진마다 한 번 잰 값의 평균): 참고용
 COMPARE_KEYS = (("sens", "sensitivity"), ("fp", "fp_per_image"), ("balanced", "balanced"), ("crack_net", "crack_ctr_recall_net"))
 # 채택 표 위의 네 칸 (검출기, 노면 마스크, 단계): 마스크를 켠 1차 칸은 E1b가 채택되면 E1b(띠 0.3). E3σ는 E3 아래 한 줄
 GRID_CELLS = (("1차(legacy)", "끔", "E0"), ("1차(legacy)", "켬", "E1"), ("dark", "끔", "E2"), ("dark", "켬", "E3"),
@@ -257,7 +282,8 @@ def resolve(exp, adopted):
 def command(exp, opts):
     """실험의 도구 명령행 인자와, 명령행으로 줄 수 없어 실행 중에만 고정할 config 값 {이름: 값}을 만든다(opts는 resolve의 결과).
     run_experiment에는 --param-set·--set이 없어 1차 legacy 값(evaluate_train의 base 세트)과 DARK_SIGMA_IN_ROAD를 실행 중에만 덮고,
-    --roi csv에서는 --roi-top을 받지 않아 띠 위쪽 비율도 실행 중에만 덮는다(39장은 모두 roi.csv에 있어 결과는 같다)."""
+    --roi csv에서는 --roi-top을 받지 않아 띠 위쪽 비율도 실행 중에만 덮는다(39장은 모두 roi.csv에 있어 결과는 같다).
+    자동 띠(opts auto_band·band_texture)는 도구 옵션으로 주고, 띠 위쪽 비율을 정한 실험과 fixed_band 실험은 AUTO_BAND_TOP=False로 고정한다."""
     argv, pins = [], {}
     if exp["tool"] == "train":
         argv += ["--split", exp["split"]]
@@ -280,6 +306,15 @@ def command(exp, opts):
             argv += ["--set", f"DARK_SIGMA_IN_ROAD={opts['sigma_in_road']}"]
         else:
             pins["DARK_SIGMA_IN_ROAD"] = opts["sigma_in_road"]
+    if opts.get("auto_band"):
+        if exp["tool"] == "train":
+            argv += ["--set", f"AUTO_BAND_TOP={opts['auto_band'] == 'on'}"]
+            if opts.get("band_texture"):
+                argv += ["--set", f"AUTO_BAND_USE_TEXTURE={opts['band_texture'] == 'on'}"]
+        else:
+            argv += ["--auto-band", opts["auto_band"]] + (["--band-texture", opts["band_texture"]] if opts.get("band_texture") else [])
+    elif "roi_top" in opts or exp.get("fixed_band"):
+        pins["AUTO_BAND_TOP"] = False           # 띠를 비율로 정한 실험·띠 고정 시절 시험셋: 자동 띠를 켠 뒤에도 처음과 같은 조건
     if opts.get("degrade"):
         argv += ["--degrade", opts["degrade"]]
     return argv + ["--name", exp["name"]], pins
@@ -304,6 +339,8 @@ def settings_text(opts):
         parts.append(f"σ {'노면 안' if opts['sigma_in_road'] else '띠 전체'}")
     if opts.get("params"):
         parts.append(f"legacy 값 {opts['params']}(1차)")
+    if opts.get("auto_band"):
+        parts.append(f"자동 띠 {onoff[opts['auto_band']]}" + (f"(결 {onoff[opts['band_texture']]})" if opts.get("band_texture") else ""))
     return ", ".join(parts)
 
 
@@ -596,8 +633,42 @@ def run_one(exp, opts, paths, ready, context, source=""):
     return status, seconds, forced
 
 
+def config_used_values(path):
+    """도구가 남긴 config_used*.txt에서 'NAME = 값' 줄만 {이름: 값 글}로 읽는다('#' 줄은 뺌). 없으면 None."""
+    if not path.exists():
+        return None
+    pairs = (line.split(" = ", 1) for line in path.read_text(encoding="utf-8").splitlines()
+             if " = " in line and not line.startswith("#"))
+    return {name: value for name, value in pairs}
+
+
+def final_config_diff(results):
+    """지금 config와 최종 단계(FINAL_CONFIG_EXP)를 돌린 config(config_used_train.txt)가 다른 값 [(이름, 최종, 지금)].
+    최종 단계 결과가 없으면 None. retest가 시험셋을 최종 설정으로 재는지 확인하려고 쓴다."""
+    used = config_used_values(results / EXP[FINAL_CONFIG_EXP]["name"] / CONFIG_FILE["train"])
+    if used is None:
+        return None
+    now = {name: repr(value) for name, value in vars(C).items() if name.isupper()}
+    return [(name, used.get(name, "(없음)"), now.get(name, "(없음)")) for name in sorted(set(used) | set(now))
+            if used.get(name) != now.get(name)]
+
+
 def stage_refusal(stage, results):
-    """단계를 거부할 이유(없으면 None): 시험은 test_once가 이미 있으면(한 번만), 재현은 test_once 결과가 없으면."""
+    """단계를 거부할 이유(없으면 None): 시험은 test_once가 이미 있으면(한 번만), 재현은 test_once 결과가 없으면.
+    retest는 test_autoband가 이미 있거나, 최종 단계 결과가 없거나, 지금 config가 최종 단계를 돌린 config와 다르면.
+    retest_repro는 test_autoband 결과가 없으면."""
+    if stage == "retest":
+        again = results / EXP["TA"]["name"]
+        if again.exists():
+            return f"{again.as_posix()}/가 이미 있습니다. 시험셋은 한 번만 잽니다(Plan.md 3.10)."
+        diff = final_config_diff(results)
+        if diff is None:
+            return f"최종 단계 결과({EXP[FINAL_CONFIG_EXP]['name']})가 없습니다. final을 먼저 돌립니다(시험셋은 최종 설정으로 잼)."
+        if diff:
+            return "지금 config가 최종 단계를 돌린 config와 다릅니다: " + ", ".join(f"{n} 최종 {a} / 지금 {b}" for n, a, b in diff)
+        return None
+    if stage == "retest_repro" and not (results / EXP["TA"]["name"] / et.SUMMARY_NAME).exists():
+        return f"{(results / EXP['TA']['name']).as_posix()}/{et.SUMMARY_NAME}가 없습니다. 재현은 retest 뒤에 돌립니다."
     once = results / "test_once"
     if stage == "test" and once.exists():
         hint = "" if (once / et.SUMMARY_NAME).exists() else \
@@ -707,7 +778,7 @@ def print_plan(stage, exps, paths, ready, refusal, skips, human):
     print(f"예상 합계: 약 {duration(total)} (실행 전 확인 포함"
           + (f", 건너뛸 실험 {len(skips)}개 빼고), 모두 구현되면 약 {duration(everything)}" if skips else ")")
           + ". legacy·마스크 끔으로 잰 값이라 dark·노면 마스크는 더 걸릴 수 있음")
-    print(f"표: {(results / REPORT_DIR).as_posix()}/ (table1_stages … table8_39_images.csv, adoption.csv, summary.md)")
+    print(f"표: {(results / REPORT_DIR).as_posix()}/ (table1_stages … table9_auto_band*.csv, adoption.csv, summary.md)")
 
 
 FINAL_PROMPT = "처리 시간을 잽니다: 노트북 전원을 연결하고 다른 프로그램을 닫아 주세요."
@@ -718,7 +789,8 @@ def test_prompt(ready):
     forced = [NEEDS[k] for k in SIGNALS if k in ready.get("forced", ())]
     return ("시험셋은 한 번만 잽니다. 이 결과를 보고 파라미터를 고치지 않습니다(Plan.md 3.10).\n"
             f"지금 config: DETECT_MODE={C.DETECT_MODE!r}, USE_ROAD_MASK={C.USE_ROAD_MASK}, "
-            f"ROI_TOP_DEFAULT={C.ROI_TOP_DEFAULT}, DARK_SIGMA_IN_ROAD={C.DARK_SIGMA_IN_ROAD}"
+            f"ROI_TOP_DEFAULT={C.ROI_TOP_DEFAULT}, DARK_SIGMA_IN_ROAD={C.DARK_SIGMA_IN_ROAD}, AUTO_BAND_TOP={C.AUTO_BAND_TOP}, "
+            f"AUTO_BAND_USE_TEXTURE={C.AUTO_BAND_USE_TEXTURE}, AUTO_BAND_ROAD_MIN={C.AUTO_BAND_ROAD_MIN}, AUTO_BAND_TEX_RATIO={C.AUTO_BAND_TEX_RATIO}"
             + (f"\n--force로 쓰는 기능(A·B 시험 미통과, 표에 '{FORCED_MARK}'): {', '.join(forced)}" if forced else ""))
 
 
@@ -742,7 +814,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
     if any(blocking and not ok for _, ok, _, blocking in checks):
         print("멈춤: 위 확인을 통과하지 못함 (39장 정답 말고는 모두 통과해야 돌림)")
         return 2
-    if stage in ("test", "repro") and skips:
+    if stage in ("test", "repro", "retest", "retest_repro") and skips:
         print(f"멈춤: 시험셋은 설정에 필요한 기능을 다 갖춘 뒤 돌린다. 아직 구현 전: "
               f"{', '.join(sorted({m for _, missing in skips for m in missing}))}")
         return 2
@@ -752,7 +824,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
             return 2
     if stage == "final" and not confirm(FINAL_PROMPT, args.yes, ask):
         return 2
-    if stage == "test" and not confirm(test_prompt(ready), args.yes, ask):
+    if stage in TEST_STAGES and not confirm(test_prompt(ready), args.yes, ask):
         return 2
     if stage == "compare" and human_text(human):
         print(f"사람이 정한 것: {human_text(human)} (자동 판정보다 앞서고 뒤 단계 설정에 반영)")
@@ -776,8 +848,8 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
             if exp.get("adopt"):
                 row = table.set_index("stage_id").loc[exp["id"]]
                 print(f"      → 판정: {exp['id']} (비교 기준 {row['base']}) {row['verdict']}")
-        if stage == "test" and status != "완료":
-            print("멈춤: 시험 단계는 실패하면 다음 실험을 돌리지 않는다(test_once를 한 번만 재려고)")
+        if stage in TEST_STAGES and status != "완료":
+            print("멈춤: 시험 단계는 실패하면 다음 실험을 돌리지 않는다(시험셋을 한 번만 재려고)")
             break
 
     print(f"\n===== {STAGES[stage]} 단계 끝 ({duration(time.perf_counter() - start)})")
@@ -927,9 +999,16 @@ def rule1(values):
     return f"사람 확인 (민감도{arrow(ds)}·오검출{arrow(df)})"
 
 
+def time_value(row, col):
+    """처리 시간 한 칸: 자동 띠 전에 돈 결과에 없는 t_band 열은 0(그때는 띠 경계를 계산하지 않음), 그 밖에 없는 열은 NaN."""
+    if col in row and not pd.isna(row[col]):
+        return float(row[col])
+    return 0.0 if col.startswith(OPTIONAL_TIMES) else float("nan")
+
+
 def time_per_image(row):
-    """영상 1장 처리 시간 ms(전처리 + 검출 + 노면 마스크의 평균 합). 사진마다 한 번 잰 값이라 채택 표의 참고값으로만 쓴다."""
-    return sum(float(row[c]) for c in TIME_MEANS) if all(c in row for c in TIME_MEANS) else float("nan")
+    """영상 1장 처리 시간 ms(전처리 + 검출 + 노면 마스크 + 자동 띠 경계의 평균 합). 사진마다 한 번 잰 값이라 채택 표의 참고값으로만 쓴다."""
+    return sum(time_value(row, c) for c in TIME_MEANS)
 
 
 def compare_values(base, cur):
@@ -1075,21 +1154,35 @@ def e0_reproduction(summary):
     return [(key, expect, actual[key], actual[key] == expect) for key, expect in E0_EXPECT.items()]
 
 
-def repro_check(paths):
-    """재현 확인: final_test가 test_once와 같은지. 요약과 영상별 결과를 처리 시간 열(t_로 시작)을 빼고 견준다(같은 코드면 같아야 함).
-    → 설명 줄 list (둘 중 하나가 없으면 빈 list)"""
-    once, again = Path(paths["results"]) / "test_once", Path(paths["results"]) / "final_test"
+REPRO_PAIRS = (("T", "R"), ("TA", "RA"))     # 재현 확인: (한 번만 잰 시험셋, 같은 코드로 다시 돈 것)
+
+
+def repro_pair(once, again):
+    """두 시험셋 결과 폴더가 같은지: 요약과 영상별 결과를 처리 시간 열(t_로 시작)을 빼고 견준다(같은 코드면 같아야 함).
+    다시 돈 쪽에만 새 열(예: 나중에 생긴 t_band_ms)이 있으면 그 열은 빼고 견주고 그 사실을 적는다. 둘 중 하나가 없으면 빈 list."""
     lines = []
     for file in (et.SUMMARY_NAME, et.DETAIL_NAME):
         a, b = read_csv(once / file), read_csv(again / file)
         if a is None or b is None:
             return []
+        extra = [c for c in b.columns if c not in a.columns]
         keep = [c for c in a.columns if not c.startswith("t_")]
-        if list(a.columns) != list(b.columns) or len(a) != len(b):
+        if [c for c in b.columns if c in a.columns] != list(a.columns) or len(a) != len(b):
             lines.append(f"{file}: 다름 (열 또는 행 수가 다름: {len(a)}행 / {len(b)}행)")
             continue
         diff = [c for c in keep if not a[c].equals(b[c])]
-        lines.append(f"{file}: " + (f"같음 (처리 시간 열 빼고 {len(a)}행)" if not diff else f"다름: {', '.join(diff[:10])}"))
+        note = f", 새 열 {', '.join(extra)}는 빼고" if extra else ""
+        lines.append(f"{file}: " + (f"같음 (처리 시간 열{note} 빼고 {len(a)}행)" if not diff else f"다름: {', '.join(diff[:10])}"))
+    return lines
+
+
+def repro_check(paths):
+    """재현 확인: final_test가 test_once와, final_test_autoband가 test_autoband와 같은지(repro_pair).
+    → 설명 줄 list ('폴더 vs 폴더 파일: 같음'). 결과가 없는 쌍은 빼고, 하나도 없으면 빈 list"""
+    results, lines = Path(paths["results"]), []
+    for once_id, again_id in REPRO_PAIRS:
+        once, again = EXP[once_id]["name"], EXP[again_id]["name"]
+        lines += [f"{again} vs {once} {line}" for line in repro_pair(results / once, results / again)]
     return lines
 
 
@@ -1152,15 +1245,23 @@ def condition_table(runs, labels):
 
 
 def preprocess_table(paths, states, runs):
-    """4번 전처리 끔·켬 표: 영상 1장 평균의 에지 수·후보 수·면적·처리 시간(1차 계획의 항목). 39장 최종(roi.csv)과 개발·시험셋 최종.
-    처리 시간은 최종 단계 39장(TIME_REPEAT번 중앙값)의 값만 쓴다. 학습 데이터의 시간은 한 번 잰 값이라 넣지 않는다."""
+    """4번 전처리 끔·켬 표: 영상 1장 평균의 에지 수·후보 수·면적·처리 시간(1차 계획의 항목). 39장 최종(roi.csv·자동 ROI)과 개발·시험셋 최종.
+    처리 시간은 최종 단계 39장(TIME_REPEAT번 중앙값)의 값만 쓰고, 맨 끝에 처리 시간 합(전처리 + 검출 + 노면 마스크 + 자동 띠 경계)을 둔다.
+    자동 띠는 기본 띠를 쓰는 사진에만 쓰므로 roi.csv 줄의 띠 경계 시간은 0이다. 학습 데이터의 시간은 한 번 잰 값이라 넣지 않는다."""
     rows = []
-    data = runs["F39"]
-    if data is not None:
+    for sid, name in (("F39", "39장 최종(roi.csv)"), ("F39a", "39장 최종(자동 ROI, 자동 띠 + 결)")):
+        data = runs[sid]
+        if data is None:
+            continue
         whole = data["source"][data["source"]["source"] == "all"].iloc[0]
-        rows += [{"data": "39장 최종(roi.csv)", "folder": EXP["F39"]["name"], "item": item,
-                  "off": whole[f"{m}_off"], "on": whole[f"{m}_on"], "diff": whole[f"{m}_diff"]} for item, m in PRE39]
-    for sid in ("E5", "T"):
+        value = {mode: {m: time_value(whole, f"{m}_{mode}") if m in TIME39 else whole[f"{m}_{mode}"] for _, m in PRE39}
+                 for mode in ("off", "on")}
+        rows += [{"data": name, "folder": EXP[sid]["name"], "item": item, "off": value["off"][m], "on": value["on"][m],
+                  "diff": value["on"][m] - value["off"][m]} for item, m in PRE39]
+        total = {mode: sum(value[mode][m] for m in TIME39) for mode in ("off", "on")}
+        rows.append({"data": name, "folder": EXP[sid]["name"], "item": "처리 시간 합 ms (전처리+검출+노면+띠 경계)",
+                     "off": total["off"], "on": total["on"], "diff": total["on"] - total["off"]})
+    for sid in ("E5", "TA"):
         summary = train_summary(paths, EXP[sid], states[sid])
         if summary and {"off", "on"} <= set(summary):
             rows += [{"data": f"{DATA_NAMES[EXP[sid]['split']]} 최종", "folder": EXP[sid]["name"], "item": item,
@@ -1226,6 +1327,80 @@ def degrade_table(paths, states):
     return pd.DataFrame(rows, columns=["round", "settings_from", "degrade", "folder", "status", "preprocess"] + DEGRADE_COLS + TIME_MEANS)
 
 
+def band_rows(detail, gt_dir, gt_cache):
+    """영상별 결과(전처리 끔 행)마다 띠가 기본 띠(0.5)보다 넓어졌는지와, 정답 상자 가운데 중심이 띠 안에 든 수·전체 수를 더한 새 표.
+    띠 위쪽 y0 = 640px 높이 − 띠 행 수(roi_pixels / 가로 640). 정답은 gt_dir/<사진 이름>.csv(evaluate.load_gt)이고 gt_cache에 모아 둔다."""
+    out = detail.copy()
+    rows = pd.to_numeric(out["roi_pixels"]) / C.TARGET_WIDTH
+    out["y0"] = pd.to_numeric(out["height"]) - rows
+    out["widened"] = out["y0"] < (pd.to_numeric(out["height"]) * FIRST_ROI_TOP).astype(int)
+    gin, gn = [], []
+    for image, y0 in zip(out["image"], out["y0"]):
+        if image not in gt_cache:
+            gt_cache[image] = et.load_gt(Path(gt_dir) / f"{Path(image).stem}.csv") or []
+        gn.append(len(gt_cache[image]))
+        gin.append(sum(1 for x, y, w, h, _ in gt_cache[image] if y + h / 2 >= y0))
+    out["gt_in"], out["gt_n"] = gin, gn
+    return out
+
+
+def band_dev_tables(paths, states, summaries):
+    """9번 자동 띠 비교(개발셋, 전처리 끔 = 채택 규칙의 조건): 띠 고정(E3) → 자동 띠(B1, 결 없음) → 자동 띠 + 결(E5, 최종).
+    전체 표: 민감도·특이도·균형 정확도·영상당 오검출·우연 뺀 균열 재현율, 띠 안 정답 비율(중심), 넓어진 사진 비율, 처리 시간 합(참고)과
+    그중 띠 경계 시간, E3와 견준 채택 규칙 1~3. 국가별 표: 넓어진 사진 비율, 균형 정확도(무손상 사진이 없는 국가는 민감도도), 띠 안 정답 비율.
+    → (전체 표, 국가별 표). 결과가 없는 단계는 상태만."""
+    results, gt_cache, rows, country = Path(paths["results"]), {}, [], []
+    base = (summaries.get("E3") or {}).get("off")
+    for sid, name in BAND_DEV:
+        state, summary = states[sid], summaries.get(sid)
+        detail = read_csv(results / EXP[sid]["name"] / et.DETAIL_NAME) if state["done"] else None
+        head = {"run": name, "stage_id": sid, "folder": EXP[sid]["name"], "status": state["status"]}
+        if not summary or "off" not in summary or detail is None:
+            rows.append(head)
+            continue
+        off = summary["off"]
+        band = band_rows(detail[detail["preprocess"] == "off"], paths["train_gt"], gt_cache)
+        row = {**head, **{m: off[m] for m in GRID_METRICS}, "gt_in_band": band["gt_in"].sum() / max(1, band["gt_n"].sum()),
+               "widened": band["widened"].mean(), "time": time_per_image(off), "t_band": time_value(off, "t_band_ms_mean")}
+        if sid != "E3" and base is not None:
+            v = compare_values(base, off)
+            row.update({"rule1": f"민감도 {pp(v['sens_diff'])}·오검출 {v['fp_diff']:+.2f}", "rule2": v["rule2"], "rule3": v["rule3"]})
+        rows.append(row)
+        per = read_csv(results / EXP[sid]["name"] / et.SOURCE_NAME)
+        per = per[per["preprocess"] == "off"].set_index("source") if per is not None else None
+        for source, part in band.groupby("source", sort=True):
+            p = per.loc[source] if per is not None and source in per.index else {}
+            country.append({"run": name, "stage_id": sid, "source": source, "images": len(part), "widened": part["widened"].mean(),
+                            "balanced": p.get("balanced"), "sensitivity": p.get("sensitivity"),
+                            "gt_in_band": part["gt_in"].sum() / max(1, part["gt_n"].sum())})
+    columns = ["run", "stage_id", "folder", "status"] + GRID_METRICS + ["gt_in_band", "widened", "time", "t_band", "rule1", "rule2", "rule3"]
+    return (pd.DataFrame(rows, columns=columns),
+            pd.DataFrame(country, columns=["run", "stage_id", "source", "images", "widened", "balanced", "sensitivity", "gt_in_band"]))
+
+
+def band_39_table(runs, states):
+    """9번 자동 띠 비교(39장 자동 ROI): 띠 고정(E3_39) → 자동 띠(B1_39) → 자동 띠 + 결(F39a, 최종)의 전처리 끔·켬 정답률·기준선·
+    민감도·특이도, 띠 고정보다 넓어진 사진 수, 처리 시간 합(끔·켬 각 TIME_REPEAT번 중앙값의 평균)과 그중 띠 경계 시간."""
+    rows = []
+    fixed = runs["E3_39"]["image"].set_index("file") if runs["E3_39"] is not None else None
+    for sid, name in BAND_39:
+        data = runs[sid]
+        if data is None:
+            rows.append({"run": name, "stage_id": sid, "status": states[sid]["status"]})
+            continue
+        whole = data["source"][data["source"]["source"] == "all"].iloc[0]
+        image = data["image"].set_index("file")
+        widened = int((image["roi_pixels"] > fixed["roi_pixels"].reindex(image.index)).sum()) if fixed is not None else None
+        for mode in ("off", "on"):
+            rows.append({"run": name, "stage_id": sid, "status": states[sid]["status"], "preprocess": mode,
+                         "accuracy": whole[f"accuracy_{mode}"], "baseline_none": whole["baseline_none"],
+                         "sensitivity": whole[f"sensitivity_{mode}"], "specificity": whole[f"specificity_{mode}"],
+                         "widened": widened, "n_images": int(whole["n_images"]),
+                         "time": sum(time_value(whole, f"{m}_{mode}") for m in TIME39), "t_band": time_value(whole, f"t_band_ms_{mode}")})
+    return pd.DataFrame(rows, columns=["run", "stage_id", "status", "preprocess", "accuracy", "baseline_none", "sensitivity",
+                                       "specificity", "widened", "n_images", "time", "t_band"])
+
+
 def image_table(runs):
     """8번 39장 영상별 최종 판정: 사진마다 정답 유무(없으면 '미완'), 손상 유무, 상태 판정이 고른 전처리와 사람 태그에 맞는지,
     1차 설정·최종(roi.csv)·최종(자동 ROI)과 E1·E3 자동 ROI(참고)의 끔·켬 판정(correct), 최종 켬의 hit_same·hit_any·후보 수.
@@ -1271,7 +1446,7 @@ def build_report(paths, human=None, command_line="python tools/run_all.py tables
     out.mkdir(parents=True, exist_ok=True)
     ready = readiness()
     states = {e["id"]: exp_state(e, paths, ready) for e in EXPERIMENTS}
-    summaries = {sid: train_summary(paths, EXP[sid], states[sid]) for sid in ["E0", "E0_all", "T0", "T"] + ADOPT_ORDER}
+    summaries = {sid: train_summary(paths, EXP[sid], states[sid]) for sid in ["E0", "E0_all", "T0", "T", "TA", "B1", "E5"] + ADOPT_ORDER}
     results = {sid: {"off": (summaries[sid] or {}).get("off"), "status": states[sid]["status"], "opts": states[sid]["opts"],
                      "forced": states[sid]["forced"]} for sid in ["E0"] + ADOPT_ORDER}
     adopt, adopted = adoption(results, human["reject"], human["accept"])
@@ -1302,6 +1477,9 @@ def build_report(paths, human=None, command_line="python tools/run_all.py tables
               "table5_matching.csv": matching_table(paths, states, runs), "table6_provided_vs_own.csv": source_table(runs, labels),
               "table7_degrade.csv": degrade_table(paths, states), "table8_39_images.csv": image_table(runs), "adoption.csv": adopt,
               "adoption_grid.csv": grid}
+    band_dev, band_country = band_dev_tables(paths, states, summaries)
+    tables.update({"table9_auto_band.csv": band_dev, "table9_auto_band_country.csv": band_country,
+                   "table9_auto_band_39.csv": band_39_table(runs, states)})
     for name, table in tables.items():
         table.to_csv(out / name, encoding="utf-8-sig", index=False)
     for kind, file in DECISION_FILES.items():
@@ -1511,16 +1689,64 @@ def summary_lines(r):
                        "에지 수", "상태 판정 적중 (원본 기준)", "상태"], rows)
 
     lines += image_lines(t["table8_39_images.csv"], gt_note)
+    lines += band_lines(t)
     if r["repro"]:
-        lines += ["## 시험셋 재현 확인 (final_test vs test_once)", ""] + [f"- {line}" for line in r["repro"]] + [""]
+        lines += ["## 시험셋 재현 확인 (같은 코드로 다시 돌린 결과가 한 번만 잰 결과와 같은지)", ""] + [f"- {line}" for line in r["repro"]] + [""]
+    return lines
+
+
+def band_lines(t):
+    """9번 자동 띠 비교 줄: 개발셋(전처리 끔) 전체·국가별과 39장 자동 ROI. E3(띠 고정) → 자동 띠 → 자동 띠 + 결(최종)."""
+    lines = ["## 9. 자동 띠 비교: 띠 고정(E3) → 자동 띠 → 자동 띠 + 결(최종)", "",
+             "자동 띠: 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 0.5에서 0.1씩 위로(구간 노면 비율 ≥ 0.95). 결: 넓힐 구간 노면의 7×7 국소 "
+             "표준편차 중앙값이 시작 띠 노면의 1/1.5~1.5배일 때만. 띠 안 정답은 정답 상자 중심이 띠 안에 든 비율, 처리 시간은 사진마다 한 번 잰 "
+             "값의 평균 합(참고, 띠 경계 포함). 규칙은 E3와 견준다.", ""]
+    dev = t["table9_auto_band.csv"]
+    rows = []
+    for _, d in dev.iterrows():
+        if pd.isna(d.get("sensitivity")):
+            rows.append([d["run"], d["status"]] + ["-"] * 11)
+            continue
+        rows.append([d["run"], d["status"], pct(d["sensitivity"]), pct(d["specificity"]), pct(d["balanced"]), num(d["fp_per_image"]),
+                     pp(d["crack_ctr_recall_net"]), pct(d["gt_in_band"]), pct(d["widened"]), f"{num(d['time'], 1)} ({num(d['t_band'], 1)})",
+                     d["rule1"] if isinstance(d["rule1"], str) else "-", d["rule2"] if isinstance(d["rule2"], str) else "-",
+                     d["rule3"] if isinstance(d["rule3"], str) else "-"])
+    lines += ["### 개발셋 (전처리 끔)", ""] + md_table(
+        ["방법", "상태", "민감도", "특이도", "균형 정확도", "영상당 오검출", "균열 재현율 (우연 뺌)", "띠 안 정답", "넓어진 사진",
+         "시간 ms/장 (띠 경계)", "규칙 1", "규칙 2", "규칙 3"], rows)
+    country = t["table9_auto_band_country.csv"]
+    if len(country):
+        runs = list(dict.fromkeys(country["run"]))
+        cell = {(c["source"], c["run"]): c for _, c in country.iterrows()}
+        view = {"China_Drone": "드론", "China_MotorBike": "오토바이"}
+        for title, fn in (("넓어진 사진 비율", lambda c: pct(c["widened"])),
+                          ("균형 정확도 (무손상 사진이 없는 국가는 민감도)",
+                           lambda c: pct(c["balanced"]) if not pd.isna(c["balanced"]) else f"민감도 {pct(c['sensitivity'])}"),
+                          ("띠 안 정답 비율", lambda c: pct(c["gt_in_band"]))):
+            rows = [[source, view.get(source, "차량")] + [fn(cell[(source, run)]) if (source, run) in cell else "-" for run in runs]
+                    for source in dict.fromkeys(country["source"])]
+            lines += [f"### 국가별 {title} (개발셋, 전처리 끔)", ""] + md_table(["국가", "시점"] + runs, rows)
+    b39 = t["table9_auto_band_39.csv"]
+    rows = []
+    for _, b in b39.iterrows():
+        if pd.isna(b.get("accuracy")):
+            rows.append([b["run"], "-", "-", "-", "-", "-", "-", b["status"]])
+            continue
+        rows.append([b["run"], "끔" if b["preprocess"] == "off" else "켬", f"{pct(b['accuracy'])} ({pct(b['baseline_none'])})",
+                     pct(b["sensitivity"]), pct(b["specificity"]),
+                     "-" if pd.isna(b["widened"]) else f"{int(b['widened'])}/{int(b['n_images'])}",
+                     f"{num(b['time'], 1)} ({num(b['t_band'], 1)})", b["status"]])
+    lines += ["### 39장 자동 ROI", "", "처리 시간은 끔·켬 각 5번 중앙값의 39장 평균(띠 경계 포함). 넓어진 사진은 띠 고정보다 띠가 넓은 사진 수.", ""]
+    lines += md_table(["방법", "전처리", "정답률 (기준선)", "민감도", "특이도", "넓어진 사진", "시간 ms/장 (띠 경계)", "상태"], rows)
     return lines
 
 
 def target_lines(summaries):
-    """목표 출발값(804장 1차, 전처리 끔)과 같은 시험셋의 1차·최종(전·후) 비교 표 줄. 시험 결과가 없으면 804장 값만."""
+    """목표 출발값(804장 1차, 전처리 끔)과 같은 시험셋의 1차·띠 고정·자동 띠(전·후) 비교 표 줄. 시험 결과가 없으면 804장 값만."""
     cols = [("804장 1차 끔", summaries.get("E0_all"), "off"), ("시험 1차 끔", summaries.get("T0"), "off"),
-            ("시험 1차 켬", summaries.get("T0"), "on"), ("시험 최종 끔", summaries.get("T"), "off"),
-            ("시험 최종 켬", summaries.get("T"), "on")]
+            ("시험 1차 켬", summaries.get("T0"), "on"), ("시험 띠 고정 끔", summaries.get("T"), "off"),
+            ("시험 띠 고정 켬", summaries.get("T"), "on"), ("시험 자동 띠 끔", summaries.get("TA"), "off"),
+            ("시험 자동 띠 켬", summaries.get("TA"), "on")]
     cols = [(name, s[mode]) for name, s, mode in cols if s and mode in s]
     if not cols:
         return []
@@ -1530,7 +1756,8 @@ def target_lines(summaries):
              ("정답률 (기준선)", lambda x: f"{pct(x['accuracy'])} ({pct(x['baseline_none'])})"),
              ("균형 정확도", lambda x: pct(x["balanced"]))]
     return (["### 목표 출발값과 시험셋 전·후", "",
-             "목표의 출발값(영상당 오검출 8.1, 특이도 7%, 균열 재현율 4.9%)은 804장 값이라, 같은 시험셋에서 1차 방법(e0_test)과 최종(test_once)을 견준다.", ""]
+             "목표의 출발값(영상당 오검출 8.1, 특이도 7%, 균열 재현율 4.9%)은 804장 값이라, 같은 시험셋에서 1차 방법(e0_test), "
+             "띠 고정(test_once, 10/11에 한 번 잼)과 최종 자동 띠 + 결(test_autoband, 10/12에 한 번 잼)을 견준다.", ""]
             + md_table(["값"] + [name for name, _ in cols], [[item] + [fn(row) for _, row in cols] for item, fn in items]))
 
 
@@ -1575,7 +1802,7 @@ def image_lines(table, gt_note):
 def print_report(report, stage):
     """표를 만든 뒤 화면에 핵심만: 표 위치, (비교·표만) 네 칸 표·판정·사람이 정한 것·바꿀 config 값·E0 재현, 경고, (시험) 전·후,
     (재현) 같은지."""
-    print(f"\n표: {report['out'].as_posix()}/ (summary.md, table1~8, adoption.csv, adoption_grid.csv)")
+    print(f"\n표: {report['out'].as_posix()}/ (summary.md, table1~9, adoption.csv, adoption_grid.csv)")
     has39, n39 = report["gt"]
     if has39 < n39:
         print(f"39장 정답 파일 {has39}/{n39}장: 39장 표는 '미완'")
@@ -1603,9 +1830,9 @@ def print_report(report, stage):
             print(f"E0 재현 {key}: 기준 {expect:,} / 이번 {actual:,} {'같음' if ok else '다름'}")
     for note in report["notes"]:
         print(f"경고: {note}")
-    if stage == "test":
+    if stage in TEST_STAGES:
         print("\n".join(target_lines(report["summaries"])))
-    if stage == "repro":
+    if stage in ("repro", "retest_repro"):
         for line in report["repro"] or ["test_once·final_test 결과가 없어 견주지 못함"]:
             print(f"재현 확인 {line}")
 

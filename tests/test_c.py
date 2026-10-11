@@ -1340,7 +1340,7 @@ def test_run_all_plan():
     parsers = {"train": et.parse_args, "run39": rx.parse_args, "match": rm.parse_args}
     for e in ra.EXPERIMENTS:
         if e["tool"] == "train":
-            check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test"),
+            check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test", "test_autoband", "final_test_autoband"),
                   f"run_all: 학습 데이터 폴더 이름 끝에 데이터가 없음 ({e['name']})")
         if e["tool"]:
             argv, _ = ra.command(e, ra.resolve(e, {"E0"}))
@@ -1358,12 +1358,25 @@ def test_run_all_plan():
                                                       "DARK_SIGMA_IN_ROAD": False}, f"run_all: E3σ의 옵션이 틀림 ({e3s.overrides})")
     argv, pins = first("F39e0")
     base = {k: v for k, v in et.PARAM_SETS[0].items() if k != "name"}
-    check(pins == {**base, "ROI_TOP_DEFAULT": 0.5} and "--roi-top" not in argv and argv[-2:] == ["--name", "e0"],
+    check(pins == {**base, "ROI_TOP_DEFAULT": 0.5, "AUTO_BAND_TOP": False} and "--roi-top" not in argv and argv[-2:] == ["--name", "e0"],
           f"run_all: 39장 1차 설정이 1차 값을 실행 중에만 덮지 않음 ({argv}, {sorted(pins)})")
     check(first("E3_39") == (["--roi", "auto", "--detect", "dark", "--mask", "on", "--roi-top", "0.5", "--name", "e3_dark_mask_auto"],
-                             {"DARK_SIGMA_IN_ROAD": True}), f"run_all: 39장 E3 자동 ROI의 명령·고정 값이 틀림 ({first('E3_39')})")
-    check(first("T") == (["--split", "test", "--name", "test_once"], {}) and first("F39") == (["--roi", "csv", "--name", "final"], {}),
+                             {"DARK_SIGMA_IN_ROAD": True, "AUTO_BAND_TOP": False}),
+          f"run_all: 39장 E3 자동 ROI의 명령·고정 값이 틀림 ({first('E3_39')})")
+    check(first("TA") == (["--split", "test", "--name", "test_autoband"], {}) and first("F39") == (["--roi", "csv", "--name", "final"], {})
+          and first("E5") == (["--split", "dev", "--name", "e5_dev"], {}),
           "run_all: 최종 설정 실행에 config를 바꾸는 옵션이 붙음")
+    # 띠 고정 시절 시험셋(test_once·final_test)과 띠를 비율로 정한 실험은 자동 띠를 켠 뒤에도 띠 고정으로 돈다
+    check(first("T") == (["--split", "test", "--name", "test_once"], {"AUTO_BAND_TOP": False})
+          and first("R")[1] == {"AUTO_BAND_TOP": False} and first("E3")[1] == {"AUTO_BAND_TOP": False},
+          f"run_all: 띠 고정 실험에 AUTO_BAND_TOP=False를 고정하지 않음 ({first('T')}, {first('R')}, {first('E3')})")
+    b1 = parse_quietly(et.parse_args, first("B1")[0])
+    check(b1 is not None and b1.overrides.get("AUTO_BAND_TOP") is True and b1.overrides.get("AUTO_BAND_USE_TEXTURE") is False
+          and first("B1")[1] == {}, f"run_all: B1(자동 띠, 결 없음)의 옵션이 틀림 ({first('B1')})")
+    b39 = parse_quietly(rx.parse_args, first("B1_39")[0])
+    check(b39 is not None and rx.runtime_overrides(b39).get("AUTO_BAND_TOP") is True
+          and rx.runtime_overrides(b39).get("AUTO_BAND_USE_TEXTURE") is False and b39.roi == "auto",
+          f"run_all: B1_39(39장 자동 띠, 결 없음)의 옵션이 틀림 ({first('B1_39')})")
     args = parse_quietly(ra.parse_args, ["compare", "--accept", "E1b", "--reject", "E2,E3", "--force", "dark,mask"])
     check(args is not None and (args.accept, args.reject, args.force) == (["E1b"], ["E2", "E3"], {"dark", "mask"}),
           f"run_all: --accept·--reject·--force를 읽지 못함 ({args})")
@@ -1569,6 +1582,39 @@ def test_run_all_refuse():
               f"run_all compare: 건너뛸 실험의 확인 없이 시작함 ({code})")
 
 
+def test_run_all_retest_refuse():
+    """retest(시험셋 자동 띠, 한 번만): 최종 단계(e5_dev) 결과가 없거나, 지금 config가 최종 단계를 돌린 config와 다르거나,
+    test_autoband가 이미 있으면 아무것도 돌리지 않고 거부한다(끝 코드 2). 같으면 거부하지 않는다. retest_repro는 test_autoband가 없으면 거부.
+    처리 시간 합은 t_band 열이 없는 예전 결과에서 0으로 읽는다."""
+    from tools import run_all as ra
+
+    def must_not_run(*args):
+        raise AssertionError("거부에서 멈춰야 하는데 더 감")
+
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
+        results = Path(tmp) / "results"
+        paths = {**ra.default_paths(), "results": str(results)}
+        check(ra.stage_refusal("retest", results) is not None and "final을 먼저" in ra.stage_refusal("retest", results),
+              "run_all retest: 최종 단계 결과 없이 거부하지 않음")
+        e5 = results / "e5_dev"
+        e5.mkdir(parents=True)
+        rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
+        check(ra.stage_refusal("retest", results) is None, f"run_all retest: config가 같은데 거부함 ({ra.stage_refusal('retest', results)})")
+        with patched(C, "AUTO_BAND_TEX_RATIO", 2.0):
+            text = ra.stage_refusal("retest", results) or ""
+        check("AUTO_BAND_TEX_RATIO 최종 1.5 / 지금 2.0" in text, f"run_all retest: config가 다른데 거부하지 않거나 값을 안 알림 ({text})")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_repro"], paths)
+        check(code == 2 and "retest 뒤에" in printed.getvalue(), "run_all retest_repro: test_autoband 없이도 돌았음")
+        (results / "test_autoband").mkdir()
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest", "--yes"], paths)
+        check(code == 2 and "한 번만" in printed.getvalue(), f"run_all retest: test_autoband가 있는데 거부하지 않음 ({code})")
+    old = {"t_pre_ms_mean": 1.0, "t_detect_ms_mean": 2.0, "t_road_ms_mean": 3.0}
+    check(ra.time_per_image(old) == 6.0 and ra.time_per_image({**old, "t_band_ms_mean": 4.0}) == 10.0,
+          "run_all: 처리 시간 합에 t_band가 빠지거나 예전 결과(t_band 없음)를 0으로 읽지 않음")
+
+
 def test_run_all_report_empty():
     """결과 폴더가 하나도 없어도 표 만들기(1~8번, 채택 표, summary.md)가 끝까지 돌고, 실험마다 상태만 적으며 잠정 채택은 E0다."""
     from tools import run_all as ra
@@ -1578,6 +1624,7 @@ def test_run_all_report_empty():
         out = Path(tmp) / "results" / ra.REPORT_DIR
         expect = {f"table{i}_{n}.csv" for i, n in enumerate(["stages", "by_country", "by_condition", "preprocess", "matching",
                                                             "provided_vs_own", "degrade", "39_images"], 1)}
+        expect |= {"table9_auto_band.csv", "table9_auto_band_country.csv", "table9_auto_band_39.csv"}
         check(expect | {"adoption.csv", "adoption_grid.csv", "summary.md", "accept.txt", "reject.txt"} == set(os.listdir(out)),
               f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
         text = (out / "summary.md").read_text(encoding="utf-8")
@@ -1634,7 +1681,7 @@ def main():
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
                test_degrade_option_and_judge, test_degrade_main,
                test_run_all_plan, test_run_all_resolve, test_run_all_adoption, test_run_all_grid, test_run_all_ready,
-               test_run_all_refuse, test_run_all_report_empty, test_run_all_judgement):
+               test_run_all_refuse, test_run_all_retest_refuse, test_run_all_report_empty, test_run_all_judgement):
         try:
             fn()
         except unittest.SkipTest as e:
