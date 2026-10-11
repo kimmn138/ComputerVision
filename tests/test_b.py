@@ -526,7 +526,6 @@ def record(name, text):
     RECORDS.append(f"{name}: {text}")
 
 
-@todo("B WP2: extract_dark_regions 구현 뒤 (Plan.md 3.4 (2))")
 def test_dark_extract_format():
     """extract_dark_regions: (영역 list, 같은 크기 0/255 마스크), 영역에 후보 키 + 새 키·darkness, contrast는 양수.
     잡음 σ가 0이 되지 않아 포트홀 하나만 한 영역이 된다(R1). 평평한 영상·노면 픽셀이 없는 road에서도 오류 없음.
@@ -551,7 +550,6 @@ def test_dark_extract_format():
     assert [x["bbox"] for x in full[0]] == [x["bbox"] for x in regions]
 
 
-@todo("B WP2·WP3: dark 구현 뒤 (Plan.md 3.4 (4) 새 시험 1)")
 def test_dark_big_pothole_one_piece():
     """반지름 90 포트홀(띠 320×640)은 조각나지 않고 포트홀 후보 1개가 원을 덮는다(두 창 배경). C 메모리 확인: 통과."""
     gray = asphalt(0, (320, 640))
@@ -566,7 +564,6 @@ def test_dark_big_pothole_one_piece():
     assert not cracks_inside, "포트홀이 균열로도 잡힘"
 
 
-@todo("B WP2·WP3: dark 구현 뒤 (Plan.md 3.4 (4) 새 시험 2)")
 def test_dark_stripes_no_pothole():
     """흰 줄무늬(폭 12px, 40px 간격, 횡단보도 점선 시험과 같은 모양) 사이의 아스팔트가 포트홀이 되지 않는다(밝은 표시 억제).
     C 메모리 확인: 0개."""
@@ -626,7 +623,6 @@ def test_dark_crack_touching_pothole():
     assert any(r["bbox"][0] + r["bbox"][2] / 2 >= 300 for r in cracks), [r["bbox"] for r in cracks]
 
 
-@todo("B WP2·WP3: dark 구현 뒤 (Plan.md 3.5 (5) 새 시험 1)")
 def test_dark_wide_crack():
     """폭 6~8px 긴 균열은 두께가 커도 비원형도로 균열이다(첫 판 't ≤ 4px' 규칙의 실패를 막음). C 메모리 확인: 통과(c 22~28)."""
     for width in (6, 8):
@@ -640,7 +636,6 @@ def test_dark_wide_crack():
         assert len(cracks) >= 1 and not potholes, (width, len(cracks), len(potholes))
 
 
-@todo("B WP2·WP3: 구멍 둘레를 포함한 뒤 (Plan.md 3.5 (1)·(5) 새 시험 2)")
 def test_dark_alligator_net():
     """그물 모양 균열(거북등, 16px 칸·선 폭 2)은 균열이고 포트홀이 아니다. 둘레 P에 구멍 윤곽 길이를 더해야 한다.
     C 메모리 확인: 구멍 포함 c 224 → 균열, 바깥 윤곽만 c 3.6 → 버림."""
@@ -657,7 +652,6 @@ def test_dark_alligator_net():
     assert len(cracks) >= 1 and not potholes, (len(cracks), [p["bbox"] for p in potholes])
 
 
-@todo("B WP2·WP3: dark 구현 뒤, DETECT_MODE를 'dark'로 바꾸기 전에 (Plan.md 3.4 (4) 첫째 줄)")
 def test_existing_tests_in_dark_mode():
     """기존 합성 시험(균열 모양·밝은 선·포트홀·빈 영상)을 DETECT_MODE='dark'에서도 모두 통과한다. C 메모리 확인: 통과."""
     with config_values(DETECT_MODE="dark"):
