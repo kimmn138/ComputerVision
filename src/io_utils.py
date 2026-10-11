@@ -92,6 +92,22 @@ def _fill_holes(mask):
     # 처음 추가했던 1px 테두리를 제거한다.
     return filled[1:-1, 1:-1]
 
+def _lane_pixels(L, a, b, L_med):
+    """흰 차선·노란 중앙선이 노면 연결을 끊지 않게, 차선처럼 보이는 픽셀(밝고 가는 무채색·노란 줄)을 찾는다(v2 차선 (가)).
+    가는 줄 = 가로 또는 세로 ROAD_LANE_KSIZE 선 커널 탑햇이 ROAD_LANE_DELTA 이상(주변보다 밝음). 한 방향으로만 가늘어도 되므로
+    세로 차선·가로 정지선을 모두 잡고, 하늘·흰 벽·밝은 인도처럼 두 방향으로 넓은 밝은 면은 빠진다.
+    색 = 무채색(a·b가 128에서 ROAD_LANE_WHITE_CHROMA 안) 또는 노랑(b − 128 ≥ ROAD_LANE_YELLOW_B이고 |a − 128|의 2배 이상).
+    씨앗 노면 밝기(L_med)보다 밝아야 한다. 받은 배열은 바꾸지 않고 bool (H, W)를 돌려준다."""
+    k = C.ROAD_LANE_KSIZE
+    top_h = cv.morphologyEx(L, cv.MORPH_TOPHAT, cv.getStructuringElement(cv.MORPH_RECT, (k, 1)))
+    top_v = cv.morphologyEx(L, cv.MORPH_TOPHAT, cv.getStructuringElement(cv.MORPH_RECT, (1, k)))
+    thin_bright = (np.maximum(top_h, top_v) >= C.ROAD_LANE_DELTA) & (L > L_med)
+    da, db = a - 128, b - 128
+    white = np.sqrt(da ** 2 + db ** 2) < C.ROAD_LANE_WHITE_CHROMA
+    yellow = (db >= C.ROAD_LANE_YELLOW_B) & (db >= 2 * np.abs(da))
+    return thin_bright & (white | yellow)
+
+
 def road_mask(bgr_roi):
     """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다."""
 
@@ -165,6 +181,10 @@ def road_mask(bgr_roi):
         (np.abs(L - L_med) < l_threshold)
     )
 
+    # (v2 차선 (가)) 차선 픽셀도 노면으로 다뤄 차선 건너편 노면과 이어지게 함
+    if C.ROAD_LANE_BRIDGE:
+        candidate = candidate | _lane_pixels(L, a, b, L_med)
+
     mask = candidate.astype(np.uint8) * 255
 
     # 작은 점 제거
@@ -178,6 +198,14 @@ def road_mask(bgr_roi):
         cv.MORPH_OPEN,
         open_kernel
     )
+
+    # (v2 차선 (나)) 연결 요소를 고르기 전에 닫힘: 닫힘 폭보다 가는 차선으로 끊긴 건너편 노면을 이음
+    if C.ROAD_CLOSE_BEFORE_SEED:
+        mask = cv.morphologyEx(
+            mask,
+            cv.MORPH_CLOSE,
+            cv.getStructuringElement(cv.MORPH_ELLIPSE, (C.ROAD_CLOSE_KSIZE, C.ROAD_CLOSE_KSIZE))
+        )
 
     # seed 영역과 연결된 노면 덩어리만 유지
     num_labels, labels, stats, _ = cv.connectedComponentsWithStats(
