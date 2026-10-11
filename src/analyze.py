@@ -1,22 +1,20 @@
-"""(파트 A) 노면 영상의 상태(밝기·대비·흐림·잡티)를 재고, 그 상태에 맞는 전처리 단계를 고른다."""
+"""노면 영상의 상태(밝기·대비·흐림·잡티)를 재고, 그에 맞는 전처리 단계를 고른다."""
 import cv2 as cv
 import numpy as np
 
 from src import config as C
 
-# 전처리 끔: 아무 단계도 적용하지 않는다. 실험의 '전처리 끔'과 약속 검사가 이 값을 쓴다.
+# 전처리 끔: 아무 단계도 적용하지 않음
 NO_STEPS = {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}
 
 
 def _estimate_noise(gray):
-    """Immerkær 방식으로 잡음 표준편차를 어림하되, 결·경계가 없는 평평한 블록에서만 잰다.
-    영상 전체로 재면 나뭇잎·경계선·노면 결까지 잡음으로 세어, 깨끗한 사진에도 가우시안을 골라 영상이 뿌예진다.
-    NOISE_BLOCK px 블록마다 잰 값 중 가장 평평한 쪽(하위 NOISE_FLAT_QUANTILE)을 쓰고,
-    0·255에 붙은 픽셀이 NOISE_SAT_MAX보다 많은 블록은 잡음이 잘려 낮게 나오므로 뺀다."""
+    """Immerkær 방식으로 잡음 표준편차를 어림한다.
+    결·경계를 잡음으로 세지 않도록, 블록별로 잰 값 중 가장 평평한 블록들의 값을 쓴다."""
     kernel = np.array([[ 1, -2,  1],
                        [-2,  4, -2],
                        [ 1, -2,  1]], dtype=np.float32)
-    # 순수 잡음 σ에서 |응답|의 평균이 6σ·√(2/π)이므로 √(π/2)/6을 곱하면 σ. 가장자리 1px은 커널이 걸쳐 뺌
+    # |응답| 평균에 √(π/2)/6을 곱하면 잡음 σ. 가장자리 1px은 뺌
     resp = np.abs(cv.filter2D(gray.astype(np.float32), -1, kernel))[1:-1, 1:-1] * (np.sqrt(0.5 * np.pi) / 6.0)
     if resp.size == 0:
         return 0.0
@@ -61,14 +59,13 @@ def _mean_gradient(gray):
     return float(magnitude.mean())
 
 def measure_quality(gray):
-    """전처리를 고르는 근거로 밝기·대비·흐림·잡티를 측정한다.
-    blur_ratio는 원본과 재흐림 영상의 Sobel 기울기 평균 비율로 계산하며,
-    기존 라플라시안 분산과 함께 흐림 판정에 사용한다."""
+    """전처리를 고르는 근거가 되는 밝기·대비·흐림·잡티 지표를 잰다.
+    blur_ratio = 원본 기울기 ÷ 한 번 더 흐린 영상의 기울기 (흐린 사진일수록 1에 가까움)."""
 
     mean_val = float(gray.mean())
     std_val = float(gray.std())
 
-    # 기존 흐림 지표
+    # 흐림 지표 1: 라플라시안 분산
     lap_var = float(
         cv.Laplacian(
             gray,
@@ -79,10 +76,9 @@ def measure_quality(gray):
     # 잡음 추정
     noise = _estimate_noise(gray)
 
-    # 원본의 Sobel 평균
+    # 흐림 지표 2: 재흐림 비율
     grad_original = _mean_gradient(gray)
 
-    # 일부러 한 번 더 흐리게
     reblurred = cv.GaussianBlur(
         gray,
         (0, 0),
@@ -91,8 +87,7 @@ def measure_quality(gray):
 
     grad_reblurred = _mean_gradient(reblurred)
 
-    # 평평한 영상은 gradient가 거의 0이라
-    # 의미 있는 비율을 구할 수 없음
+    # 평평한 영상은 기울기가 0에 가까워 비율이 의미 없음
     if grad_reblurred <= 1e-6:
         blur_ratio = float("nan")
     else:
@@ -109,30 +104,25 @@ def measure_quality(gray):
     }
 
 def choose_steps(q):
-    """상태 지표를 config A 구역의 기준값과 비교해 적용할 전처리 단계를 고른다.
-    잡티 > NOISE_SIGMA_MAX → 가우시안, 평균 < DARK_MEAN_MAX 또는 > BRIGHT_MEAN_MIN → 감마,
-    (밝기는 괜찮고) 표준편차 < CONTRAST_STD_MIN → 평활화(USE_CLAHE면 CLAHE), 라플라시안 분산 < BLUR_VAR_MAX → 샤프닝.
-    감마는 평균 밝기를 가운데(0.5)로 옮기는 값 log(0.5) / log(평균/255)이고, preprocess가 결과 = 입력^감마로 적용한다
-    (감마 < 1이면 밝게, > 1이면 어둡게). GAMMA_RANGE 밖이면 끝값으로 자른다."""
+    """상태 지표를 config 기준값과 비교해 적용할 전처리 단계를 고른다.
+    잡티 많음 → 가우시안, 너무 어둡거나 밝음 → 감마, 대비 부족 → 평활화, 흐림 → 샤프닝."""
     steps = dict(NO_STEPS)
 
-    # 1. 노이즈 제거 여부
+    # 1. 잡티 제거
     steps["denoise"] = bool(q["noise"] > C.NOISE_SIGMA_MAX)
 
-    # 2. 톤/조도 보정 (tone)
+    # 2. 밝기·대비 보정 (감마는 평균 밝기를 가운데로 옮기는 값)
     if q["mean"] < C.DARK_MEAN_MAX or q["mean"] > C.BRIGHT_MEAN_MIN:
         steps["tone"] = "gamma"
-        # 평균이 0이나 255이면 log가 -inf·0이 되므로 한 단계 안쪽(1~254)으로 제한
+        # 평균이 0·255면 log가 발산하므로 1~254로 제한
         norm_mean = np.clip(q["mean"], 1, 254) / 255.0
         steps["gamma"] = float(np.clip(np.log(0.5) / np.log(norm_mean), *C.GAMMA_RANGE))
     elif q["std"] < C.CONTRAST_STD_MIN:
         steps["tone"] = "clahe" if C.USE_CLAHE else "equalize"
-    # 3. 샤프닝 여부
-    # 기존 Laplacian 기준
+    # 3. 샤프닝: 두 흐림 지표 중 하나라도 흐림이면 적용
     blur_by_laplacian = (
         q["lap_var"] < C.BLUR_VAR_MAX
     )
-    # 새로운 재흐림 비율 기준
     blur_ratio = q.get(
         "blur_ratio",
         float("nan")
@@ -141,7 +131,6 @@ def choose_steps(q):
         np.isfinite(blur_ratio)
         and blur_ratio < C.BLUR_RATIO_MAX
     )
-    # 둘 중 하나라도 흐림으로 판단하면 sharpening
     steps["sharpen"] = bool(
         blur_by_laplacian or blur_by_ratio
     )
@@ -150,7 +139,7 @@ def choose_steps(q):
 
 
 def steps_to_text(steps):
-    """고른 전처리 단계를 결과 표·그림 제목에 쓸 짧은 글로 바꾼다."""
+    """전처리 단계를 표·그림 제목에 쓸 짧은 글로 바꾼다(예: 가우시안+감마 0.53)."""
     if steps == NO_STEPS:
         return "없음"
         
