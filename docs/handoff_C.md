@@ -198,7 +198,7 @@ python tools/label_gt.py [사진 경로]                # 정답 박스 (c 균�
 python tools/evaluate_train.py --name <이름> [--split dev|test|all] [옵션]   # 학습 사진 평가 → results/<이름>/ (기본 개발셋, 5.2)
 python tools/convert_json_gt.py                     # data/train/ann JSON → gt/train CSV (이미 커밋됨)
 python tools/check_data.py                          # 사진·CSV 이름 검사
-python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes] [--reject E1,E3]   # E0~E6 일괄 실행과 보고서 표 (5.6)
+python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes] [--accept E1b] [--reject E1,E3] [--force dark,mask]   # E0~E6 일괄 실행과 보고서 표 (5.6)
 ```
 
 일괄 실행(10/11, `tools/run_all.py`, 5.6). A·B 코드가 main에 다 들어온 뒤 C 컴퓨터에서 이 순서로 돈다. 아래 낱개 명령을 이름 규칙(4.3)대로 묶은 것이다:
@@ -210,6 +210,8 @@ python tools/run_all.py compare                # 비교: 개발셋 E0~E3를 차�
 python tools/run_all.py final                  # 최종: 39장 세 가지·매칭·E5·E6 2회 (전원 연결 안내 뒤 Enter, 처리 시간)
 python tools/run_all.py test                   # 시험: e0_test → test_once (한 번만. test_once가 있으면 거부)
 python tools/run_all.py repro                  # 10/12 재현: final_test가 test_once와 같은지
+python tools/run_all.py tables --accept E1b    # 표를 보고 사람이 정함(자동 판정보다 앞섬). 뒤 단계 설정이 바뀌면 '다시 돌려야 함' → compare 다시
+python tools/run_all.py compare --force dark   # 구현했지만 시험 하나를 아직 못 넘겨 @todo가 남은 기능도 쓴다(표에 '강제 실행(시험 미통과)')
 ```
 
 실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--roi`·`--mask`·`--detect`·`--roi-top`은 M3에서, evaluate_train의 `--degrade`는 M6에서 만들었다(10/11):
@@ -252,7 +254,7 @@ python run_matching.py --name final
   - 비교: `e0_all`, `e0_dev`, `e1_mask_dev`, `e1b_top03_dev`, `e2_dark_dev`, `e3_dark_mask_dev`(σ 노면 안), `e3_sigma_band_dev`(σ 띠 전체), `e4_score_dev`(자리), `e6_<저하>_dev`(1회), 39장 참고 `e1_mask_auto`·`e3_dark_mask_auto`
   - 최종: `final`(39장 roi.csv와 매칭), `final_auto`(39장 자동 ROI), `e0`(39장 1차 설정), `e5_dev`, `e6_<저하>_final_dev`(2회)
   - 시험: `e0_test`, `test_once`, 10/12 재현 `final_test`. 표: `report`
-- (10/11) run_all로 돌린 결과 폴더에는 `run_info.txt`(39장)·`run_info_train.txt`(학습 데이터)·`run_info_matching.txt`(매칭)가 붙는다: 커밋 해시·명령·실제로 돈 옵션(채택과 맞는지 볼 때 씀)·설정 출처(E6 1회)·실행 중 고정한 config 값·상태·시각·버전. 표는 `results/report/`(table1~8, adoption.csv, summary.md, reject.txt).
+- (10/11) run_all로 돌린 결과 폴더에는 `run_info.txt`(39장)·`run_info_train.txt`(학습 데이터)·`run_info_matching.txt`(매칭)가 붙는다: 커밋 해시·명령·실제로 돈 옵션(채택과 맞는지 볼 때 씀)·설정 출처(E6 1회)·강제 실행(--force로 쓴 기능)·실행 중 고정한 config 값·상태·시각·버전. 표는 `results/report/`(table1~8, adoption.csv, adoption_grid.csv, summary.md, 사람의 결정 accept.txt·reject.txt).
 - 지금 있는 것(C 컴퓨터에만, Git에 없음):
 
 | 폴더 | 무엇 | 쓰임 |
@@ -352,6 +354,7 @@ python run_matching.py --name final
   - 합성 영상 검사(풀색 띠에서 노면 아님이 나오는지, dark가 NotImplementedError 없이 도는지)는 신호와 어긋날 때 경고만 한다. 진짜 마스크가 합성 띠에서 아무것도 안 지워도 E1은 돌고, E1 = E0이면 '효과 없음' 결과로 표에 남는다.
   - 시험 함수를 찾지 못하면(이름이 바뀜 등) 구현된 것으로 보고 돌리며 경고한다.
   - 건너뛸 실험이 있으면 시작 전에 '!!' 줄로 목록과 근거(@todo)를 크게 보여 주고 Enter를 기다린다(`--yes`면 그대로 진행). 시험·재현 단계는 건너뛰지 않고 멈춘다(한 번만 재므로).
+  - `--force dark,mask`(10/11 사용자 결정): B가 dark를 넣었는데 그 시험 하나를 아직 못 넘겨 @todo를 못 지운 경우처럼, @todo가 남은 기능도 쓴다. 그 기능을 쓴 실험은 run_info의 '강제 실행' 줄에 남고, 결과 폴더·단계별·네 칸 표의 상태와 판정 끝에 '강제 실행(시험 미통과)'이 붙는다. 기능이 정말 자리면(dark의 NotImplementedError) 실패로 남는다. 저장하지 않으므로 필요한 단계마다 다시 준다.
 - 1차 값 고정
   - E0·E1·E1b·`e0_test`는 `--param-set base --detect legacy --mask off --roi-top 0.5`로 돈다(E1·E1b는 마스크 켬, E1b는 띠 0.3). config가 채택 결과로 바뀐 뒤 다시 돌려도 1차 방법이다.
   - run_experiment에는 `--param-set`·`--set`이 없어, 39장 실행은 1차 legacy 값 13개·띠 위쪽 비율(roi.csv일 때)·`DARK_SIGMA_IN_ROAD`를 실행 중에만 덮는다(run_info와 config_used.txt에 남음).
@@ -366,7 +369,9 @@ python run_matching.py --name final
 - 채택 비교 표
   - 개발셋·전처리 끔(검출 튜닝 조건). 규칙 2(균형 정확도가 오름, 같으면 못 넘음)와 규칙 3(우연을 뺀 균열 재현율 차이 ≥ −1%p, 소수 여섯째 자리에서 반올림해 꼭 1%p는 통과)은 자동이다. 규칙 1은 '사람 확인'이고 민감도·영상당 오검출이 오르내린 방향만 덧붙인다. 비교 기준과 네 값이 모두 같으면 '(비교 기준과 같음: 효과 없음)'을 붙인다.
   - 처리 시간(전처리·검출·노면 마스크의 영상당 평균 합)을 참고로 함께 낸다. 사진마다 한 번 잰 단일 실행 참고값이고, 보고서에는 최종 단계 값만 쓴다.
-  - `--reject E1,…`은 사람이 규칙 1에서 뺀 단계다. `results/report/reject.txt`에 남아 다음 단계에서 표를 다시 만들어도 유지되고, `--reject ''`로 지운다. compare를 다시 돌릴 때도 반영된다.
+  - 자동 판정은 길잡이이고 최종 채택은 사용자가 표를 보고 정한다(10/11 사용자 결정). `--accept E1b,…`는 결과가 있으면 규칙·비교 기준과 상관없이 채택하고, `--reject E1,…`은 채택하지 않는다. 판정 칸은 '채택: 사람이 정함(--accept). 자동 판정: …'처럼 자동 판정을 함께 적는다. 결과가 없는 단계의 `--accept`는 반영하지 않는다.
+  - 사람의 결정은 `results/report/accept.txt`·`reject.txt`에 남아 다음 단계에서 표를 다시 만들거나 compare를 다시 돌려도 유지되고, `''`로 지운다. 같은 명령에 같은 단계를 둘 다 주면 거부하고, 이번에 준 결정이 저장된 반대 결정보다 앞선다(예: accept에 E1b가 있어도 `--reject E1b`면 accept에서 빠짐).
+  - 채택 표 위에 검출기(1차·dark) × 노면 마스크(끔·켬) 네 칸(E0·E1·E2·E3)과 E3σ 한 줄을 나란히 둔다(`adoption_grid.csv`). 열은 민감도·특이도·균형 정확도·영상당 오검출·우연 뺀 균열 재현율·처리 시간(참고)이다. E1b가 채택되면 마스크를 켠 칸은 띠 0.3(1차 칸은 E1b, dark 칸은 띠 0.3으로 돈 E3)이다. 'E1은 떨어졌는데 E3가 E1보다 나은 경우'나 'E1·E2가 둘 다 채택된 경우'를 이 표로 바로 견준다.
   - 실행마다 run_info에 실제로 돈 옵션을 남긴다. 표를 만들 때 지금 채택으로 정해지는 설정(E3 쪽 띠, E6 1회)과 다르면 '다시 돌려야 함: 지금 채택으로는 띠 위쪽 0.3→0.5'처럼 표시하고 판단과 표에서 뺀다. 예: E1b로 띠 0.3이 된 뒤 `tables --reject E1b`를 하면 E3·E3σ·39장 E3가 이렇게 나오고, compare를 다시 돌리면 풀린다.
   - 바꿀 config 값은 잠정 채택 방법의 설정과 지금 config의 차이다. config.py의 구역 머리줄(`# ===== …`)로 주인을 찾아 함께 적고, config 파일은 고치지 않는다.
 - 표
@@ -383,6 +388,7 @@ python run_matching.py --name final
   - 진짜 상태(A·B의 @todo가 남음): 건너뛸 8개와 근거가 '!!' 목록으로 뜨고 Enter 뒤에 시작했다. compare → final(Enter) → test → test 다시(거부, 끝 코드 2) → repro(같음) → tables --reject E1이 끝까지 돌았다.
   - 신호를 '구현됨'으로 놓고 노면 마스크·dark를 검증 스크립트 안에서만 가짜로 채우고 E1b가 규칙을 넘게 둔 실행: E3·E3σ·39장 E3가 띠 0.3으로 돌았다. `tables --reject E1b`에서 그 셋이 '다시 돌려야 함(띠 위쪽 0.3→0.5)'으로 나왔고, compare를 다시 돌리자 0.5로 돌고 경고가 없어졌다.
   - run_all 함수를 메모리에서 20가지로 망가뜨렸을 때 새 시험 7개가 모두 잡았다.
+  - (`--accept`·`--force`·네 칸 표를 더한 뒤) @todo 신호는 진짜 그대로 두고 가짜 dark·노면 마스크로: `--force` 없이는 8개를 건너뛰고, `--force dark,mask`면 돌며 상태·판정·네 칸 표에 '강제 실행(시험 미통과)'이 붙었다. `tables --accept E1b`에서 E1b가 '채택: 사람이 정함'이 되고 네 칸 표의 마스크 켠 1차 칸이 E1b(띠 0.3)로 바뀌었으며, 설정이 바뀌는 E3·E3σ·39장 E3·E6 1회가 '다시 돌려야 함'으로 나왔다. compare를 다시 돌리니 E3가 띠 0.3으로 돌았다(E3가 E1b를 못 넘어 채택 방법은 E2, 'E1·E2가 둘 다 채택' 경고). 이어 `tables --reject E1b`는 저장된 accept보다 앞섰다. 망가뜨림은 26가지 모두 잡았다(시험 8개).
 
 ---
 
@@ -416,7 +422,8 @@ python run_matching.py --name final
 | 비교 단계 E6 1회의 설정 | 사용자 | (10/11 정함) | E1~E3 가운데 마지막 잠정 채택 단계의 설정, 없으면 E0. 전처리 규칙은 실제로 쓸 검출기·마스크 조합에서 정한다 |
 | E1b(띠 0.3)가 채택될 때와 비교 기준 | 사용자 | (10/11 정함) | 마스크를 켜는 E3 쪽은 0.3, E2는 0.5. 비교는 한 번에 하나만 바뀌게(E1←E0, E1b←E1, E2←E0, E3←E1 또는 채택된 E1b, E3σ←E3), E3는 E2와의 차이를 참고로 |
 | 채택 표의 처리 시간 | 사용자 | (10/11 정함) | 단일 실행 참고값으로 넣는다(확정본 6장: 최종 방법은 처리 시간도 보고 정함). 보고서에는 최종 단계 값만 |
-| 구현 여부 판단과 건너뛰기 | 사용자 | (10/11 정함) | A·B 시험의 @todo가 지워졌는지로 정하고 합성 영상 검사는 경고만. 'E1 = E0'은 '효과 없음' 결과로 남긴다. 건너뛸 실험은 시작 전에 목록을 보이고 Enter(`--yes`면 진행) |
+| 구현 여부 판단과 건너뛰기 | 사용자 | (10/11 정함) | A·B 시험의 @todo가 지워졌는지로 정하고 합성 영상 검사는 경고만. 'E1 = E0'은 '효과 없음' 결과로 남긴다. 건너뛸 실험은 시작 전에 목록을 보이고 Enter(`--yes`면 진행). @todo가 남아도 `--force dark,mask`로 돌릴 수 있고, 그 실험은 '강제 실행(시험 미통과)'으로 표시 |
+| 최종 채택을 누가 정하나 | 사용자 | (10/11 정함) | 자동 판정(비교 기준이 채택된 단계일 때만 채택 규칙 포함)은 길잡이. 사용자가 네 칸 표와 판정을 보고 `--accept`·`--reject`로 정한다 |
 | 시험 단계 시작 확인(Enter) | 사용자 | (10/11 정함) | 남긴다(한 번뿐인 실행 앞에서 config를 한 번 봄) |
 
 ---
