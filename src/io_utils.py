@@ -55,19 +55,42 @@ def crop_roi(img, top=C.ROI_TOP_DEFAULT, bottom=C.ROI_BOTTOM_DEFAULT):
     return img[y0:y1].copy(), y0
 
 def _fill_holes(mask):
-    """노면 내부의 포트홀·차선처럼 둘러싸인 빈 영역을 채운다."""
+    """노면 내부의 포트홀·차선처럼 완전히 둘러싸인 빈 영역만 채운다."""
+
     h, w = mask.shape
 
-    flood = mask.copy()
-    flood_mask = np.zeros((h + 2, w + 2), np.uint8)
-
-    # 가장자리의 배경 영역을 채운다.
-    cv.floodFill(flood, flood_mask, (0, 0), 255)
-
-    # floodFill 후에도 0으로 남아 있는 곳이 내부 구멍이다.
+    # 영상 가장자리의 모든 배경을 서로 연결하기 위해 바깥쪽에 1px짜리 0 테두리를 추가한다.
+    padded = cv.copyMakeBorder(
+        mask,
+        1,
+        1,
+        1,
+        1,
+        cv.BORDER_CONSTANT,
+        value=0,
+    )
+    flood = padded.copy()
+    # floodFill용 마스크는 대상 영상보다 가로·세로가 각각 2픽셀 더 커야 한다.
+    flood_mask = np.zeros(
+        (h + 4, w + 4),
+        dtype=np.uint8,
+    )
+    # 바깥 배경을 모두 채운다.
+    cv.floodFill(
+        flood,
+        flood_mask,
+        (0, 0),
+        255,
+    )
+    # flood 후에도 0인 영역만 노면에 완전히 둘러싸인 내부 구멍이다.
     holes = cv.bitwise_not(flood)
 
-    return cv.bitwise_or(mask, holes)
+    filled = cv.bitwise_or(
+        padded,
+        holes,
+    )
+    # 처음 추가했던 1px 테두리를 제거한다.
+    return filled[1:-1, 1:-1]
 
 def road_mask(bgr_roi):
     """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다."""
