@@ -920,6 +920,81 @@ def test_road_mask_switch_on():
           "USE_ROAD_MASK 켬인데 검출 함수에 road를 넘기지 않음")
 
 
+def band_scene(sky_ratio):
+    """자동 띠 높이 시험용 480×640 컬러 사진: 위 sky_ratio(비율)는 매끈한 하늘색, 나머지는 결이 있는 회색 노면.
+    sky_ratio 0이면 노면만 찍힌 사진(드론·오토바이 시점)이고, 0.5면 위 절반이 하늘인 차량 시점이다."""
+    rng = np.random.default_rng(5)
+    gray = cv.GaussianBlur(rng.normal(115, 12, (480, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.2)
+    bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+    bgr[:int(480 * sky_ratio)] = (235, 200, 150)
+    return bgr
+
+
+def test_auto_band_switch_off():
+    """AUTO_BAND_TOP이 꺼져 있으면 사진 전체 노면 마스크를 계산하지 않고 받은 top 그대로 자른다(지금 결과 그대로).
+    결과의 top은 받은 값, t_band_ms는 0.0이고, 켰을 때 경계가 그대로이면(가짜 auto_band_top) 결과가 끈 것과 같다."""
+    bgr = band_scene(0.0)
+
+    def refuse(small, top):
+        raise AssertionError("AUTO_BAND_TOP 끔인데 auto_band_top을 부름")
+
+    with patched(C, "AUTO_BAND_TOP", False):
+        with patched(pipeline, "auto_band_top", refuse):
+            off = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    check(off["top"] == 0.5 and off["y0"] == 240 and off["gray"].shape[0] == 240 and off["t_band_ms"] == 0.0,
+          f"AUTO_BAND_TOP 끔인데 띠가 받은 top 그대로가 아님 (top {off['top']}, y0 {off['y0']}, t_band_ms {off['t_band_ms']})")
+    with patched(C, "AUTO_BAND_TOP", True):
+        with patched(pipeline, "auto_band_top", lambda small, top: top):
+            same = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    check(summary(same) == summary(off) and same["y0"] == off["y0"] and np.array_equal(same["road"], off["road"]),
+          "AUTO_BAND_TOP 켬에서 경계가 그대로인데 결과가 끈 것과 다름 (자동 띠 말고 다른 것도 바뀜)")
+
+
+def test_auto_band_road_only():
+    """노면만 찍힌 합성 사진은 0.5에서 0.0(맨 위)까지 띠가 넓어지고, run_pipeline이 그 경계로 자른다(y0 = 0).
+    받은 사진은 바꾸지 않는다."""
+    bgr = band_scene(0.0)
+    small = io_utils.resize_width(bgr)
+    before = small.copy()
+    top = pipeline.auto_band_top(small, 0.5)
+    check(top == 0.0, f"auto_band_top: 노면만 있는 사진인데 맨 위까지 넓어지지 않음 ({top})")
+    check(np.array_equal(small, before), "auto_band_top이 받은 사진을 바꿈")
+    with patched(C, "AUTO_BAND_TOP", True):
+        out = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    check(out["top"] == 0.0 and out["y0"] == 0 and out["gray"].shape[0] == 480 and out["road"].shape == out["gray"].shape
+          and out["t_band_ms"] >= 0, f"run_pipeline: 자동 띠를 켰는데 맨 위부터 자르지 않음 (top {out['top']}, y0 {out['y0']})")
+
+
+def test_auto_band_sky():
+    """위 절반이 하늘인 합성 사진(차량 시점)은 바로 위 구간(0.4~0.5)이 하늘이라 0.5에 머문다.
+    하늘이 위 25%뿐이면 0.3~0.4는 넓히고 하늘이 반쯤 걸친 0.2~0.3에서 멈춘다(구간마다 0.1씩 보고 멈추는지)."""
+    top = pipeline.auto_band_top(io_utils.resize_width(band_scene(0.5)), 0.5)
+    check(top == 0.5, f"auto_band_top: 위 절반이 하늘인데 띠가 넓어짐 ({top})")
+    top = pipeline.auto_band_top(io_utils.resize_width(band_scene(0.25)), 0.5)
+    check(top == 0.3, f"auto_band_top: 하늘이 위 25%인데 0.3에서 멈추지 않음 ({top})")
+    with patched(C, "AUTO_BAND_ROAD_MIN", 0.4):
+        top = pipeline.auto_band_top(io_utils.resize_width(band_scene(0.25)), 0.5)
+    check(top == 0.2, f"auto_band_top: 기준값을 낮췄는데(0.4) 노면이 반인 0.2~0.3까지 넓어지지 않음 ({top})")
+
+
+def test_auto_band_options():
+    """자동 띠 높이 실행 옵션: run_experiment와 demo의 --auto-band on|off가 이번 실행에만 쓸 AUTO_BAND_TOP 값이 되고,
+    run_notes에 남는다. 옵션을 빼면 바꾸는 값이 없다(config 그대로)."""
+    args = parse_quietly(rx.parse_args, ["--roi", "auto", "--auto-band", "on"])
+    check(args is not None and rx.runtime_overrides(args) == {"AUTO_BAND_TOP": True},
+          f"run_experiment: --auto-band on을 config 값으로 못 바꿈 ({args})")
+    if args is not None:
+        notes = rx.run_notes(args, {"AUTO_BAND_TOP": True})
+        check(notes[0] == "실행 옵션: --roi auto --auto-band on", f"run_notes: 자동 띠 옵션이 빠짐 ({notes})")
+    off = parse_quietly(rx.parse_args, ["--auto-band", "off"])
+    check(off is not None and rx.runtime_overrides(off) == {"AUTO_BAND_TOP": False}, "run_experiment: --auto-band off를 못 읽음")
+    check(parse_quietly(rx.parse_args, ["--auto-band", "yes"]) is None, "run_experiment: 잘못된 --auto-band 값을 받아들임")
+    d = parse_quietly(demo.parse_args, ["a.jpg", "--roi", "auto", "--auto-band", "on"])
+    check(d is not None and rx.runtime_overrides(d) == {"AUTO_BAND_TOP": True}, f"demo: --auto-band on을 못 읽음 ({d})")
+    d = parse_quietly(demo.parse_args, ["a.jpg"])
+    check(d is not None and rx.runtime_overrides(d) == {}, "demo: 옵션이 없는데 자동 띠 값을 바꿈")
+
+
 def test_keep_on_road():
     """keep_on_road('center'): bbox 중심 픽셀이 노면이면 남기고, 받은 list는 바꾸지 않으며, 모르는 규칙은 ValueError."""
     road = np.zeros((100, 200), np.uint8)
@@ -1491,6 +1566,7 @@ def main():
                test_demo_dialog_args, test_demo_read_error_text, test_demo_dialog_loop, test_demo_no_tkinter,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
+               test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_options,
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,

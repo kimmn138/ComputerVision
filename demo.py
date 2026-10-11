@@ -1,12 +1,13 @@
 """(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 노면 마스크와 검출 결과를 한 창에 나란히 띄운다.
 사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark]
-                                        [--save 그림 경로] [--list]
+                                        [--auto-band on|off] [--save 그림 경로] [--list]
 - 영상 경로를 빼면(VS Code ▶ 버튼) 파일 선택 창(맨 앞, 처음 폴더 data/)으로 사진을 고르고 --roi auto로 띄운다.
   결과 창을 닫으면 다시 선택 창이 뜨고, 취소하면 끝난다. 못 읽는 사진(HEIC 등)은 안내 창을 띄우고 다음 사진을 고르게 한다.
   tkinter를 쓸 수 없는 컴퓨터면 안내 문구를 낸 뒤 번호 목록으로 넘어간다.
 - --list: 선택 창 대신 data 아래 사진 목록을 번호로 보여 주고 고르게 한다(예전 방식).
 - ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다. --roi auto면 roi.csv 없이 기본 띠(run_experiment와 같음).
-- --mask·--detect는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
+- --mask·--detect·--auto-band는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
+  --auto-band on(자동 띠 높이)이면 고른 띠의 위쪽 경계에서 시작해 노면만 이어지는 만큼 위로 넓히고, 화면 아래 띠에 넓힌 경계를 적는다.
 - 창: 끔·켬 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보. 위 띠에 고른 전처리, 아래 띠에 상태 판정 값과 설정.
 - 콘솔에도 상태 판정 값·고른 전처리·설정과 끔·켬의 row(9열)를 출력하고, 창은 아무 키나 누르거나 X로 닫는다.
 - --save를 주면 창을 띄우지 않고 같은 화면을 그림 파일로 저장한다(확인·보고서용).
@@ -43,7 +44,7 @@ QUALITY_NAMES = {"mean": ("평균", "mean"), "std": ("표준편차", "std"), "la
 
 
 def parse_args(argv=None):
-    """영상 경로, 선택 ROI 비율 2개, 노면 띠 방식(--roi), 이번 실행에만 바꿀 config 값(--mask·--detect), 저장 경로(--save)를 읽는다.
+    """영상 경로, 선택 ROI 비율 2개, 노면 띠 방식(--roi), 이번 실행에만 바꿀 config 값(--mask·--detect·--auto-band), 저장 경로(--save)를 읽는다.
     비율이 1개이거나 0 <= top < bottom <= 1이 아니면, 또는 비율과 --roi auto를 함께 주면 사용법과 함께 멈춘다.
     영상 경로를 빼면 path는 None(main이 선택 창이나 --list 목록에서 고르게 함). --roi를 빼면 선택 창은 auto, 경로·--list는 csv.
     --list와 경로를 함께 주거나, 선택 창(경로·--list 없음)에 --save를 주면(고를 때마다 같은 파일을 덮어씀) 멈춘다."""
@@ -56,6 +57,8 @@ def parse_args(argv=None):
                              "빼면 경로·--list는 csv, 선택 창은 auto")
     parser.add_argument("--mask", choices=("on", "off"), help="노면 마스크(USE_ROAD_MASK)를 이번 실행에만 켬·끔. 빼면 config")
     parser.add_argument("--detect", choices=("legacy", "dark"), help="검출 방식(DETECT_MODE)을 이번 실행에만 바꿈. 빼면 config")
+    parser.add_argument("--auto-band", choices=("on", "off"),
+                        help="자동 띠 높이(AUTO_BAND_TOP)를 이번 실행에만 켬·끔. 켜면 노면만 이어지는 만큼 띠 위쪽 경계를 위로 넓힘. 빼면 config")
     parser.add_argument("--save", metavar="그림 경로", help="창을 띄우지 않고 같은 화면을 그림 파일(.png)로 저장")
     parser.add_argument("--list", action="store_true", help="선택 창 대신 data 아래 사진 목록에서 번호로 고름(예전 방식)")
     parser.set_defaults(roi_top=None)       # run_experiment.runtime_overrides와 같은 모양(시연은 띠를 ROI 비율로 정함)
@@ -244,7 +247,7 @@ def make_footer(quality, top, bottom, roi_source, unicode_ok):
         return ["상태 판정: " + " · ".join(values),
                 f"설정: ROI {top:.2f}~{bottom:.2f}({roi_source}) · 노면 마스크 {'켬' if mask else '끔'} · 검출 {C.DETECT_MODE}"]
     return ["quality: " + " / ".join(values),
-            f"ROI {top:.2f}-{bottom:.2f} / mask {'on' if mask else 'off'} / detect {C.DETECT_MODE}"]
+            f"ROI {top:.2f}-{bottom:.2f}{' (auto band)' if C.AUTO_BAND_TOP else ''} / mask {'on' if mask else 'off'} / detect {C.DETECT_MODE}"]
 
 
 def save_image(path, img):
@@ -282,7 +285,8 @@ def show(img):
 
 def demo_one(path, args, show_fn=None, warn=None):
     """사진 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
-    (--save면 창 대신 그림 파일로 저장). --mask·--detect는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다.
+    (--save면 창 대신 그림 파일로 저장). --mask·--detect·--auto-band는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다.
+    자동 띠 높이가 켜져 있으면 콘솔과 아래 띠의 ROI를 실제로 쓴 위쪽 경계로 적고, 출처에 시작 경계를 덧붙인다.
     못 읽는 사진·설정 오류는 알기 쉬운 문구를 콘솔(과 warn이 있으면 안내 창)에 내고 1을 돌려준다. 끝 코드를 돌려준다."""
     def report(text):
         print(text)
@@ -309,10 +313,12 @@ def demo_one(path, args, show_fn=None, warn=None):
             return 1
         unicode_ok = has_unicode_text()
         steps_text = analyze.steps_to_text(outs[True]["steps"])
+        if C.AUTO_BAND_TOP:                         # 넓힌 경계는 컬러 사진만 보고 정해 끔·켬이 같다
+            roi_source, top = f"{roi_source}, 자동 띠 {top:.2f}에서", outs[True]["top"]
         footer = make_footer(outs[True]["quality"], top, bottom, roi_source, unicode_ok)
         print(f"영상: {path}")
         print(f"ROI: top {top}, bottom {bottom} ({roi_source})")
-        print(f"설정: 노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}, 검출 {C.DETECT_MODE}")
+        print(f"설정: 노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}, 검출 {C.DETECT_MODE}, 자동 띠 높이 {'켬' if C.AUTO_BAND_TOP else '끔'}")
         print(make_footer(outs[True]["quality"], top, bottom, roi_source, True)[0])
         print(f"고른 전처리: {steps_text}")
         with pd.option_context("display.width", 200, "display.max_columns", None):

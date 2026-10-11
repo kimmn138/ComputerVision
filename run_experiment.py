@@ -1,6 +1,6 @@
 """(파트 C) 제공·직접 촬영 영상 전체를 전처리 끔·켬으로 처리해 지표 표·비교 그림·요약 표를 저장한다.
 사용법: 맨 위 폴더에서  python run_experiment.py --name <이름>  [--only provided|own]
-                        [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3]
+                        [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3] [--auto-band on|off]
 결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
 - metrics.csv: 영상마다 끔·켬 2행 (영상 정보, 상태 지표, row 9열, 노면 안 에지 수 edges_road·노면 마스크 시간 t_road_ms,
   정답 비교 tp·fp·found·fn(IoU), 영상 단위 판정 has_gt·has_damage·n_pred·hit_same·hit_any·correct(중심 기준).
@@ -13,6 +13,8 @@
 실행 옵션은 config.py 파일을 고치지 않고 실행 중에만 값을 바꾼 뒤 끝나면 되돌린다. 옵션을 주지 않으면 1차와 같은 조건이다.
 - --roi csv(기본): roi.csv에 사진마다 정한 띠. auto: roi.csv의 범위를 쓰지 않고 모든 사진에 기본 띠(ROI_TOP_DEFAULT~ROI_BOTTOM_DEFAULT)
 - --mask on|off: USE_ROAD_MASK, --detect legacy|dark: DETECT_MODE, --roi-top: ROI_TOP_DEFAULT(--roi auto와 함께만. csv에서는 39장에 효과가 없어 거부)
+- --auto-band on|off: AUTO_BAND_TOP(자동 띠 높이). 켜면 pipeline이 띠 위쪽 경계를 사진 전체 노면 마스크를 보고 위로 넓힌다.
+  --roi auto면 기본 띠(0.5)에서, --roi csv면 roi.csv의 위쪽 경계에서 시작한다. 실제로 쓴 띠 높이는 metrics의 roi_pixels(띠 픽셀 수)로 알 수 있다
 - --roi auto와 노면 마스크는 따로 켠다(한 단계씩 끄고 켜며 비교하려고). 둘 다 쓰려면 --roi auto --mask on
 처리 시간(t_pre_ms·t_detect_ms·t_road_ms)은 끔·켬을 각각 C.TIME_REPEAT번 돌린 중앙값이고, 나머지 값은 첫 결과다.
 영상 하나가 실패해도 나머지를 계속 처리하고, 실패가 있으면 끝에 같은 오류끼리 묶어 출력하고 종료 코드 1로 끝난다.
@@ -74,7 +76,7 @@ def check_name(parser, name):
 
 
 def parse_args(argv=None):
-    """결과 폴더 이름(--name)·사진 묶음(--only)·노면 띠 방식(--roi)과, 이번 실행에만 바꿀 config 값(--mask·--detect·--roi-top)을 읽는다.
+    """결과 폴더 이름(--name)·사진 묶음(--only)·노면 띠 방식(--roi)과, 이번 실행에만 바꿀 config 값(--mask·--detect·--roi-top·--auto-band)을 읽는다.
     1차 결과 폴더 이름과, 효과가 없는 조합(--roi csv에서 --roi-top)·범위 밖 값은 거부한다(마지막 일괄 실행에서 조용히 안 먹는 옵션이 없게)."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬 비교 실험")
     parser.add_argument("--name", default=DEFAULT_NAME, help=f"결과 폴더 이름 (results/<name>/, 기본 {DEFAULT_NAME})")
@@ -85,6 +87,8 @@ def parse_args(argv=None):
     parser.add_argument("--detect", choices=("legacy", "dark"), help="검출 방식(DETECT_MODE)을 이번 실행에만 바꿈")
     parser.add_argument("--roi-top", type=float,
                         help="기본 띠의 위쪽 비율(ROI_TOP_DEFAULT)을 이번 실행에만 바꿈. --roi auto와 함께만. 예: 0.3 (E1b)")
+    parser.add_argument("--auto-band", choices=("on", "off"),
+                        help="자동 띠 높이(AUTO_BAND_TOP)를 이번 실행에만 켬·끔. 켜면 노면만 이어지는 만큼 띠 위쪽 경계를 위로 넓힘")
     args = parser.parse_args(argv)
     check_name(parser, args.name)
     if args.roi_top is not None:
@@ -105,6 +109,8 @@ def runtime_overrides(args):
         overrides["DETECT_MODE"] = args.detect
     if args.roi_top is not None:
         overrides["ROI_TOP_DEFAULT"] = args.roi_top
+    if getattr(args, "auto_band", None) is not None:      # demo도 이 함수를 쓰므로 옵션이 없는 args도 받는다
+        overrides["AUTO_BAND_TOP"] = args.auto_band == "on"
     return overrides
 
 
@@ -125,7 +131,8 @@ def restore_overrides(backup):
 def run_notes(args, overrides):
     """config_used.txt 끝에 붙일 실행 조건 두 줄: 준 옵션과, 그 옵션으로 바꾼 config 값. 결과 폴더만 보고도 조건을 알 수 있게 한다."""
     options = [f"--roi {args.roi}"] + [f"--{flag} {value}" for flag, value in
-                                       (("only", args.only), ("mask", args.mask), ("detect", args.detect), ("roi-top", args.roi_top))
+                                       (("only", args.only), ("mask", args.mask), ("detect", args.detect), ("roi-top", args.roi_top),
+                                        ("auto-band", args.auto_band))
                                        if value is not None]
     changed = ", ".join(f"{name}={value!r}" for name, value in overrides.items()) or "없음"
     return [f"실행 옵션: {' '.join(options)}", f"실행 옵션으로 바꾼 config 값: {changed}"]

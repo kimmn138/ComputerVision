@@ -95,3 +95,6 @@ DEGRADE_NOISE_SIGMA = 10.0      # 밝기 단계(0~255), 인위 저하 noise: 가
 DEGRADE_SEED = 0                # 인위 저하 잡음의 seed. 사진마다 이 값에 사진 바이트의 crc32를 더해 씀(사진마다 다른 무늬, 같은 사진은 늘 같음. CONTRIBUTING 3장 5번)
 ROAD_OVERLAY_COLOR = (0, 255, 0)    # BGR, 노면 마스크를 칠할 색: 초록. 균열(빨강)·포트홀(파랑)·노면 시작선(노랑) 윤곽과 헷갈리지 않는 색 (Plan.md 3.7)
 ROAD_OVERLAY_ALPHA = 0.35           # 비율(0~1), 노면 픽셀에 초록을 섞는 정도. 절반보다 옅게 해 노면 결과 후보 윤곽이 비쳐 보이게
+AUTO_BAND_TOP = False               # 자동 띠 높이 켬·끔. True면 pipeline이 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 받은 top에서 위로 넓힘. 끄면 지금 결과 그대로 (docs/part_C.md)
+AUTO_BAND_STEP = 0.1                # 비율(사진 높이 대비), 한 번에 살펴보고 넓히는 구간 높이. 0.5에서 0.0까지 다섯 구간
+AUTO_BAND_ROAD_MIN = 0.95           # 비율, 바로 위 구간에서 노면 마스크 픽셀이 이 비율 이상이면 그 구간까지 넓힘. 후보 0.8·0.9·0.95 중 개발셋 652장에서 채택 규칙 2·3을 모두 넘은 값 (docs/part_C.md)
