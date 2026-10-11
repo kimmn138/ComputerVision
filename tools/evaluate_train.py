@@ -91,13 +91,14 @@ CHANCE_COLUMNS = [
     for name in ("chance", "net")
 ] + ["chance_skipped"]
 
-# 영상별 측정값(train_detail.csv): pipeline row의 값과 노면 마스크 시간. 평가표의 '전처리 전·후 비교' 항목
-# (에지·특징점 수, 후보 수·면적, 처리 시간)을 학습 데이터에서도 내려고 남긴다. 후보 수는 pred_crack·pred_pothole 열에 있다
+# 영상별 측정값(train_detail.csv): pipeline row의 값과 노면 마스크 시간·자동 띠 경계 시간(사진 전체 노면 마스크, 자동 띠가 꺼져 있으면 0).
+# 평가표의 '전처리 전·후 비교' 항목(에지·특징점 수, 후보 수·면적, 처리 시간)을 학습 데이터에서도 내려고 남긴다. 후보 수는 pred_crack·pred_pothole 열에 있다
 ROW_MEASURES = ["edges", "harris", "area_crack", "area_pothole", "roi_pixels", "t_pre_ms", "t_detect_ms"]
-MEASURE_COLUMNS = ROW_MEASURES + ["t_road_ms"]
+RESULT_TIMES = ["t_road_ms", "t_band_ms"]   # run_pipeline 결과의 row 밖 처리 시간
+MEASURE_COLUMNS = ROW_MEASURES + RESULT_TIMES
 
 # 요약의 영상당 평균(열 이름 끝 _mean). 처리 시간은 사진마다 한 번 잰 값의 평균이라 참고용
-MEAN_SOURCES = ["edges", "harris", "pred_crack", "pred_pothole", "area_crack", "area_pothole", "t_pre_ms", "t_detect_ms", "t_road_ms"]
+MEAN_SOURCES = ["edges", "harris", "pred_crack", "pred_pothole", "area_crack", "area_pothole", "t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms"]
 MEAN_COLUMNS = [f"{name}_mean" for name in MEAN_SOURCES]
 
 # 상태 판정 적중(인위 저하일 때 켬 행): 고를 전처리 이름, 저하 사진에서 고른 비율, 같은 사진의 저하 없는 원본에서 고른 비율
@@ -472,11 +473,11 @@ def judge_steps(small, roi):
 
 
 def measure_columns(out):
-    """영상별 측정값: 고른 전처리, 에지·해리스 코너 수, 후보 면적, 노면 픽셀 수, 처리 시간(사진마다 한 번 잰 값)과 노면 마스크 시간."""
+    """영상별 측정값: 고른 전처리, 에지·해리스 코너 수, 후보 면적, 노면 픽셀 수, 처리 시간(사진마다 한 번 잰 값)과 노면 마스크·자동 띠 경계 시간."""
     return {
         "steps": analyze.steps_to_text(out["steps"]),
         **{key: out["row"][key] for key in ROW_MEASURES},
-        "t_road_ms": out["t_road_ms"],
+        **{key: out[key] for key in RESULT_TIMES},
     }
 
 
