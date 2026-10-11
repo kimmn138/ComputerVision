@@ -229,11 +229,14 @@ def make_row(file_name, info, roi, use_preprocess, out, quality, counts, verdict
 
 
 def save_figure(path, file_name, off, on):
-    """끔(위 줄)·켬(아래 줄)마다 후보 그림·노면 흑백·캐니 에지 3칸을 한 장으로 저장한다."""
+    """끔(위 줄)·켬(아래 줄)마다 후보 그림·노면 흑백·캐니 에지 3칸을 한 장으로 저장한다.
+    후보 그림에는 노면 마스크를 반투명 초록으로 먼저 칠하고 그 위에 후보 윤곽을 그린다.
+    save_comparison은 6칸이라 노면 표시는 7번째 칸이 아니라 후보 칸에 겹쳐 그린다."""
     panels = []
     for label, out in (("끔", off), ("켬", on)):
-        drawn = visualize.draw_candidates(out["small"], out["cracks"], out["potholes"], out["y0"])
-        panels += [(f"{label}: 후보", drawn), (f"{label}: 노면", out["proc"]), (f"{label}: 에지", out["edges"])]
+        road = visualize.draw_road(out["small"], out["road"], out["y0"])
+        drawn = visualize.draw_candidates(road, out["cracks"], out["potholes"], out["y0"])
+        panels += [(f"{label}: 노면(초록)·후보", drawn), (f"{label}: 노면", out["proc"]), (f"{label}: 에지", out["edges"])]
     visualize.save_comparison(path, f"{file_name} | 켬: {analyze.steps_to_text(on['steps'])}", panels)
 
 

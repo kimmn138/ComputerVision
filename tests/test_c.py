@@ -581,6 +581,73 @@ def test_demo_report():
     check(t.loc["차이", "edges"] == 3 and t.loc["차이", "n_crack"] == 0, "report_table: 차이가 켬 − 끔이 아님")
 
 
+def test_demo_options():
+    """demo 실행 옵션: 기본은 roi.csv 띠에 config 그대로(바꾸는 값 없음). --roi auto는 기본 띠, --mask·--detect는 이번 실행에만 쓸
+    config 값이 된다(run_experiment와 같은 방식). ROI 비율과 --roi auto를 함께 주면 어느 띠를 쓸지 헷갈리므로 거부한다."""
+    args = parse_quietly(demo.parse_args, ["a.jpg"])
+    check(args is not None and args.roi_mode == "csv" and args.save is None and rx.runtime_overrides(args) == {},
+          f"demo.parse_args: 옵션이 없는데 roi.csv 띠가 아니거나 바꾸는 값이 있음 ({args})")
+    args = parse_quietly(demo.parse_args, ["a.jpg", "--roi", "auto", "--mask", "on", "--detect", "dark", "--save", "v.png"])
+    check(args is not None and args.roi_mode == "auto" and args.save == "v.png"
+          and rx.runtime_overrides(args) == {"USE_ROAD_MASK": True, "DETECT_MODE": "dark"},
+          f"demo.parse_args: --roi·--mask·--detect·--save를 읽지 못함 ({args})")
+    ratio = parse_quietly(demo.parse_args, ["a.jpg", "0.4", "1", "--mask", "off"])
+    check(ratio is not None and ratio.roi == [0.4, 1.0] and rx.runtime_overrides(ratio) == {"USE_ROAD_MASK": False},
+          "demo.parse_args: ROI 비율과 --mask를 함께 읽지 못함")
+    check(parse_quietly(demo.parse_args, ["a.jpg", "0.4", "1", "--roi", "auto"]) is None,
+          "demo.parse_args: ROI 비율과 --roi auto를 함께 받아들임")
+    table = {"a.jpg": {"top": 0.3, "bottom": 0.9, "condition": ""}}
+    check(demo.choose_roi("x/a.jpg", [], table, "auto") == (C.ROI_TOP_DEFAULT, C.ROI_BOTTOM_DEFAULT, "기본 띠, --roi auto"),
+          "demo.choose_roi: --roi auto인데 roi.csv 띠를 씀")
+
+
+def test_demo_footer():
+    """시연 화면 아래 띠 두 줄: 상태 판정 값(아직 없는 값은 '-')과, 실행 옵션을 적용한 뒤의 설정(ROI·노면 마스크·검출 방식).
+    한글을 못 쓰면 영문(ASCII)으로 쓰고, 아래 띠까지 화면 안에 들어가게 줄인다."""
+    quality = {"mean": 116.04, "std": 28.33, "lap_var": 412.7, "noise": 2.31, "blur_ratio": math.nan}
+    lines = demo.make_footer(quality, 0.5, 1.0, "roi.csv", True)
+    check(len(lines) == 2 and "평균 116" in lines[0] and "표준편차 28.3" in lines[0] and "라플라시안 분산 413" in lines[0]
+          and "재흐림 비율 -" in lines[0] and f"노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}" in lines[1]
+          and f"검출 {C.DETECT_MODE}" in lines[1] and "0.50~1.00" in lines[1], f"make_footer: 두 줄의 내용이 틀림 ({lines})")
+    with patched(C, "USE_ROAD_MASK", True):
+        check("노면 마스크 켬" in demo.make_footer(quality, 0.5, 1.0, "roi.csv", True)[1], "make_footer: 실행 중에 바꾼 마스크 설정을 읽지 않음")
+    ascii_lines = demo.make_footer(quality, 0.5, 1.0, "roi.csv", False)
+    check(all(line.isascii() for line in ascii_lines) and "mask" in ascii_lines[1], f"make_footer: 영문 줄이 ASCII가 아님 ({ascii_lines})")
+    tall = np.full((1138, 640, 3), 128, np.uint8)
+    view = demo.build_view(tall, tall, ("OFF", "ON"), (1707, 960), False, ascii_lines)
+    check(view.shape[0] <= 960 * C.DEMO_SCREEN_MARGIN and view[-C.DEMO_LABEL_HEIGHT:].any() and view[-2 * C.DEMO_LABEL_HEIGHT:-C.DEMO_LABEL_HEIGHT].any(),
+          f"build_view: 아래 띠 두 줄이 없거나 화면을 넘음 ({view.shape})")
+
+
+def test_demo_main_save():
+    """demo.main --save: 창을 띄우지 않고 화면(끔·켬 두 칸 + 위 제목 띠 + 아래 두 줄)을 그림 파일로 저장하고 0으로 끝난다.
+    회색 합성 사진이라 띠(기본 0.5~1.0)는 초록이 섞이고 띠 위는 회색 그대로다. --mask on은 실행 중에만 적용되고 끝나면 되돌아오며,
+    아직 구현 전인 --detect dark는 알기 쉬운 문구와 함께 1로 끝나고 그림을 저장하지 않으며 config는 되돌아온다."""
+    rng = np.random.default_rng(5)
+    before = (C.USE_ROAD_MASK, C.DETECT_MODE)
+    with tempfile.TemporaryDirectory() as tmp:
+        path, saved, dark = (os.path.join(tmp, name) for name in ("Japan_900001.jpg", "view.png", "dark.png"))
+        gray = cv.GaussianBlur(rng.integers(90, 160, (480, 640), dtype=np.uint8), (0, 0), 1.5)
+        cv.imwrite(path, cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = demo.main([path, "--mask", "on", "--save", saved])
+        after = (C.USE_ROAD_MASK, C.DETECT_MODE)
+        view = cv.imdecode(np.fromfile(saved, np.uint8), cv.IMREAD_COLOR) if os.path.exists(saved) else None
+        with contextlib.redirect_stdout(io.StringIO()) as dark_printed:
+            dark_code = demo.main([path, "--detect", "dark", "--save", dark])
+        after_dark, dark_saved = (C.USE_ROAD_MASK, C.DETECT_MODE), os.path.exists(dark)
+    check(code == 0 and view is not None and "노면 마스크 켬" in printed.getvalue(), f"demo.main --save: 저장하지 못함 (끝 코드 {code})")
+    if view is not None:
+        panel_h = view.shape[0] - 3 * C.DEMO_LABEL_HEIGHT                        # 위 제목 띠 1줄 + 아래 띠 2줄을 뺀 사진 높이
+        band = view[C.DEMO_LABEL_HEIGHT + int(panel_h * 0.8), : view.shape[1] // 2].astype(int)
+        above = view[C.DEMO_LABEL_HEIGHT + int(panel_h * 0.2), : view.shape[1] // 2].astype(int)
+        check(band[:, 1].mean() > band[:, 2].mean() + 20 and abs(above[:, 1].mean() - above[:, 2].mean()) < 3,
+              "demo 화면: 띠에 초록이 섞이지 않았거나 띠 위까지 칠함")
+    check(after == before and after_dark == before, f"demo.main: 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
+    check(dark_code == 1 and not dark_saved and "아직 구현되지 않은" in dark_printed.getvalue(),
+          "demo.main --detect dark: 알기 쉬운 문구와 1로 끝나지 않았거나 그림을 저장함")
+
+
 def fake_pair_name(path):
     """A의 parse_name이 들어오기 전 시험용: pair01_B_dark.jpg → {source, pair, role, condition}, 그 밖은 쌍 정보 없음."""
     parts = os.path.splitext(os.path.basename(path))[0].split("_")
@@ -774,7 +841,6 @@ def test_result_folder_safety():
     check(et.select_param_sets("all") == et.PARAM_SETS and len(et.PARAM_SETS) == 5, "evaluate_train: --param-set all이 1차 5세트가 아님")
 
 
-@todo("C WP5: draw_road 구현 뒤 (Plan.md 3.7)")
 def test_draw_road_paint():
     """노면(road 255)은 y0만큼 내린 자리에 초록이 섞이고, 노면 밖과 띠 위쪽은 그대로다."""
     bgr = np.full((300, 640, 3), 128, np.uint8)
@@ -784,6 +850,39 @@ def test_draw_road_paint():
     b, g, r = (int(v) for v in out[150, 100])                        # 노면 안 (띠 좌표 y 50 → 전체 좌표 y 150)
     check(g > 128 and b <= 128 and r <= 128, f"draw_road: 노면이 초록으로 칠해지지 않음 ({b}, {g}, {r})")
     check((out[150, 500] == 128).all() and (out[50, 100] == 128).all(), "draw_road: 노면 밖이나 띠 위쪽이 바뀜")
+
+
+def test_draw_road_short_band():
+    """road 높이만큼만 칠한다: 띠 아래(roi_bottom < 1, 미국 3장 0.95)와 띠 위는 그대로이고,
+    노면은 config C 구역의 색(ROAD_OVERLAY_COLOR)을 비율(ROAD_OVERLAY_ALPHA)만큼 섞은 값이다."""
+    bgr = np.full((100, 64, 3), 128, np.uint8)
+    road = np.full((50, 64), 255, np.uint8)                         # y0 40부터 50줄 → 40~89만 노면, 90~99는 띠 아래
+    out = visualize.draw_road(bgr, road, 40)
+    alpha, color = C.ROAD_OVERLAY_ALPHA, np.array(C.ROAD_OVERLAY_COLOR, float)
+    expect = np.round((1 - alpha) * 128 + alpha * color).astype(np.uint8)
+    check((out[40:90] == expect).all(), f"draw_road: 노면 색이 config의 색·비율로 섞이지 않음 ({out[60, 0]}, 기대 {expect})")
+    check((out[90:] == 128).all() and (out[:40] == 128).all() and (bgr == 128).all(),
+          "draw_road: 띠 아래·위를 칠했거나 받은 영상을 바꿈")
+
+
+def test_save_figure_road():
+    """run_experiment 비교 그림: 6칸 그대로이고, 끔·켬의 후보 칸에는 노면 마스크가 반투명 초록으로 깔린다(노면 밖·띠 위는 그대로)."""
+    small = np.full((100, 64, 3), 128, np.uint8)
+    road = np.zeros((50, 64), np.uint8)
+    road[:, :32] = 255
+    out = {"small": small, "road": road, "y0": 50, "cracks": [], "potholes": [],
+           "proc": np.full((50, 64), 128, np.uint8), "edges": np.zeros((50, 64), np.uint8),
+           "steps": {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}}
+    captured = []
+    with patched(visualize, "save_comparison", lambda path, title, panels: captured.append(panels)):
+        rx.save_figure("unused.png", "a.jpg", out, out)
+    panels = captured[0] if captured else []
+    check(len(panels) == 6, f"save_figure: 비교 그림이 6칸이 아님 ({len(panels)})")
+    if len(panels) == 6:
+        for name, img in (panels[0], panels[3]):
+            check(int(img[70, 10, 1]) > int(img[70, 10, 0]) and (img[70, 50] == 128).all() and (img[20, 10] == 128).all()
+                  and "노면" in name, f"save_figure: '{name}' 칸에 노면이 초록으로 깔리지 않았거나 노면 밖을 칠함")
+        check((small == 128).all(), "save_figure가 받은 영상을 바꿈")
 
 
 def test_image_verdict():
@@ -974,10 +1073,11 @@ def main():
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
                test_summary_tables, test_run_options, test_get_roi_auto, test_median_road_time, test_edges_on_road,
                test_verdict_columns, test_group_verdict_tables, test_image_table_verdicts, test_run_main_options, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
+               test_demo_options, test_demo_footer, test_demo_main_save,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,
-               test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
+               test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
                test_degrade_option_and_judge, test_degrade_main):
         try:
