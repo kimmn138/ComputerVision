@@ -134,8 +134,6 @@ def test_road_mask_format():
     assert np.array_equal(bgr, before), "road_mask가 입력 영상을 바꿈"
     assert np.array_equal(io_utils.road_mask(bgr), io_utils.road_mask(bgr)), "같은 입력인데 road_mask 결과가 다름"
 
-
-@todo("A WP1: road_mask v1 구현 뒤 (Plan.md 3.3 (2), 부록 C)")
 def test_road_mask_v1_synthetic():
     """v1: 씨앗(아래 가운데)과 색·밝기가 비슷하고 이어진 노면은 남기고 풀·건물은 뺀다.
     노면 안의 포트홀과 테두리에 닿지 않는 짧은 차선 조각은 구멍 메우기·닫힘으로 마스크에 넣는다.
