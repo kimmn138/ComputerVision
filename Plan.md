@@ -1018,7 +1018,12 @@ def summarize_verdicts(verdicts):
   - `detect_*(gray, road=None)`: road 없이 불러도, road를 줘도 약속 형식대로 돌려주는가. 후보에 새 키가 있는가
   - quality에 blur_ratio 키가 있는가, draw_road가 새 영상을 돌려주는가
   - 같은 입력이면 같은 출력인가(road_mask, detect_*, run_pipeline)
-- **결과 폴더 이름**: `results/e0_base`, `e1_mask`(39장 roi.csv), `e1_mask_auto`(39장 자동 ROI), `e1b_top03`, `e2_dark`, `e3_dark_mask`, `e4_score`, `e6_degrade`, `final`
+- **결과 폴더 이름** (10/11, [tools/run_all.py](tools/run_all.py)의 이름과 같다. 학습 데이터 실행은 이름 끝에 데이터 `_all`·`_dev`·`_test`를 붙이고, 39장 실행은 붙이지 않는다)
+  - 비교(개발셋): `e0_all`(E0 재현, 804장), `e0_dev`, `e1_mask_dev`, `e1b_top03_dev`, `e2_dark_dev`, `e3_dark_mask_dev`(σ 노면 안), `e3_sigma_band_dev`(σ 띠 전체), `e4_score_dev`(E4, 점수가 생기면), `e6_<저하>_dev`(E6 1회, 저하는 none·blur·dark·bright·noise)
+  - 최종: `final`(39장 roi.csv와 매칭), `final_auto`(39장 자동 ROI), `e0`(39장 1차 설정), `e5_dev`(E5), `e6_<저하>_final_dev`(E6 2회)
+  - 시험: `e0_test`(1차 방법), `test_once`(최종 설정, 한 번만). 10/12 재현 확인은 `final_test`
+  - 표: `report`(아래 보고서 표 일곱 가지와 39장 영상별 최종 판정 표 CSV, 채택 표, `summary.md`)
+  - 39장 E1·E3을 따로 돌릴 때는 `e1_mask`·`e1_mask_auto`·`e3_dark_mask`(5장 명령. run_all에는 없다)
 - **보고서 표 일곱 가지**
   1. 단계별 표(E0~E6)
   2. 국가별 표

@@ -198,6 +198,18 @@ python tools/label_gt.py [사진 경로]                # 정답 박스 (c 균�
 python tools/evaluate_train.py --name <이름> [--split dev|test|all] [옵션]   # 학습 사진 평가 → results/<이름>/ (기본 개발셋, 5.2)
 python tools/convert_json_gt.py                     # data/train/ann JSON → gt/train CSV (이미 커밋됨)
 python tools/check_data.py                          # 사진·CSV 이름 검사
+python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes] [--reject E1,E3]   # E0~E6 일괄 실행과 보고서 표 (5.6)
+```
+
+일괄 실행(10/11, `tools/run_all.py`, 5.6). A·B 코드가 main에 다 들어온 뒤 C 컴퓨터에서 이 순서로 돈다. 아래 낱개 명령을 이름 규칙(4.3)대로 묶은 것이다:
+
+```bash
+python tools/run_all.py compare --dry-run      # 돌릴 실험·명령·폴더·예상 시간만 (아무것도 쓰지 않음)
+python tools/run_all.py compare                # 비교: 개발셋 E0~E3·E6 1회 → 채택 표와 바꿀 config 값
+#   → 채택을 정하고(규칙 1은 사람 확인, 뺄 단계는 tables --reject E1) 구역 주인이 config를 고쳐 main에 합침
+python tools/run_all.py final                  # 최종: 39장 세 가지·매칭·E5·E6 2회 (전원 연결 안내 뒤 Enter, 처리 시간)
+python tools/run_all.py test                   # 시험: e0_test → test_once (한 번만. test_once가 있으면 거부)
+python tools/run_all.py repro                  # 10/12 재현: final_test가 test_once와 같은지
 ```
 
 실험 명령(Plan.md 5장). evaluate_train의 옵션(`--split`·`--name`·`--param-set`·`--mask`·`--roi-top`·`--detect`·`--set`)은 M2에서 만들었고(10/11), run_experiment의 `--roi`·`--mask`·`--detect`·`--roi-top`은 M3에서, evaluate_train의 `--degrade`는 M6에서 만들었다(10/11):
@@ -236,7 +248,11 @@ python run_matching.py --name final
 - `run_matching`: 같은 폴더에 `matching.csv`, `matches/<사진>_off.png`·`_on.png`, `config_used_matching.txt`.
 - `evaluate_train`: `results/<이름>/`에 `train_detail.csv`(영상별 개수·판정, split·source·height 열, (10/11 M6) 인위 저하 종류 `degrade`, 고른 전처리 `steps`, 에지·해리스·후보 면적·노면 픽셀·처리 시간, 상태 판정 적중 `judge_hit`·`judge_base`), `train_summary.csv`(끔·켬 요약: 종류·기준별 정밀도·재현율, 민감도·특이도·정답률·균형 정확도·기준선, 영상당 후보·오검출, 우연 대조군, 측정값의 영상당 평균 `*_mean`, 상태 판정 적중률 `judge_hit_rate`·`judge_base_rate`), `per_source.csv`(같은 요약을 국가별로), `config_used_train.txt`(config 값, 파라미터 세트, 실행 옵션으로 바꾼 값, 인위 저하 종류). 파일 이름이 run_experiment·run_matching과 겹치지 않는다.
 - 세 도구 모두 `--name`을 빼면 `results/latest`에 쓰고(매번 덮어씀), 1차 결과 폴더 이름(`base`·`tuning`·`diagnosis`)은 대소문자·하위 폴더까지 거부한다(`run_experiment.check_name`).
-- 쓸 이름(Plan.md 3.7): `e0_base`, `e1_mask`, `e1_mask_auto`, `e1b_top03`, `e2_dark`, `e3_dark_mask`, `e4_score`, `e6_degrade`, `final`. evaluate_train은 이름 끝에 데이터를 붙여(`e0_all`·`e1_mask_dev` 등) 39장 폴더와 나누고, 시험셋은 `test_once`(10/11)·`final_test`(10/12 재현 확인)로 쓴다(4.2).
+- 쓸 이름(10/11, Plan.md 3.7과 run_all이 같음): 학습 데이터 실행은 이름 끝에 데이터(`_all`·`_dev`·`_test`)를 붙이고 39장 실행은 붙이지 않는다.
+  - 비교: `e0_all`, `e0_dev`, `e1_mask_dev`, `e1b_top03_dev`, `e2_dark_dev`, `e3_dark_mask_dev`(σ 노면 안), `e3_sigma_band_dev`(σ 띠 전체), `e4_score_dev`(자리), `e6_<저하>_dev`(1회)
+  - 최종: `final`(39장 roi.csv와 매칭), `final_auto`(39장 자동 ROI), `e0`(39장 1차 설정), `e5_dev`, `e6_<저하>_final_dev`(2회)
+  - 시험: `e0_test`, `test_once`, 10/12 재현 `final_test`. 표: `report`
+- (10/11) run_all로 돌린 결과 폴더에는 `run_info.txt`(39장)·`run_info_train.txt`(학습 데이터)·`run_info_matching.txt`(매칭)가 붙는다: 커밋 해시·명령·실행 중 고정한 config 값·상태·시각·버전. 표는 `results/report/`(table1~8, adoption.csv, summary.md, reject.txt).
 - 지금 있는 것(C 컴퓨터에만, Git에 없음):
 
 | 폴더 | 무엇 | 쓰임 |
@@ -327,6 +343,37 @@ python run_matching.py --name final
 - `BLUR_RATIO_MAX = 1.5`는 임시값이다. 기반 때 같은 식으로 재 보니 제공 13장 중 흐린 3장이 1.13~1.18, 나머지가 1.87 이상이었다. 같은 장소 5쌍 중 own_19는 3.398(흔들림)과 3.395(정상)로 거의 같아 시험에서 빼고, C가 E5 상태 판정 검증에서 보고하기로 했다(`docs/tasks/A.md` M3).
 - `CLAUDE.md`의 배경 문서 목록은 경로만 적고 `@` 가져오기를 쓰지 않았다. `@docs/...`로 쓰면 모든 세션이 그 문서를 자동으로 읽어(Plan.md만 134KB) 문맥을 크게 차지한다. 필요할 때 열어 읽게 했다.
 
+### 5.6 run_all (C 파일, 10/11 일괄 실행)
+
+- 단계마다 실행 전 확인을 한다: 39장 정답 파일, 학습 사진 804장, 약속 검사, 커밋 안 된 변경. 39장 정답만 멈추지 않고 39장 표에 '미완'으로 적는다. `git status`에는 추적하지 않는 새 파일도 들어가므로, 저장소 안에 개인 파일을 두면 멈춘다.
+- 도구는 같은 프로세스에서 부른다(`rx.main`·`et.main`·`rm.main`). evaluate_train은 결과 폴더(`RESULTS_ROOT`)와 학습 사진 폴더(config)를 실행 중에만 paths 값으로 바꾼다. 실제 실행에서는 같은 값이고, 시험이 임시 폴더를 쓰려고 둔 것이다.
+- 구현 여부를 이렇게 본다.
+  - dark: `DETECT_MODE="dark"`로 작은 합성 영상을 검출해 자리의 `NotImplementedError`가 나는지 본다.
+  - 노면 마스크: 왼쪽이 풀색인 합성 띠에서 0(노면 아님)이 하나라도 나오는지 본다. 구현했지만 아무것도 빼지 못하는 마스크도 구현 전으로 본다(E1 = E0이 되므로).
+  - 필요한 기능이 없으면 그 실험은 '아직 구현 전'으로 건너뛰고 표에도 그렇게 적는다. 시험·재현 단계는 건너뛰지 않고 멈춘다(한 번만 재므로).
+- 1차 값 고정
+  - E0·E1·E1b·`e0_test`는 `--param-set base --detect legacy --mask off --roi-top 0.5`로 돈다(E1·E1b는 마스크 켬, E1b는 띠 0.3). config가 채택 결과로 바뀐 뒤 다시 돌려도 1차 방법이다.
+  - run_experiment에는 `--param-set`이 없어, 39장 1차 설정(`e0`)은 1차 legacy 값 13개와 띠 0.5를 실행 중에만 덮는다(run_info와 config_used.txt에 남음).
+  - 전처리 규칙은 코드라 고정할 수 없다. 그래서 1차 설정의 켬 행은 그때 A 코드의 전처리다(끔 행만 1차 방법 그대로).
+- 그 밖의 설정: E2·E3·E3σ는 띠 0.5와 마스크 켬·끔을 고정하고 legacy 값은 config 그대로 둔다(B의 dark가 legacy 값을 쓸 수 있어서). E6 1회는 E2 설정(Plan.md 3.2 (6)의 'B의 어두운 영역 1차')이고, E5·E6 2회·39장 최종·시험셋 최종은 config 그대로다.
+- 채택 비교
+  - 개발셋·전처리 끔(검출 튜닝 조건)으로 E0 → E1 → E1b → E2 → E3 → E3σ 순서로, 각 단계를 그때까지 잠정 채택된 마지막 단계(직전 채택 단계)와 견준다.
+  - 규칙 2(균형 정확도가 오름, 같으면 못 넘음)와 규칙 3(우연을 뺀 균열 재현율 차이 ≥ −1%p, 소수 여섯째 자리에서 반올림해 꼭 1%p는 통과)은 자동이다. 규칙 1은 '사람 확인'이고 민감도·영상당 오검출이 오르내린 방향만 덧붙인다.
+  - 규칙 2·3을 넘으면 '잠정 채택'이 되어 다음 단계의 비교 기준이 된다. 비교 기준과 설정이 둘 이상 다르면 '바뀐 설정'에 모두 나온다(예: E1b가 채택되면 E2는 '검출 legacy→dark, 노면 마스크 켬→끔, 띠 위쪽 0.3→0.5').
+  - `--reject E1,…`은 사람이 규칙 1에서 뺀 단계다. `results/report/reject.txt`에 남아 다음 단계의 표에도 유지되고, `--reject ''`로 지운다.
+  - 바꿀 config 값은 잠정 채택 방법의 설정과 지금 config의 차이다. config.py의 구역 머리줄(`# ===== …`)로 주인을 찾아 함께 적고, config 파일은 고치지 않는다.
+- 표
+  - 정답률 옆에 기준선, 재현율(중심) 옆에 우연을 뺀 값을 둔다. 우연 대조군은 학습 데이터·중심 기준에만 있어서, 39장 표는 영상 단위 지표만 쓴다(run_experiment는 후보 상자를 저장하지 않음).
+  - 처리 시간은 4번 표의 39장 최종(끔·켬 5번 중앙값)과 7번 표의 E6 2회(한 번 잰 값의 평균, 참고)에만 넣는다.
+  - 39장 표는 그 실행의 metrics.csv에 정답이 빠진 사진이 있으면 '미완 (정답 n/39장)'이다.
+  - 상태 판정 검증(E5)은 켬 행의 상태 지표로 `choose_steps`를 다시 불러 사람 태그와 견준다. 다시 낸 전처리 글이 실행 때의 steps와 다르면(그 사이 코드가 바뀜) 적중 칸을 비운다.
+  - 결과 파일(train_summary.csv·metrics.csv·matching.csv)이 있으면 그 실험이 끝난 것으로 본다. `final` 폴더는 39장 최종과 매칭이 함께 쓴다.
+- 시험·재현 단계
+  - 시험은 `results/test_once`가 있으면 거부한다(끝나지 않은 폴더면 지우라고 안내). `e0_test` → `test_once` 순서이고 앞이 실패하면 멈춘다. 시작 전에 지금 config를 보여 주고 Enter를 기다린다(`--yes`면 건너뜀).
+  - 재현은 test_once가 있어야 돌고, 요약과 영상별 결과를 `t_`로 시작하는 시간 열만 빼고 견준다.
+- 예상 시간(dry-run)은 C 컴퓨터 10/11 실측 기준이다: 학습 사진 1장의 끔 또는 켬 0.036초, 39장 45초, 쌍 사진 10장 15초, 약속 검사 1.3초. dark·노면 마스크는 더 걸릴 수 있다. 10/11 dry-run은 비교 약 1분 47초(구현 전 11개 빼고, 모두 구현되면 약 9분 36초), 최종 약 7분 13초, 시험 약 24초였다.
+- (10/11 검증, 임시 폴더) 사진 몇 장(39장 중 6장, 학습 20장, 쌍 1쌍)으로 compare → final(Enter) → test → test 다시(거부, 끝 코드 2) → repro(같음) → tables --reject E1이 끝까지 돌았다. 노면 마스크·dark를 검증 스크립트 안에서만 가짜로 채운 실행으로 채택 표의 숫자 경로(잠정 채택·되돌림, --reject로 바뀌는 비교 기준, 바꿀 config 값)도 돌렸다. run_all 함수를 메모리에서 12가지로 망가뜨렸을 때 새 시험 6개가 모두 잡았다.
+
 ---
 
 ## 6. 아직 정해지지 않은 것과 누가 정하나
@@ -355,6 +402,9 @@ python run_matching.py --name final
 | 보고서·발표 분담 | 전원 | 기록 없음 | |
 | 데모 영상에 쓸 사진과 녹화 방법 | C | G4(10/11 21:00) | |
 | 드라이브 사진 이름 맞추기 | A(데이터 주인)·C | 지금(1.3) | |
+| 39장 E1·E3 실행(roi.csv·auto)을 run_all에 넣을지 | 사용자 | 비교 단계 전 | Plan.md 3.7·3.10은 39장을 E1·E3·최종에서 auto로 돈다고 하지만, run_all은 요청대로 최종 단계의 39장 세 가지(1차·최종 roi.csv·최종 auto)만 돈다(5.6) |
+| 비교 단계 E6 1회의 설정 | 사용자(B와) | 비교 단계 전 | 지금은 E2 설정(dark, 마스크 끔, 띠 0.5). 마스크를 켤지 |
+| E1b(띠 0.3)가 채택될 때 dark와의 조합 | 세 명 | 비교 단계 뒤 | 비교 단계는 E2·E3를 띠 0.5로 돌아, 0.3과 dark를 함께 쓴 결과는 최종 단계 E5에서 처음 나온다 |
 
 ---
 
