@@ -493,7 +493,8 @@ def test_run_main_options():
                 return metrics, f.read().splitlines()
 
         with patched(C, "TIME_REPEAT", 1), patched(rx, "load_gt_for", gts.get):
-            codes = [run(argv)[0] for argv in ([], ["--name", "explicit", "--roi", "csv", "--mask", "off", "--detect", "legacy"],
+            defaults = ["--mask", "on" if C.USE_ROAD_MASK else "off", "--detect", C.DETECT_MODE]  # 지금 config 기본값을 직접 줌
+            codes = [run(argv)[0] for argv in ([], ["--name", "explicit", "--roi", "csv", *defaults],
                                                ["--name", "auto", "--roi", "auto", "--mask", "on", "--roi-top", "0.3"])]
             after = (C.USE_ROAD_MASK, C.DETECT_MODE, C.ROI_TOP_DEFAULT)
             dark_code, dark_out = run(["--name", "dark", "--detect", "dark"])
