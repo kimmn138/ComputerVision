@@ -1,111 +1,107 @@
-"""모든 파라미터. 구역마다 주인이 있고, 자기 구역 안에서만 고친다.
-구역 사이의 빈 줄과 주석 줄은 지우지 않는다(Git이 구역별 수정을 자동으로 합치게 해 줌)."""
+"""모든 파라미터를 한곳에 모은다. 함수 안에서는 C.이름으로 읽는다."""
 
-# ===== 공통 (C 관리 · 바꾸려면 세 명 합의) =====
-TARGET_WIDTH = 640          # 모든 영상을 가로 640px로
-ROI_TOP_DEFAULT = 0.5       # roi.csv에 없는 사진의 노면 시작 비율
-ROI_BOTTOM_DEFAULT = 1.0
-TIME_REPEAT = 5             # 처리 시간은 5번 재서 중앙값
+# ===== 공통 =====
+TARGET_WIDTH = 640          # px, 모든 영상을 이 가로 크기로 맞춤
+ROI_TOP_DEFAULT = 0.5       # 비율, roi.csv에 없는 사진의 노면 띠 시작
+ROI_BOTTOM_DEFAULT = 1.0    # 비율, 노면 띠 끝
+TIME_REPEAT = 5             # 회, 처리 시간을 여러 번 재서 중앙값을 씀
 
 # ===== A: 데이터·상태 분석·전처리 =====
 DAMAGE_TAGS = ("crack", "pothole", "both", "none")
 CONDITION_TAGS = ("normal", "dark", "night", "bright", "shadow", "blur", "wet", "clutter", "none")
 PAIR_ROLES = ("A", "B", "C", "D")
 PAIR_CONDITIONS = ("ref", "dark", "blur", "view")
-BLUR_VAR_MAX = 50           # 라플라시안 분산 < 50 -> 흐림 -> 샤프닝
-NOISE_SIGMA_MAX = 3.0       # 잡티 지표 > 3 -> 가우시안
-CONTRAST_STD_MIN = 20       # 표준편차 < 20 -> 대비 부족 -> 평활화
-DARK_MEAN_MAX = 80          # 평균 < 80 -> 감마(밝게)
-BRIGHT_MEAN_MIN = 170       # 평균 > 170 -> 감마(어둡게)
+BLUR_VAR_MAX = 50           # 라플라시안 분산이 이보다 작으면 흐림 → 샤프닝
+NOISE_SIGMA_MAX = 3.0       # 잡티 지표가 이보다 크면 → 가우시안
+CONTRAST_STD_MIN = 20       # 밝기 표준편차가 이보다 작으면 대비 부족 → 평활화
+DARK_MEAN_MAX = 80          # 평균 밝기가 이보다 작으면 → 감마(밝게)
+BRIGHT_MEAN_MIN = 170       # 평균 밝기가 이보다 크면 → 감마(어둡게)
 GAUSS_KSIZE, GAUSS_SIGMA = (5, 5), 1.0
-GAMMA_RANGE = (0.4, 2.5)    # 결과 = 입력^감마 (감마 < 1 밝게). 감마 = log0.5 / log(평균/255)를 이 범위로 자름
-SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0    # 언샤프 마스크: 결과 = 입력 + AMOUNT × (입력 − 가우시안(σ px))
+GAMMA_RANGE = (0.4, 2.5)    # 감마 = log0.5 / log(평균/255)를 이 범위로 자름 (감마 < 1이면 밝아짐)
+SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0    # 언샤프 마스크: 입력 + AMOUNT × (입력 − 가우시안(σ))
 USE_CLAHE = False           # True면 평활화 대신 CLAHE
 CLAHE_CLIP, CLAHE_TILE = 2.0, (8, 8)
-NOISE_BLOCK = 16            # px, 잡티는 이 크기 블록마다 재서
-NOISE_FLAT_QUANTILE = 0.1   # 가장 평평한 하위 10% 블록 값을 씀. 전체로 재면 결·경계를 잡티로 세어 깨끗한 사진도 흐려짐(제공 사진 13장: 깨끗 최대 1.5, σ3 잡음 2.7 이상)
-NOISE_SAT_MAX = 0.05        # 비율, 0·255 픽셀이 5%보다 많은 블록은 잡티가 잘려 낮게 나오므로 뺌
-# 아래 7개는 10/10 기반 작업(C)이 Plan.md 값으로 넣은 출발값. A가 WP1·WP4에서 확정하고 docs/part_A.md에 적는다
-ROAD_BLUR_SIGMA = 3         # px, 노면 마스크: 색을 재기 전 가우시안 σ. 골재 결·잡티가 색 거리를 흔들지 않게 (Plan.md 1.5 예비 측정 값)
-ROAD_SEED_BOX = (0.30, 0.40, 0.70, 0.80)    # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), 노면 띠 안의 씨앗 영역. 맨 아래 보닛·와이퍼는 피함 (Plan.md 1.5)
-ROAD_CHROMA_MAX = 10        # Lab a·b 거리, 씨앗 색 중앙값과 이보다 가까우면 노면 색 (Plan.md 1.5)
-ROAD_L_K = 4                # 배, |L − 씨앗 L 중앙값| < ROAD_L_K × (1.4826 × 씨앗 L의 MAD + 2)이면 노면 밝기 (Plan.md 1.5)
-ROAD_OPEN_KSIZE = 5         # px, 노면처럼 보이는 픽셀의 작은 점을 지우는 열림 커널 (Plan.md 1.5)
-ROAD_CLOSE_KSIZE = 31       # px, 노면 마스크의 틈(균열·차선 조각)을 메우는 닫힘 타원 커널 (Plan.md 1.5)
-BLUR_RATIO_MAX = 1.5        # 비율, 재흐림 비율 < 이 값이면 흐림 → 샤프닝 (임시값. C가 기반 작업 때 메모리에서 잰 값: 제공 13장 중 흐린 3장 1.13~1.18, 나머지 1.87 이상)
-BLUR_RATIO_SIGMA = 1.5
-# 아래는 10/12 차선 보완(C가 A 동의로 넣음, Plan.md 3.3 (5) 차선). 두 스위치 모두 끄면 v1과 같다
-ROAD_LANE_BRIDGE = False    # (가) 켬·끔. True면 밝고 가는 무채색·노란 픽셀(차선)을 연결 판정과 마스크에서 노면으로 다룸. 흰 차선·노란 중앙선이 노면을 가르는 문제
-ROAD_LANE_KSIZE = 41        # px, 차선 = 가로 또는 세로로 이 폭보다 가는 밝은 줄(흐린 L의 탑햇). 가까이 찍은 차선 폭(China_MotorBike_002209 약 40px)을 담고, 하늘·흰 벽·인도처럼 넓은 밝은 면은 빠짐
-ROAD_LANE_DELTA = 20        # 밝기 단계(L, 0~255), 탑햇(주변보다 밝은 정도)이 이 값 이상이면 밝은 줄. 차선은 노면보다 60~100 밝음(002209: 노면 140, 차선 233)
-ROAD_LANE_WHITE_CHROMA = 12 # Lab a·b 거리, 무채색(128, 128)과 이보다 가까우면 흰 차선 색
-ROAD_LANE_YELLOW_B = 20     # Lab b − 128, 이 값 이상이고 |a − 128|의 2배 이상이면 노란 중앙선 색
-ROAD_CLOSE_BEFORE_SEED = False  # (나) 켬·끔. True면 씨앗 연결 요소를 고르기 전에 ROAD_CLOSE_KSIZE 닫힘을 해, 닫힘 폭보다 가는 차선 건너편을 잇는다
+NOISE_BLOCK = 16            # px, 잡티를 재는 블록 크기
+NOISE_FLAT_QUANTILE = 0.1   # 가장 평평한 하위 10% 블록으로 잡티를 잼 (결·경계를 잡티로 세지 않게)
+NOISE_SAT_MAX = 0.05        # 비율, 0·255 픽셀이 이보다 많은 블록은 잡티 측정에서 뺌
+ROAD_BLUR_SIGMA = 3         # px, 노면 마스크: 색을 재기 전 가우시안 σ
+ROAD_SEED_BOX = (0.30, 0.40, 0.70, 0.80)    # 비율 (x 시작, y 시작, x 끝, y 끝), 노면 색을 배우는 씨앗 영역
+ROAD_CHROMA_MAX = 10        # Lab a·b 거리, 씨앗 색과 이보다 가까우면 노면 색
+ROAD_L_K = 4                # 배, 씨앗 밝기에서 이 배수(× 강건 표준편차) 안이면 노면 밝기
+ROAD_OPEN_KSIZE = 5         # px, 노면 마스크의 작은 점을 지우는 열림 커널
+ROAD_CLOSE_KSIZE = 31       # px, 노면 마스크의 틈(균열·차선)을 메우는 닫힘 커널
+BLUR_RATIO_MAX = 1.5        # 재흐림 비율이 이보다 작으면 흐림 → 샤프닝
+BLUR_RATIO_SIGMA = 1.5      # px, 재흐림 비율을 잴 때 쓰는 가우시안 σ
+ROAD_LANE_BRIDGE = False    # True면 차선(밝고 가는 흰·노란 줄)도 노면으로 다룸
+ROAD_LANE_KSIZE = 41        # px, 이 폭보다 가는 밝은 줄을 차선으로 봄 (탑햇 커널)
+ROAD_LANE_DELTA = 20        # 밝기, 주변보다 이만큼 밝으면 밝은 줄
+ROAD_LANE_WHITE_CHROMA = 12 # Lab a·b 거리, 무채색과 이보다 가까우면 흰 차선
+ROAD_LANE_YELLOW_B = 20     # Lab b − 128, 이 값 이상이면 노란 중앙선
+ROAD_CLOSE_BEFORE_SEED = False  # True면 씨앗 영역을 고르기 전에 닫힘을 먼저 해 차선 건너편 노면을 이음
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
 CRACK_CLOSE_KSIZE = 5
 CRACK_MIN_AREA = 80         # 픽셀 수
-CRACK_MIN_ELONG = 4.0       # 길쭉함(긴 변 / 짧은 변). 이 값 이상이거나
-CRACK_MAX_FILL = 0.1        # 채움 정도(윤곽 넓이 / 회전 사각형 넓이)가 이 값 이하면 균열 (곧은 균열은 길쭉함, 구불·갈래 균열은 채움으로 잡음)
+CRACK_MIN_ELONG = 4.0       # 길쭉함(긴 변 / 짧은 변)이 이 값 이상이거나
+CRACK_MAX_FILL = 0.1        # 채움 정도(윤곽 넓이 / 회전 사각형 넓이)가 이 값 이하면 균열
 DOG_SIGMAS = (3, 12)        # (작은 σ, 큰 σ)
 DOG_THRESH = 12
 POT_OPEN_KSIZE = 5
 POT_MIN_AREA = 150
-POT_MAX_AREA_RATIO = 0.2    # ROI 넓이 대비
+POT_MAX_AREA_RATIO = 0.2    # 노면 띠 넓이 대비
 POT_MAX_ELONG = 3.0
 POT_MIN_SOLIDITY = 0.6
-IOU_THRESH = 0.3            # 정답 비교 기준
-TRAIN_IMAGE_DIR = "data/train/img"  # 경로(맨 위 폴더 기준), 교수 제공 훈련 사진 폴더 (convert_json_gt·evaluate_train)
-TRAIN_ANN_DIR = "data/train/ann"    # 경로, 훈련 사진의 JSON 정답(<사진 이름>.jpg.json) 폴더 (convert_json_gt)
-TRAIN_GT_DIR = "gt/train"           # 경로, JSON을 바꾼 정답 CSV 폴더 (convert_json_gt가 쓰고 evaluate_train이 읽음)
-DARK_RING_PX = 4            # px, 후보의 어둡기를 잴 주변 띠 두께. 어둡기 = 띠의 어두운 쪽 밝기 − 후보 안 평균
-DARK_RING_QUANTILE = 0.25   # 비율, 띠에서 어두운 쪽(하위 25%)과 비교. 평균을 쓰면 넓은 흰 차선의 가장자리가 걸러지지 않음
-CRACK_MIN_DARKNESS = -5     # 밝기 단계(0~255), 균열 후보의 어둡기 하한. 주변보다 밝은 선(흰 차선·횡단보도 점선)을 거름 (훈련 804장 crack_loose 끔: 후보 3300→723, IoU 정밀도 0.015→0.039, 우연을 뺀 IoU 재현율 0.022 유지)
-# 아래는 10/10 기반 작업(C)이 Plan.md 3.4·3.5 값으로 넣은 출발값. B가 WP2·WP3에서 확정하고 docs/part_B.md에 적는다
-DETECT_MODE = "dark"        # 검출 방식: "legacy" = 1차 방식(Canny 균열 + DoG 포트홀), "dark" = 어두운 영역 한 번 추출 + 형태 분류. E3 채택(10/12)으로 "dark", B 동의를 받아 C가 바꿈 (Plan.md 3.10, docs/part_C.md)
-DARK_BG_DOWNSCALE = 4       # 배, 배경을 잴 때 흑백 띠를 1/4로 줄여 중앙값을 빠르게 구함 (Plan.md 3.4 (2) 1·2단계)
-DARK_BG_KSIZE_SMALL = 11    # px(1/4 영상 기준), 밝은 표시 억제용 거친 배경의 중앙값 창. 원래 크기로 약 44px (1단계)
-DARK_BRIGHT_DELTA = 25      # 밝기 단계(0~255), 거친 배경보다 이만큼 밝은 픽셀(흰 차선·횡단보도)을 배경값으로 메움 (1단계)
-DARK_BG_FRAC = 0.5          # 비율, 작은 배경 창 = 띠 높이 × 0.5 (2단계)
-DARK_BG_FRAC_LARGE = 1.0    # 비율, 큰 배경 창 = 띠 높이 × 1.0. 두 창의 큰 값을 써서 큰 포트홀 가운데가 비지 않게 (2단계, 합성 반지름 90: 한 창 43% → 두 창 100%)
-DARK_SIGMA_MIN = 1.0        # 밝기 단계, 잡음 σ의 하한. σ = 0이면 문턱도 0이 되어 띠 전체가 한 영역이 됨 (3단계, Plan.md R1)
-DARK_SIGMA_IN_ROAD = True   # True면 road를 받았을 때 잡음 σ를 노면 안에서만 잼. E3에서 켬·끔을 비교해 B가 정함 (Plan.md 3.4 (1))
-DARK_K_HI = 4               # σ의 배수, 강 문턱 (4단계 이중 문턱)
-DARK_K_LO = 2               # σ의 배수, 약 문턱 (4단계)
-DARK_ABS_MIN = 8            # 밝기 단계, 강 문턱의 하한. σ가 작은 영상에서 잡음이 강 픽셀이 되지 않게 (4단계)
-DARK_CLOSE_KSIZE = 5        # px, 끊긴 조각을 잇는 닫힘 타원 커널 (5단계)
-DARK_MIN_AREA = 40          # 픽셀 수, 이보다 작은 영역(골재 무늬)은 버림 (5단계)
-CRACK_MIN_CIRC_INV = 4      # 비원형도 P²/(4πA), 이 값 이상이면 균열. 폭의 약 12.6배보다 긴 선 (Plan.md 3.5 (2) 출발값, 산점도를 보고 B가 확정)
-POT_MAX_CIRC_INV = 2.5      # 비원형도, 이 값 이하이고 solidity ≥ POT_MIN_SOLIDITY면 포트홀. 경계가 거친 원(c 약 3)도 들어가게 여유 (3.5 (2) 출발값)
+IOU_THRESH = 0.3            # 정답 박스와 겹친 것으로 볼 IoU 기준
+TRAIN_IMAGE_DIR = "data/train/img"  # 학습 사진 폴더
+TRAIN_ANN_DIR = "data/train/ann"    # 학습 사진의 JSON 정답 폴더
+TRAIN_GT_DIR = "gt/train"           # JSON을 CSV로 바꾼 정답 폴더
+DARK_RING_PX = 4            # px, 후보의 어둡기를 잴 주변 띠 두께
+DARK_RING_QUANTILE = 0.25   # 비율, 주변 띠의 어두운 쪽(하위 25%) 밝기와 비교
+CRACK_MIN_DARKNESS = -5     # 밝기, 균열 후보의 어둡기 하한 (주변보다 밝은 흰 차선을 거름)
+DETECT_MODE = "dark"        # "legacy" = Canny 균열 + DoG 포트홀, "dark" = 어두운 영역 추출 후 형태로 분류
+DARK_BG_DOWNSCALE = 4       # 배, 배경을 1/4 크기에서 계산해 빠르게
+DARK_BG_KSIZE_SMALL = 11    # px(1/4 영상), 밝은 표시를 누르기 위한 거친 배경의 중앙값 창
+DARK_BRIGHT_DELTA = 25      # 밝기, 배경보다 이만큼 밝은 픽셀(차선·횡단보도)을 배경값으로 메움
+DARK_BG_FRAC = 0.5          # 비율, 작은 배경 창 = 띠 높이 × 이 값
+DARK_BG_FRAC_LARGE = 1.0    # 비율, 큰 배경 창 = 띠 높이 × 이 값 (큰 포트홀 가운데가 비지 않게)
+DARK_SIGMA_MIN = 1.0        # 밝기, 잡음 σ의 하한
+DARK_SIGMA_IN_ROAD = True   # True면 잡음 σ를 노면 안에서만 잼
+DARK_K_HI = 4               # σ의 배수, 강 문턱
+DARK_K_LO = 2               # σ의 배수, 약 문턱
+DARK_ABS_MIN = 8            # 밝기, 강 문턱의 하한
+DARK_CLOSE_KSIZE = 5        # px, 끊긴 조각을 잇는 닫힘 커널
+DARK_MIN_AREA = 40          # 픽셀 수, 이보다 작은 영역은 버림
+CRACK_MIN_CIRC_INV = 4      # 비원형도 P²/(4πA)가 이 값 이상이면 균열 (가늘고 긴 선)
+POT_MAX_CIRC_INV = 2.5      # 비원형도가 이 값 이하이고 solidity가 충분하면 포트홀 (둥근 모양)
 
-# ===== C: 정량 측정 =====
+# ===== C: 정량 측정·실행 =====
 HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
 SIFT_RATIO = 0.7
 RANSAC_THRESH = 5.0
-HARRIS_NMS = 3              # 픽셀, 3×3 이웃 중 최댓값인 곳만 점 하나로 셈
-RANSAC_MIN_GOOD = 4         # 개, 호모그래피 계산에 필요한 최소 대응점 수. 이보다 적으면 RANSAC 생략
-COMPARE_FIGSIZE = (19.2, 9.0)   # 인치, 비교 그림 크기. 3열 × 640px을 dpi 100에서 거의 1:1로 보여 1px 에지가 뭉개지지 않게
-COMPARE_DPI = 100               # 점/인치, 19.2 × 100 = 가로 1920px
-FONT_BY_PLATFORM = {"win32": "Malgun Gothic", "darwin": "AppleGothic"}  # sys.platform별 한글 글꼴(윈도 맑은 고딕, 맥 기본 탑재)
-FONT_DEFAULT = "DejaVu Sans"    # 그 밖 운영체제: matplotlib 기본 글꼴(한글은 □로 나옴)
-DEMO_SCREEN_FALLBACK = (1280, 720)  # px (가로, 세로), 시연 창: 화면 크기를 못 읽을 때(윈도 밖) 가정하는 가장 흔한 노트북·프로젝터 해상도
-DEMO_SCREEN_MARGIN = 0.9        # 비율, 시연 창이 화면의 90%까지만 쓰게. 작업 표시줄·창 제목 줄 몫
-DEMO_LABEL_HEIGHT = 40          # px, 시연 창 패널 위 제목 띠 높이. 영상 위에 글자를 덮어 쓰지 않게 띠를 따로 붙임
-DEMO_FONT_SIZE = 22             # px, 제목 글자 크기. 세로 사진이 463px까지 줄어도 '전처리 켬: 가우시안+감마 0.53'이 한 줄에 들어가게
-USE_ROAD_MASK = True            # 노면 마스크 켬·끔. True면 pipeline이 road를 검출 함수에 넘기고 노면 밖 후보를 지운 뒤 row를 셈. E3 채택(10/12)으로 켬 (Plan.md 3.3 (7), docs/part_C.md)
-ROAD_KEEP_RULE = "ratio"        # 노면 안 후보를 고르는 규칙. "center" = bbox 중심 픽셀이 노면 안, "ratio" = 후보 영역(윤곽 안쪽까지 채운 픽셀)의 ROAD_KEEP_RATIO_MIN 이상이 노면 안. 10/12 "ratio" 채택: 개발셋 규칙 2 미달(31.17%→31.05%, 652장 중 3장)이지만 영역 92%가 노면 밖인 후보를 노면 안으로 세던 한계를 고치는 수정이라 예외 채택 (3.3 (7), docs/part_C.md)
-DEGRADE_BLUR_SIGMA = 2.0        # px, 인위 저하 blur: 640px 컬러에 ROI 자르기 전 가우시안 σ. 상태 판정이 샤프닝을 골라야 함 (Plan.md 3.2 (6), E6)
-DEGRADE_DARK_GAMMA = 2.2        # 인위 저하 dark: 결과 = 입력^2.2 (0~1 밝기, 어두워짐). 감마 < 1(밝게)을 골라야 함
-DEGRADE_BRIGHT_GAMMA = 0.5      # 인위 저하 bright: 결과 = 입력^0.5 (밝아짐, 과노출 흉내). 감마 > 1(어둡게)을 골라야 함
-DEGRADE_NOISE_SIGMA = 10.0      # 밝기 단계(0~255), 인위 저하 noise: 가우시안 잡음 σ. 가우시안(잡티 제거)을 골라야 함
-DEGRADE_SEED = 0                # 인위 저하 잡음의 seed. 사진마다 이 값에 사진 바이트의 crc32를 더해 씀(사진마다 다른 무늬, 같은 사진은 늘 같음. CONTRIBUTING 3장 5번)
-ROAD_OVERLAY_COLOR = (0, 255, 0)    # BGR, 노면 마스크를 칠할 색: 초록. 균열(빨강)·포트홀(파랑)·노면 시작선(노랑) 윤곽과 헷갈리지 않는 색 (Plan.md 3.7)
-ROAD_OVERLAY_ALPHA = 0.35           # 비율(0~1), 노면 픽셀에 초록을 섞는 정도. 절반보다 옅게 해 노면 결과 후보 윤곽이 비쳐 보이게
-AUTO_BAND_TOP = True                # 자동 띠 높이 켬·끔. True면 pipeline이 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 받은 top에서 위로 넓힘. '자동 띠 + 결 1.5'를 최종 방법으로 채택(10/12)해 켬. 끄면 띠 고정(E3) (docs/part_C.md)
-AUTO_BAND_STEP = 0.1                # 비율(사진 높이 대비), 한 번에 살펴보고 넓히는 구간 높이. 0.5에서 0.0까지 다섯 구간
-AUTO_BAND_ROAD_MIN = 0.95           # 비율, 바로 위 구간에서 노면 마스크 픽셀이 이 비율 이상이면 그 구간까지 넓힘. 후보 0.8·0.9·0.95 중 개발셋 652장에서 채택 규칙 2·3을 모두 넘은 값 (docs/part_C.md)
-AUTO_BAND_USE_TEXTURE = True       # 자동 띠의 결 조건 켬·끔. True면 넓힐 구간 노면 픽셀의 결이 시작 띠 노면과 비슷할 때만 넓힘(흐린 하늘·나무가 노면 마스크에 든 차량 시점을 막으려고). AUTO_BAND_TOP이 꺼져 있으면 효과 없음 (docs/part_C.md)
-AUTO_BAND_TEX_KSIZE = 7             # px, 결 = 흑백 640px 사진의 이 크기 창 안 표준편차(국소 표준편차). Plan.md 3.3의 보닛 규칙과 같은 7×7
-AUTO_BAND_TEX_RATIO = 1.5           # 배, 구간 결 중앙값 ÷ 시작 띠 노면 결 중앙값이 1/1.5 ~ 1.5 안이면 비슷함. 후보 1.25·1.5·2.0을 개발셋에서만 견줌 (docs/part_C.md)
-ROAD_KEEP_RATIO_MIN = 0.5           # 비율, ROAD_KEEP_RULE = "ratio"일 때 후보 영역 픽셀 중 노면 안 비율이 이 값 이상이면 남김. 경계가 비스듬해 상자 중심만 노면에 떨어지는 바깥 후보(Japan_000107 켬: 노면 안 8%)를 거름 (Plan.md 3.3 (7))
+HARRIS_NMS = 3              # px, 이 이웃 안의 최댓값만 코너 하나로 셈
+RANSAC_MIN_GOOD = 4         # 개, 호모그래피에 필요한 최소 대응점 수
+COMPARE_FIGSIZE = (19.2, 9.0)   # 인치, 비교 그림 크기
+COMPARE_DPI = 100               # 비교 그림 해상도 (가로 1920px)
+FONT_BY_PLATFORM = {"win32": "Malgun Gothic", "darwin": "AppleGothic"}  # 운영체제별 한글 글꼴
+FONT_DEFAULT = "DejaVu Sans"    # 그 밖 운영체제의 글꼴 (한글은 깨짐)
+DEMO_SCREEN_FALLBACK = (1280, 720)  # px, 시연 창: 화면 크기를 못 읽을 때 가정하는 해상도
+DEMO_SCREEN_MARGIN = 0.9        # 비율, 시연 창이 화면에서 차지하는 최대 비율
+DEMO_LABEL_HEIGHT = 40          # px, 시연 창 패널 위 제목 띠 높이
+DEMO_FONT_SIZE = 22             # px, 시연 창 제목 글자 크기
+USE_ROAD_MASK = True            # True면 노면 마스크를 검출에 쓰고 노면 밖 후보를 지움
+ROAD_KEEP_RULE = "ratio"        # 노면 안 후보 판정: "center" = 상자 중심이 노면 안, "ratio" = 후보 영역의 일정 비율 이상이 노면 안
+DEGRADE_BLUR_SIGMA = 2.0        # px, 인위 저하 blur의 가우시안 σ
+DEGRADE_DARK_GAMMA = 2.2        # 인위 저하 dark: 입력^2.2 (어두워짐)
+DEGRADE_BRIGHT_GAMMA = 0.5      # 인위 저하 bright: 입력^0.5 (밝아짐)
+DEGRADE_NOISE_SIGMA = 10.0      # 밝기, 인위 저하 noise의 가우시안 잡음 σ
+DEGRADE_SEED = 0                # 인위 저하 잡음의 seed (사진마다 다르지만 같은 사진은 늘 같게)
+ROAD_OVERLAY_COLOR = (0, 255, 0)    # BGR, 노면 마스크를 칠할 색 (초록)
+ROAD_OVERLAY_ALPHA = 0.35           # 0~1, 노면에 초록을 섞는 정도
+AUTO_BAND_TOP = True                # True면 노면 마스크를 보고 띠 위쪽 경계를 자동으로 넓힘
+AUTO_BAND_STEP = 0.1                # 비율(사진 높이 대비), 한 번에 넓혀 보는 구간 높이
+AUTO_BAND_ROAD_MIN = 0.95           # 비율, 구간의 노면 픽셀이 이 이상이면 그 구간까지 넓힘
+AUTO_BAND_USE_TEXTURE = True       # True면 결(질감)이 노면과 비슷한 구간만 넓힘 (하늘·나무 제외)
+AUTO_BAND_TEX_KSIZE = 7             # px, 결(국소 표준편차)을 재는 창 크기
+AUTO_BAND_TEX_RATIO = 1.5           # 배, 구간 결 ÷ 노면 결이 1/1.5 ~ 1.5 안이면 비슷함
+ROAD_KEEP_RATIO_MIN = 0.5           # 비율, "ratio" 규칙에서 후보 영역 중 노면 안 비율의 하한

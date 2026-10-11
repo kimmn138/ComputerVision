@@ -1,12 +1,8 @@
-"""(파트 C) 매칭 실험: 쌍 사진(data/pairs)끼리의 특징점 매칭이 전처리로 좋아지는지 잰다.
-사용법: 맨 위 폴더에서  python run_matching.py --name <이름>   (run_experiment와 같은 이름을 쓰면 결과가 한 폴더에 모임)
-결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
-- matching.csv: 쌍마다 기준 A와 B·C·D를 끔·켬으로 매칭한 행 (pair, target, condition, preprocess,
-  kp_ref, kp_target, good, inliers, inlier_ratio, t_match_ms)
-- matches/<대상 사진 이름>_off.png·_on.png: RANSAC inlier만 초록 선으로 그린 그림
-- config_used_matching.txt: 이번 실행에 쓴 config.py의 대문자 값
-ROI 없이 영상 전체를 640px 흑백으로 쓰고, 켬이면 A를 포함한 모든 사진이 자기 상태에 맞는 전처리를 거친다.
-t_match_ms는 match_pair를 C.TIME_REPEAT번 돌린 중앙값이다. A가 없거나 쌍 정보가 없는 사진은 경고하고 건너뛴다.
+"""매칭 실험: 쌍 사진(data/pairs)의 SIFT 매칭이 전처리로 좋아지는지 잰다.
+실행: python run_matching.py --name <이름>
+결과: results/<이름>/
+- matching.csv: 기준 사진 A와 B·C·D를 전처리 끔·켬으로 매칭한 결과
+- matches/: RANSAC inlier를 초록 선으로 그린 그림
 """
 import argparse
 import glob
@@ -31,7 +27,7 @@ INLIER_COLOR = (0, 255, 0)          # inlier 선: 초록 (BGR)
 
 
 def parse_args(argv=None):
-    """결과 폴더 이름(--name)을 읽는다. run_experiment와 같은 이름을 쓰면 같은 폴더에 결과가 모인다. 1차 결과 폴더 이름은 거부한다."""
+    """명령행에서 결과 폴더 이름(--name)을 읽는다."""
     parser = argparse.ArgumentParser(description="쌍 사진 매칭의 전처리 끔·켬 비교 실험")
     parser.add_argument("--name", default=rx.DEFAULT_NAME, help=f"결과 폴더 이름 (results/<name>/, 기본 {rx.DEFAULT_NAME})")
     args = parser.parse_args(argv)
@@ -40,8 +36,8 @@ def parse_args(argv=None):
 
 
 def group_pairs(paths, parse_fn=io_utils.parse_name):
-    """사진을 이름의 pair 번호로 묶어 {pair: {role: (경로, 조건)}}과 경고 목록을 돌려준다.
-    이름 규칙 위반·쌍 정보 없음·같은 기호 두 장·기준 A 없음은 경고로 남기고 건너뛴다(실험 전체는 계속)."""
+    """사진을 pair 번호로 묶어 ({pair: {role: (경로, 조건)}}, 경고 목록)을 돌려준다.
+    이름이 잘못됐거나 기준 사진 A가 없는 쌍은 경고만 남기고 건너뛴다."""
     groups, warnings = {}, []
     for path in paths:
         name = os.path.basename(path)
@@ -66,8 +62,7 @@ def group_pairs(paths, parse_fn=io_utils.parse_name):
 
 
 def prepare(path, use_preprocess):
-    """사진을 640px 흑백으로 만든다. 켬이면 그 사진의 상태를 재서 고른 전처리를 거친다(모든 사진에 같은 규칙).
-    (흑백 영상, steps)를 돌려준다."""
+    """사진을 640px 흑백으로 읽고, 켬이면 상태에 맞는 전처리를 적용한다. (흑백 영상, steps)를 돌려준다."""
     gray = cv.cvtColor(io_utils.resize_width(io_utils.load_image(path)), cv.COLOR_BGR2GRAY)
     if not use_preprocess:
         return gray, dict(analyze.NO_STEPS)
@@ -76,7 +71,7 @@ def prepare(path, use_preprocess):
 
 
 def timed_match(g_ref, g_target, repeat=C.TIME_REPEAT):
-    """match_pair를 repeat번 돌려 (첫 결과, 시간 중앙값 ms)를 돌려준다. 한 번 잰 시간은 튀므로 중앙값을 쓴다."""
+    """match_pair를 repeat번 돌려 (첫 결과, 시간 중앙값 ms)를 돌려준다."""
     results, times = [], []
     for _ in range(max(1, repeat)):
         t0 = time.perf_counter()
@@ -86,8 +81,7 @@ def timed_match(g_ref, g_target, repeat=C.TIME_REPEAT):
 
 
 def make_row(pair, target, condition, use_preprocess, m, t_ms):
-    """matching.csv 한 행. RANSAC을 못 했으면(mask None) inlier_ratio는 0이 아닌 NaN으로 둔다.
-    0은 '매칭은 됐지만 전부 outlier'의 뜻으로 남기고, 매칭 실패는 평균에서 빠지게 하려는 것."""
+    """matching.csv 한 행을 만든다. RANSAC을 못 했으면 inlier_ratio를 NaN으로 둬 평균에서 빠지게 한다."""
     ratio = math.nan if m["mask"] is None else m["inlier_ratio"]
     return {"pair": pair, "target": target, "condition": condition,
             "preprocess": "on" if use_preprocess else "off",
@@ -96,8 +90,7 @@ def make_row(pair, target, condition, use_preprocess, m, t_ms):
 
 
 def draw_inliers(g_ref, g_target, m):
-    """RANSAC inlier만 초록 선으로 이은 그림(컬러)을 만든다. mask가 None이면 선을 하나도 그리지 않는다.
-    drawMatches는 matchesMask=None을 '전부 그리기'로 보므로 None을 그대로 넘기지 않는다."""
+    """RANSAC inlier만 초록 선으로 이은 그림을 만든다. RANSAC을 못 했으면 선을 그리지 않는다."""
     mask = m["mask"] if m["mask"] is not None else [0] * len(m["matches"])
     return cv.drawMatches(g_ref, m["k1"], g_target, m["k2"], m["matches"], None,
                           matchColor=INLIER_COLOR, matchesMask=mask,
@@ -105,11 +98,11 @@ def draw_inliers(g_ref, g_target, m):
 
 
 def process_pair(pair, members, fig_dir):
-    """한 쌍에서 기준 A와 나머지(B·C·D)를 끔·켬으로 매칭해 행을 만들고 inlier 그림을 저장한다. 오류는 main이 잡는다."""
+    """한 쌍에서 기준 A와 나머지(B·C·D)를 끔·켬으로 매칭해 행 list를 만들고 그림을 저장한다."""
     ref_path = members[REF_ROLE][0]
     rows = []
     for use in (False, True):
-        g_ref, _ = prepare(ref_path, use)               # 기준은 끔·켬마다 한 번만 준비
+        g_ref, _ = prepare(ref_path, use)               # 기준 사진은 끔·켬마다 한 번만 준비
         for role in sorted(r for r in members if r != REF_ROLE):
             path, condition = members[role]
             g_target, _ = prepare(path, use)
@@ -121,8 +114,7 @@ def process_pair(pair, members, fig_dir):
 
 
 def main(argv=None, pair_dir=PAIR_DIR, results_dir="results", parse_fn=io_utils.parse_name):
-    """쌍 사진 전체를 끔·켬으로 매칭해 results/<name>/에 표·그림을 저장한다. 처리 중 오류가 난 쌍이 있으면 1, 없으면 0.
-    쌍 사진이 없거나 모두 건너뛰어도 머리글만 있는 matching.csv를 쓰고 0으로 끝난다."""
+    """쌍 사진 전체를 매칭해 결과를 저장한다. 실패한 쌍이 있으면 1, 없으면 0을 돌려준다."""
     args = parse_args(argv)
     out_dir = f"{results_dir}/{args.name}"
     fig_dir = f"{out_dir}/matches"
