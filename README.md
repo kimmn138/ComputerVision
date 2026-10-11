@@ -24,7 +24,7 @@ python run_experiment.py --name check
 | src/ | 파이프라인 모듈 (io_utils·analyze·preprocess = A, detect = B, config·features·visualize·pipeline = C) | 파일별 |
 | data/ | 사진 폴더(provided·own·pairs·train, Git 제외), roi.csv, shot_log.csv | A |
 | gt/ | 정답 박스 CSV | B |
-| tools/ | 파트별 도구 스크립트 | A·B |
+| tools/ | 파트별 도구 스크립트 (run_all.py는 E0~E6 일괄 실행) | A·B·C |
 | tests/ | 약속 검사(check_contract.py)와 파트별 시험 | C·각자 |
 | docs/ | 파트별 파라미터 기록과 AI 활용 기록, 계획서 확정본(plan_2nd.md), 작업 지시서(tasks), 검토 그림(review) | 각자 (plan_2nd·tasks·review는 C) |
 | Plan.md | 2차 개선 계획: 기준 수치, 실험 설계, 일정 | C |
