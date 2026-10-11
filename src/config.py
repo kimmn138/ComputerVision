@@ -33,6 +33,7 @@ ROAD_L_K = 4                # 배, |L − 씨앗 L 중앙값| < ROAD_L_K × (1.4
 ROAD_OPEN_KSIZE = 5         # px, 노면처럼 보이는 픽셀의 작은 점을 지우는 열림 커널 (Plan.md 1.5)
 ROAD_CLOSE_KSIZE = 31       # px, 노면 마스크의 틈(균열·차선 조각)을 메우는 닫힘 타원 커널 (Plan.md 1.5)
 BLUR_RATIO_MAX = 1.5        # 비율, 재흐림 비율 < 이 값이면 흐림 → 샤프닝 (임시값. C가 기반 작업 때 메모리에서 잰 값: 제공 13장 중 흐린 3장 1.13~1.18, 나머지 1.87 이상)
+BLUR_RATIO_SIGMA = 1.5
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
