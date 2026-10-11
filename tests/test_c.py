@@ -1071,7 +1071,7 @@ def test_degrade_main():
 def test_run_all_plan():
     """run_all의 실험 목록: 결과 폴더는 겹치지 않고(39장 최종과 매칭만 final을 함께 씀) 1차 결과 폴더가 아니며, 학습 데이터 실행은
     이름 끝이 데이터(_all·_dev·_test)이거나 test_once·final_test다. 명령은 각 도구가 그대로 받고, E0·E1·E1b는 1차 값(base 세트·legacy·
-    띠 0.5)으로 고정, 39장 1차 설정은 --param-set이 없어 그 값을 실행 중에만 덮는다. 최종·시험셋 최종은 config 그대로 돈다."""
+    띠 0.5)으로 고정, run_experiment에 없는 옵션(1차 legacy 값·σ)은 실행 중에만 덮는다. 최종·시험셋 최종은 config 그대로 돈다."""
     from tools import evaluate_train as et
     from tools import run_all as ra
     names = collections.Counter(e["name"] for e in ra.EXPERIMENTS)
@@ -1082,56 +1082,104 @@ def test_run_all_plan():
             check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test"),
                   f"run_all: 학습 데이터 폴더 이름 끝에 데이터가 없음 ({e['name']})")
         if e["tool"]:
-            argv, _ = ra.command(e)
+            argv, _ = ra.command(e, ra.resolve(e, {"E0"}))
             args = parse_quietly(parsers[e["tool"]], argv)
             check(args is not None and args.name == e["name"], f"run_all: {e['id']} 명령을 도구가 받지 않음 ({' '.join(argv)})")
-    e1 = parse_quietly(et.parse_args, ra.command(ra.EXP["E1"])[0])
+
+    def first(sid):
+        return ra.command(ra.EXP[sid], ra.resolve(ra.EXP[sid], {"E0"}))
+
+    e1 = parse_quietly(et.parse_args, first("E1")[0])
     check(e1.param_set == "base" and e1.overrides == {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.5, "DETECT_MODE": "legacy"},
           f"run_all: E1이 1차 값 + 노면 마스크가 아님 ({e1.param_set}, {e1.overrides})")
-    e3s = parse_quietly(et.parse_args, ra.command(ra.EXP["E3s"])[0])
+    e3s = parse_quietly(et.parse_args, first("E3s")[0])
     check(e3s.param_set is None and e3s.overrides == {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.5, "DETECT_MODE": "dark",
-                                                      "DARK_SIGMA_IN_ROAD": False}, f"run_all: E3 σ 띠 전체의 옵션이 틀림 ({e3s.overrides})")
-    argv, pins = ra.command(ra.EXP["F39e0"])
+                                                      "DARK_SIGMA_IN_ROAD": False}, f"run_all: E3σ의 옵션이 틀림 ({e3s.overrides})")
+    argv, pins = first("F39e0")
     base = {k: v for k, v in et.PARAM_SETS[0].items() if k != "name"}
     check(pins == {**base, "ROI_TOP_DEFAULT": 0.5} and "--roi-top" not in argv and argv[-2:] == ["--name", "e0"],
           f"run_all: 39장 1차 설정이 1차 값을 실행 중에만 덮지 않음 ({argv}, {sorted(pins)})")
-    check(ra.command(ra.EXP["T"]) == (["--split", "test", "--name", "test_once"], {})
-          and ra.command(ra.EXP["F39"]) == (["--roi", "csv", "--name", "final"], {}),
+    check(first("E3_39") == (["--roi", "auto", "--detect", "dark", "--mask", "on", "--roi-top", "0.5", "--name", "e3_dark_mask_auto"],
+                             {"DARK_SIGMA_IN_ROAD": True}), f"run_all: 39장 E3 자동 ROI의 명령·고정 값이 틀림 ({first('E3_39')})")
+    check(first("T") == (["--split", "test", "--name", "test_once"], {}) and first("F39") == (["--roi", "csv", "--name", "final"], {}),
           "run_all: 최종 설정 실행에 config를 바꾸는 옵션이 붙음")
 
 
+def test_run_all_resolve():
+    """앞선 잠정 채택이 뒤 단계 설정을 정한다: E1b가 채택되면 마스크를 켜는 E3·E3σ·39장 E3는 띠 0.3(마스크를 끄는 E2는 0.5 그대로),
+    E6 1회는 E1~E3 가운데 마지막 잠정 채택 단계의 설정에 저하 종류만 바꾸고, 아무것도 채택되지 않으면 E0 설정으로 돈다."""
+    from tools import run_all as ra
+    none, e1b = {"E0"}, {"E0", "E1", "E1b"}
+    band = {sid: (ra.resolve(ra.EXP[sid], none)["roi_top"], ra.resolve(ra.EXP[sid], e1b)["roi_top"]) for sid in ("E2", "E3", "E3s", "E3_39")}
+    check(band == {"E2": (0.5, 0.5), "E3": (0.5, 0.3), "E3s": (0.5, 0.3), "E3_39": (0.5, 0.3)}, f"resolve: E1b 채택에 따른 띠가 틀림 ({band})")
+    e6 = ra.EXP["E6_blur"]
+    check(ra.resolve(e6, none) == {**ra.FIRST, "degrade": "blur"}, f"resolve: 채택이 없을 때 E6 1회가 E0 설정이 아님 ({ra.resolve(e6, none)})")
+    after = {"E0", "E1", "E1b", "E3"}
+    check(ra.resolve(e6, after) == {**ra.resolve(ra.EXP["E3"], after), "degrade": "blur"} and ra.resolve(e6, after)["roi_top"] == 0.3,
+          f"resolve: E6 1회가 마지막 잠정 채택(E3, 띠 0.3)의 설정이 아님 ({ra.resolve(e6, after)})")
+    check(ra.last_adopted({"E0", "E1", "E2"}) == "E2" and ra.last_adopted({"E0"}) == "E0" and ra.last_adopted({"E0", "E3s", "E1"}) == "E3s",
+          "last_adopted: 채택 순서로 마지막 단계를 고르지 않음")
+
+
 def test_run_all_adoption():
-    """채택 표: 각 단계를 직전 채택 단계와 개발셋·전처리 끔으로 견준다. 규칙 2(균형 정확도가 오름)·3(우연을 뺀 균열 재현율이
-    1%p 넘게 안 떨어짐)을 넘으면 잠정 채택되어 다음 단계의 비교 기준이 되고, 규칙 1은 사람 확인, --reject로 뺀 단계는 채택하지 않는다.
-    꼭 1%p 떨어지면 통과, 균형 정확도가 같으면 못 넘음, 값이 없으면 계산 불가. 바꿀 config 값은 잠정 채택 방법과 지금 config의 차이다."""
+    """채택 표: E1←E0, E1b←E1, E2←E0, E3←E1(E1b가 채택되면 E1b), E3σ←E3로 한 번에 하나만 바뀌게 견준다. 규칙 2(균형 정확도가 오름)·
+    3(우연을 뺀 균열 재현율이 1%p 넘게 안 떨어짐)을 넘고 비교 기준이 채택된 단계일 때만 잠정 채택한다. 꼭 1%p 떨어지면 통과, 균형 정확도가
+    같으면 못 넘음, 기준과 네 값이 같으면 '효과 없음'. E3는 E2와의 차이를 참고로 두고, 처리 시간(참고)을 함께 낸다.
+    --reject로 E1b를 빼면 띠 0.3으로 돈 E3·E3σ는 '다시 돌려야 함'이 된다. 바꿀 config 값은 마지막 잠정 채택 설정과 지금 config의 차이다."""
     from tools import run_all as ra
 
-    def row(sens, fp, balanced, net):
-        return {"sensitivity": sens, "fp_per_image": fp, "balanced": balanced, "crack_ctr_recall_net": net}
+    def row(sens, fp, balanced, net, ms=10.0):
+        return {"sensitivity": sens, "fp_per_image": fp, "balanced": balanced, "crack_ctr_recall_net": net,
+                "t_pre_ms_mean": 0.0, "t_detect_ms_mean": ms, "t_road_ms_mean": 1.0}
 
-    off = {"E0": row(0.20, 8.0, 0.50, 0.016), "E1": row(0.18, 3.0, 0.55, 0.006),     # 균열 꼭 −1%p → 채택
-           "E1b": row(0.25, 4.0, 0.55, 0.020),                                       # 균형 정확도 같음 → 규칙 2
-           "E2": row(0.30, 2.0, 0.60, -0.0041),                                      # 균열 −1.01%p → 규칙 3
-           "E3": row(0.30, 1.0, 0.62, 0.010), "E3s": None, "E4": None}
-    states = {sid: {"status": "완료" if off[sid] else "아직 구현 전: x", "commit": "", "done": bool(off[sid])} for sid in off}
-    table, champion = ra.adoption(off, states)
-    got = dict(zip(table["stage_id"], zip(table["base"], table["verdict"])))
-    check(champion == "E3" and got["E1"] == ("E0", "잠정 채택 (규칙 1은 사람 확인)") and got["E1b"] == ("E1", "되돌림: 규칙 2 못 넘음")
-          and got["E2"] == ("E1", "되돌림: 규칙 3 못 넘음") and got["E3"][0] == "E1" and got["E3s"] == ("E3", "아직 구현 전: x"),
-          f"adoption: 직전 채택 단계나 판정이 틀림 ({got}, 채택 {champion})")
-    check(table.set_index("stage_id").loc["E1", "rule1"] == "사람 확인 (민감도↓·오검출↓)", "adoption: 규칙 1이 사람 확인이 아님")
-    table, champion = ra.adoption(off, states, reject=["E1"])
+    def done(off, sid, adopted):
+        return {"off": off, "status": "완료", "opts": ra.resolve(ra.EXP[sid], adopted)}
+
+    a, a1b = {"E0"}, {"E0", "E1", "E1b"}
+    results = {"E0": done(row(0.20, 8.0, 0.50, 0.016), "E0", a),
+               "E1": done(row(0.18, 3.0, 0.55, 0.006), "E1", a),                    # E0와: 균형 ↑, 균열 꼭 −1%p → 채택
+               "E1b": done(row(0.25, 4.0, 0.60, 0.010), "E1b", a),                  # E1과: 균형 ↑ → 채택
+               "E2": done(row(0.30, 2.0, 0.60, -0.0041), "E2", a),                  # E0와: 균열 −2.01%p → 규칙 3
+               "E3": done(row(0.30, 1.0, 0.62, 0.012, 14.0), "E3", a1b),            # 띠 0.3, E1b와: 채택
+               "E3s": done(row(0.30, 1.0, 0.62, 0.012, 14.0), "E3s", a1b)}          # E3와 네 값이 같음 → 효과 없음
+    table, adopted = ra.adoption(results)
     got = table.set_index("stage_id")
-    check(champion == "E3" and got.loc["E1", "verdict"] == "되돌림: 사람 확인(규칙 1)에서 뺌" and got.loc["E1b", "base"] == "E0"
-          and got.loc["E2", "changed"] == "검출 legacy→dark, 노면 마스크 켬→끔, 띠 위쪽 0.3→0.5" and got.loc["E3", "base"] == "E1b",
-          f"adoption --reject E1: 다음 단계의 비교 기준이 E0·E1b로 바뀌지 않음 ({dict(got['base'])})")
+    verdicts = {sid: (got.loc[sid, "base"], got.loc[sid, "verdict"]) for sid in ("E1", "E1b", "E2", "E3", "E3s")}
+    check(adopted == {"E0", "E1", "E1b", "E3"} and verdicts == {
+        "E1": ("E0", "잠정 채택 (규칙 1은 사람 확인)"), "E1b": ("E1", "잠정 채택 (규칙 1은 사람 확인)"),
+        "E2": ("E0", "되돌림: 규칙 3 못 넘음"), "E3": ("E1b", "잠정 채택 (규칙 1은 사람 확인)"),
+        "E3s": ("E3", "되돌림: 규칙 2 못 넘음 (비교 기준과 같음: 효과 없음)")},
+        f"adoption: 비교 기준이나 판정이 틀림 ({verdicts}, 채택 {adopted})")
+    e3 = got.loc["E3"]
+    check(e3["changed"] == "검출 legacy→dark" and e3["ref_base"] == "E2" and e3["ref_changed"] == "노면 마스크 끔→켬, 띠 위쪽 0.5→0.3"
+          and e3["ref_rule2"] == "통과" and (e3["time_base"], e3["time"]) == (11.0, 15.0)
+          and got.loc["E1", "rule1"] == "사람 확인 (민감도↓·오검출↓)",
+          f"adoption: E3의 바뀐 설정·E2 참고·처리 시간이 틀림 ({e3['changed']}, {e3['ref_changed']}, {e3['time_base']}→{e3['time']})")
+
+    dep = {**results, "E1": done(row(0.20, 8.0, 0.45, 0.016), "E1", a),        # E0보다 균형 ↓ → 되돌림
+           "E1b": done(row(0.20, 8.0, 0.50, 0.016), "E1b", a),                  # E1보다는 나아도 E1이 채택되지 않음
+           "E3": done(row(0.30, 1.0, 0.62, 0.012), "E3", a), "E3s": done(row(0.30, 1.0, 0.62, 0.012), "E3s", a)}
+    table, adopted = ra.adoption(dep)
+    got = table.set_index("stage_id")
+    check(got.loc["E1b", "verdict"] == "채택 안 함: 비교 기준(E1)이 채택되지 않음" and got.loc["E3", "base"] == "E1"
+          and got.loc["E3", "verdict"].startswith("채택 안 함") and adopted == {"E0"},
+          f"adoption: 비교 기준이 채택되지 않은 단계를 채택함 ({dict(got['verdict'])})")
+
+    table, adopted = ra.adoption(results, reject=["E1b"])
+    got = table.set_index("stage_id")
+    check(got.loc["E1b", "verdict"] == "되돌림: 사람 확인(규칙 1)에서 뺌" and adopted == {"E0", "E1"}
+          and got.loc["E3", "verdict"].startswith("다시 돌려야 함") and "띠 위쪽 0.3→0.5" in got.loc["E3", "verdict"]
+          and got.loc["E3s", "verdict"].startswith("다시 돌려야 함"),
+          f"adoption --reject E1b: 띠 0.3으로 돈 E3를 다시 돌리라고 하지 않음 ({dict(got['verdict'])})")
     check(ra.passes(float("nan"), lambda d: d > 0) is None and ra.rule_text(None) == "계산 불가(값 없음)", "adoption: 값이 없을 때 계산 불가가 아님")
+
     with patched(C, "USE_ROAD_MASK", False), patched(C, "DETECT_MODE", "legacy"), patched(C, "DARK_SIGMA_IN_ROAD", True), \
             patched(C, "ROI_TOP_DEFAULT", 0.5):
-        changes = ra.config_changes(ra.EXP["E3"]["opts"])
-        same = ra.config_changes(ra.EXP["E0"]["opts"])
-    check([(n, v) for n, v, _ in changes] == [("USE_ROAD_MASK", True), ("DETECT_MODE", "dark")]
-          and changes[0][2].startswith("C 구역") and changes[1][2].startswith("B 구역") and same == [],
+        changes = ra.config_changes(ra.resolve(ra.EXP["E3"], a1b))
+        same = ra.config_changes(ra.FIRST)
+    check([(n, v) for n, v, _ in changes] == [("USE_ROAD_MASK", True), ("DETECT_MODE", "dark"), ("ROI_TOP_DEFAULT", 0.3)]
+          and changes[0][2].startswith("C 구역") and changes[1][2].startswith("B 구역") and changes[2][2].startswith("공통")
+          and {n for n, _, _ in same} <= set(ra.param_values("base")),
           f"config_changes: 바꿀 값이나 구역 주인이 틀림 ({changes}, E0 {same})")
     owners = ra.section_owners()
     check(owners["ROI_TOP_DEFAULT"].startswith("공통") and owners["DARK_SIGMA_IN_ROAD"].startswith("B")
@@ -1139,39 +1187,50 @@ def test_run_all_adoption():
 
 
 def test_run_all_ready():
-    """dark 검출·노면 마스크가 자리인지 알아본다(자리 = NotImplementedError, 띠 전체 255). 구현 전인 기능이 필요한 실험은
-    그 이름을 돌려주어 건너뛰고, 매칭과 1차 방법은 늘 돌리며, E4(점수)는 자리다. 최종 설정 실험은 지금 config로 판단한다."""
+    """구현 여부는 A·B 시험의 @todo가 지워졌는지로만 정하고, 합성 영상 검사는 어긋날 때 경고만 한다. 신호가 '구현됨'이면 합성 띠에서
+    아무것도 안 지우는 마스크도 돌리고(E1 = E0이면 '효과 없음' 결과), 신호를 못 찾으면 건너뛰지 않고 돌린다.
+    구현 전 기능이 필요한 실험만 그 이름을 돌려주고(매칭·1차 방법은 늘 돌고 E4는 자리), 최종 설정 실험은 지금 config로 판단한다."""
     from tools import run_all as ra
-
-    def not_yet(gray, road=None):
-        raise NotImplementedError("자리")
-
-    def half(bgr):
-        out = np.full(bgr.shape[:2], 255, np.uint8)
-        out[:, : bgr.shape[1] // 2] = 0
-        return out
-
-    with patched(detect, "detect_cracks", not_yet), patched(io_utils, "road_mask", lambda bgr: np.full(bgr.shape[:2], 255, np.uint8)):
-        before = (ra.dark_ready(), ra.mask_ready())
-    with patched(detect, "detect_cracks", lambda gray, road=None: ([], np.zeros_like(gray))), \
-            patched(detect, "detect_potholes", lambda gray, road=None: ([], np.zeros_like(gray))), patched(io_utils, "road_mask", half):
-        after = (ra.dark_ready(), ra.mask_ready())
-    check(before == (False, False) and after == (True, True), f"run_all: 구현 여부를 잘못 앎 (자리 {before}, 구현 {after})")
-    none, both = {"dark": False, "mask": False}, {"dark": True, "mask": True}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "test_x.py")
+        Path(path).write_text("def todo(reason):\n    return lambda fn: fn\n\n\n@todo('구현 뒤')\ndef test_a():\n    pass\n\n\n"
+                              "def test_b():\n    pass\n", encoding="utf-8")
+        signals = (ra.todo_removed(path, "test_a"), ra.todo_removed(path, "test_b"), ra.todo_removed(path, "test_c"),
+                   ra.todo_removed(os.path.join(tmp, "none.py"), "test_a"))
+        check(signals == (False, True, None, None), f"todo_removed: @todo 신호를 잘못 읽음 ({signals})")
+        with patched(ra, "SIGNALS", {"mask": (path, "test_b"), "dark": (path, "test_a")}), \
+                patched(io_utils, "road_mask", lambda bgr: np.full(bgr.shape[:2], 255, np.uint8)), \
+                patched(detect, "detect_cracks", lambda gray, road=None: ([], np.zeros_like(gray))), \
+                patched(detect, "detect_potholes", lambda gray, road=None: ([], np.zeros_like(gray))):
+            ready = ra.readiness()              # 마스크: @todo는 지웠지만 합성 띠에서 0이 없음, dark: @todo가 남았지만 합성 영상에서 돎
+        check(ready["mask"] is True and ready["dark"] is False and len(ready["notes"]) == 2
+              and "효과 없음" in ready["notes"][0] and "@todo를 지우지 않았는지" in ready["notes"][1],
+              f"readiness: @todo 신호로 정하지 않았거나 경고가 틀림 ({ready})")
+        with patched(ra, "SIGNALS", {"mask": (path, "test_gone"), "dark": (path, "test_a")}):
+            ready = ra.readiness()
+        check(ready["mask"] is True and any("찾지 못해" in n for n in ready["notes"]),
+              f"readiness: 신호를 못 찾았는데 건너뜀 ({ready})")
+    none, both = {"dark": False, "mask": False, "notes": []}, {"dark": True, "mask": True, "notes": []}
     check(ra.unmet(ra.EXP["E3"], none) == ["dark 검출(B)", "노면 마스크(A)"] and ra.unmet(ra.EXP["E3"], both) == []
-          and ra.unmet(ra.EXP["E0"], none) == [] and ra.unmet(ra.EXP["FM"], none) == [] and ra.unmet(ra.EXP["E4"], both) == ["점수 τ(B, Should)"],
-          "run_all: 실험마다 필요한 기능을 잘못 셈")
+          and ra.unmet(ra.EXP["E0"], none) == [] and ra.unmet(ra.EXP["FM"], none) == []
+          and ra.unmet(ra.EXP["E4"], both) == [ra.EXP["E4"]["todo"]], "run_all: 실험마다 필요한 기능을 잘못 셈")
     with patched(C, "DETECT_MODE", "dark"), patched(C, "USE_ROAD_MASK", True):
         check(ra.unmet(ra.EXP["F39"], none) == ["dark 검출(B)", "노면 마스크(A)"], "run_all: 최종 설정 실험이 config를 보지 않음")
+    skips = [e["id"] for e, _ in ra.skip_list([e for e in ra.EXPERIMENTS if e["stage"] == "compare"], none)]
+    check(skips == ["E1", "E1b", "E2", "E3", "E3s", "E4", "E1_39", "E3_39"], f"skip_list: 건너뛸 실험 목록이 틀림 ({skips})")
 
 
 def test_run_all_refuse():
     """dry-run은 실험·명령·폴더·예상 시간만 보여 주고 결과 폴더를 만들지 않는다. 재현은 test_once 결과가 없으면, 시험은 test_once가
-    이미 있으면(끝나지 않은 폴더라도) 아무것도 돌리지 않고 거부한다(끝 코드 2)."""
+    이미 있으면(끝나지 않은 폴더라도) 아무것도 돌리지 않고 거부한다(끝 코드 2). 건너뛸 실험이 있으면 목록을 보여 주고 Enter를 받아야
+    시작하며, 입력을 못 받으면 아무것도 돌리지 않고 멈춘다."""
     from tools import run_all as ra
 
-    def must_not_run(paths):
-        raise AssertionError("거부해야 하는데 실행 전 확인까지 감")    # 거부가 깨져도 시험셋을 실제로 돌리지 않게
+    def must_not_run(*args):
+        raise AssertionError("거부·확인에서 멈춰야 하는데 더 감")      # 거부가 깨져도 실험·시험셋을 실제로 돌리지 않게
+
+    def eof(prompt):
+        raise EOFError
 
     with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
         paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
@@ -1186,6 +1245,13 @@ def test_run_all_refuse():
             code = ra.main(["test", "--yes"], paths)
         check(code == 2 and "한 번만" in printed.getvalue() and "끝나지 않은 실행" in printed.getvalue()
               and os.listdir(paths["results"]) == ["test_once"], f"run_all test: test_once가 있는데 거부하지 않음 ({code})")
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", lambda paths: [("확인", True, "", True)]), \
+            patched(ra, "readiness", lambda: {"mask": False, "dark": False, "notes": []}), patched(ra, "run_one", must_not_run):
+        paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["compare"], paths, ask=eof)
+        check(code == 2 and "건너뛸 실험 8개" in printed.getvalue() and not os.path.exists(paths["results"]),
+              f"run_all compare: 건너뛸 실험의 확인 없이 시작함 ({code})")
 
 
 def test_run_all_report_empty():
@@ -1199,8 +1265,9 @@ def test_run_all_report_empty():
                                                             "provided_vs_own", "degrade", "39_images"], 1)}
         check(expect | {"adoption.csv", "summary.md", "reject.txt"} == set(os.listdir(out)), f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
         text = (out / "summary.md").read_text(encoding="utf-8")
-        check(report["champion"] == "E0" and not any(s["done"] for s in report["states"].values())
-              and "아직 안 돌림" in text and "아직 구현 전: 점수 τ" in text, "build_report: 결과가 없을 때 상태를 적지 않음")
+        check(report["last"] == "E0" and not any(s["done"] for s in report["states"].values())
+              and "아직 안 돌림" in text and "아직 구현 전: 점수 τ" in text and "구현 여부(A·B 시험의 @todo 기준)" in text,
+              "build_report: 결과가 없을 때 상태를 적지 않음")
 
 
 def test_run_all_judgement():
@@ -1243,8 +1310,8 @@ def main():
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
                test_degrade_option_and_judge, test_degrade_main,
-               test_run_all_plan, test_run_all_adoption, test_run_all_ready, test_run_all_refuse, test_run_all_report_empty,
-               test_run_all_judgement):
+               test_run_all_plan, test_run_all_resolve, test_run_all_adoption, test_run_all_ready, test_run_all_refuse,
+               test_run_all_report_empty, test_run_all_judgement):
         try:
             fn()
         except unittest.SkipTest as e:

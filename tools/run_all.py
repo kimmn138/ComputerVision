@@ -1,22 +1,27 @@
 """(파트 C) E0~E6 실험을 단계마다 명령 하나로 돌리고, 보고서 표(CSV)와 요약(summary.md)을 만든다(Plan.md 3.7·3.10).
 사용법: 맨 위 폴더에서  python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes] [--reject E1,E3]
 순서: compare(비교) → 사용자가 채택을 정하고 구역 주인이 config를 고침 → final(최종) → test(시험, 한 번만) → (10/12) repro(재현)
-- compare: 개발셋에서 E0(804장 재현 포함)·E1·E1b·E2·E3(σ 노면 안·띠 전체)와 E6 1회(저하 다섯 가지, E2 설정 = B의 dark 1차).
+- compare: 개발셋에서 E0(804장 재현 포함)·E1·E1b·E2·E3·E3σ를 차례로 돌리며, 끝날 때마다 채택 규칙 2·3으로 잠정 판정해 뒤 단계 설정에 반영한다.
+  비교는 한 번에 하나만 바뀌게: E1은 E0와, E1b는 E1과, E2는 E0와, E3는 마스크를 켠 1차 설정(E1, E1b가 채택되면 E1b)과, E3σ는 E3와.
+  E1b가 채택되면 마스크를 켜는 E3·E3σ·39장 E3는 띠 0.3으로 돈다(마스크를 끄는 E2는 0.5 그대로). E3는 E2와의 차이(마스크만 다름)도 참고로 낸다.
+  E6 1회(저하 다섯 가지)는 E1~E3 가운데 마지막으로 잠정 채택된 단계의 설정으로(없으면 E0), 39장 E1·E3 자동 ROI는 채택 판단에 쓰지 않는 참고로 돈다.
   E0·E1·E1b는 1차 값(--param-set base, legacy, 띠 0.5)으로 고정해 config가 바뀐 뒤에 다시 돌려도 같은 조건이다.
-  각 단계를 직전 채택 단계와 채택 규칙 세 개로 견준 표와, 채택하면 바꿀 config 값 목록(구역 주인과 함께)을 낸다.
-  config 파일은 고치지 않는다. 규칙 1은 점수 문턱이 없어 사람이 보고, 뺄 단계는 --reject로 준다(표만 다시: tables --reject).
+  채택 표(규칙 1은 민감도와 영상당 오검출을 나란히 둔 사람 확인, 처리 시간은 단일 실행 참고값)와 바꿀 config 값 목록(구역 주인과 함께)을 낸다.
+  config 파일은 고치지 않는다. 사람이 규칙 1에서 뺀 단계는 --reject로 주고, 그 때문에 뒤 단계 설정이 바뀌면 표가 '다시 돌려야 함'으로 알린다.
 - final: config 그대로(채택 결과를 반영한 최종 설정)로 39장(최종 roi.csv·최종 자동 ROI·1차 설정), 매칭, E5(개발셋 끔·켬), E6 2회.
-  처리 시간은 이 단계 값만 표에 쓴다. 시작할 때 전원 연결·다른 프로그램 닫기를 알리고 Enter를 기다린다(--yes면 건너뜀).
+  처리 시간은 이 단계 값만 보고서에 쓴다. 시작할 때 전원 연결·다른 프로그램 닫기를 알리고 Enter를 기다린다(--yes면 건너뜀).
 - test: 시험셋을 한 번만 잰다. results/test_once가 있으면 거부한다. 같은 시험셋에서 1차 방법(e0_test)을 먼저 돌려 전·후를 견준다.
   시작할 때 지금 config를 보여 주고 Enter를 기다린다(--yes면 건너뜀). 1차 방법이 실패하면 test_once를 돌리지 않는다.
 - repro: (10/12) 같은 코드로 시험셋을 다시 돌려(final_test) test_once와 같은지 본다. 다르면 원인만 찾고 다시 튜닝하지 않는다.
 - tables: 실험은 돌리지 않고 있는 결과 폴더로 표만 다시 만든다.
 --dry-run은 돌릴 실험·명령·결과 폴더·예상 시간만 보여 주고 아무것도 쓰지 않는다.
 실행 전 확인: 39장 정답 파일(빠지면 이름을 알리고 39장 표에 '미완'), 학습 사진 804장, 약속 검사, 커밋 안 된 변경. 뒤의 셋은 어기면 멈춘다.
-dark 검출·노면 마스크가 아직 자리(구현 전)이면 그것이 필요한 실험은 '아직 구현 전'으로 건너뛰고 표에도 그렇게 적는다.
-결과: 실험마다 results/<폴더>/ (도구의 결과·config_used*.txt와, run_all이 남기는 run_info*.txt: 커밋 해시·명령·시각·고정한 값)
+구현 여부: 노면 마스크·dark 검출은 A·B 시험의 해당 @todo가 지워졌는지(각 파트의 통과 기준)로 정하고, 합성 영상 검사는 어긋날 때 경고만 한다.
+구현 전 기능이 필요한 실험은 건너뛰고 표에 '아직 구현 전'으로 적되, 시작 전에 목록을 크게 보여 주고 Enter를 기다린다(--yes면 그대로 진행).
+결과: 실험마다 results/<폴더>/ (도구의 결과·config_used*.txt와, run_all이 남기는 run_info*.txt: 커밋 해시·명령·옵션·고정한 값)
       표는 results/report/: table1_stages … table8_39_images.csv, adoption.csv, summary.md(보고서용 요약), reject.txt."""
 import argparse
+import ast
 import collections
 import contextlib
 import datetime
@@ -47,7 +52,7 @@ PLANNED_SPLIT = {"all": 804, "dev": 652, "test": 152}   # 학습 사진이 없�
 
 # 1차 방법(E0)의 고정값. config가 채택 결과로 바뀐 뒤에도 E0·E1·E1b를 같은 조건으로 다시 낼 수 있게 숫자로 둔다
 FIRST_ROI_TOP = 0.5                 # 1차 기본 띠의 위쪽 비율 (Plan.md 1.2)
-E1B_ROI_TOP = 0.3                   # E1b 띠의 위쪽 비율 (Plan.md 3.10)
+E1B_ROI_TOP = 0.3                   # E1b 띠의 위쪽 비율 (Plan.md 3.10). E1b가 채택되면 마스크를 켜는 E3 쪽도 이 값
 FIRST = {"params": "base", "detect": "legacy", "mask": "off", "roi_top": FIRST_ROI_TOP}
 DARK = {"detect": "dark", "mask": "off", "roi_top": FIRST_ROI_TOP}         # E2: 마스크 없이 dark 검출만
 
@@ -63,6 +68,13 @@ SEC_CHECK = 2                       # 약속 검사
 
 DEGRADE_NAMES = {"none": "저하 없음", "blur": "흐림", "dark": "어두움", "bright": "과노출", "noise": "잡음"}
 NEEDS = {"dark": "dark 검출(B)", "mask": "노면 마스크(A)"}
+# 구현 여부의 신호: 각 파트가 기능을 구현하면 지우는 시험의 @todo (docs/tasks/A.md·B.md 4장의 통과 기준)
+SIGNALS = {"mask": ("tests/test_a.py", "test_road_mask_v1_synthetic"),
+           "dark": ("tests/test_b.py", "test_dark_big_pothole_one_piece")}
+PROBE_FAIL = {"mask": "왼쪽이 풀색인 합성 띠에서 노면 아님(0)을 하나도 내지 않는다. 그대로 돌리고, E1이 E0와 같으면 '효과 없음' 결과로 남는다",
+              "dark": "합성 영상에서 NotImplementedError가 난다. 그대로 돌리면 실패로 남는다"}
+PROBE_PASS = {"mask": "합성 띠에서는 노면 아님(0)이 나온다. A가 구현하고 @todo를 지우지 않았는지 확인",
+              "dark": "합성 영상에서는 dark 검출이 돈다. B가 구현하고 @todo를 지우지 않았는지 확인"}
 TOOL_SCRIPT = {"train": "tools/evaluate_train.py", "run39": "run_experiment.py", "match": "run_matching.py"}
 RESULT_FILE = {"train": et.SUMMARY_NAME, "run39": "metrics.csv", "match": "matching.csv"}       # 있으면 그 실험이 끝난 것
 RUN_INFO = {"train": "run_info_train.txt", "run39": "run_info.txt", "match": "run_info_matching.txt"}
@@ -72,27 +84,33 @@ DATA_NAMES = {"all": "학습 전체", "dev": "개발", "test": "시험"}
 
 def _exp(id_, stage, tool, name, label, opts=None, **extra):
     """실험 하나의 정의. opts는 도구 옵션으로 줄 값(params·detect·mask·roi_top·sigma_in_road·degrade)이고, 없는 값은 config 그대로 돈다.
-    adopt=True인 실험은 채택 규칙으로 견주는 단계이고, 목록 순서가 '직전 채택 단계'를 찾는 순서다."""
+    adopt는 채택 규칙으로 견주는 단계(목록 순서가 판정 순서), reference는 채택 판단에 쓰지 않는 참고 실행이다.
+    follow_band는 E1b가 채택되면 띠 0.3, follow_last는 E1~E3 가운데 마지막 잠정 채택 단계의 설정을 따른다(resolve)."""
     return {"id": id_, "stage": stage, "tool": tool, "name": name, "label": label, "opts": dict(opts or {}), **extra}
 
 
 EXPERIMENTS = [
-    # 비교 단계 (개발셋)
+    # 비교 단계 (개발셋). 이 순서로 돌고, adopt 단계는 끝날 때마다 잠정 판정해 뒤 단계 설정에 반영한다
     _exp("E0_all", "compare", "train", "e0_all", "E0 재현: 1차 방법 804장", FIRST, split="all"),
-    _exp("E0", "compare", "train", "e0_dev", "E0 1차 방법", FIRST, split="dev", adopt=True),
+    _exp("E0", "compare", "train", "e0_dev", "E0 1차 방법", FIRST, split="dev"),
     _exp("E1", "compare", "train", "e1_mask_dev", "E1 + 노면 마스크", {**FIRST, "mask": "on"}, split="dev", adopt=True),
     _exp("E1b", "compare", "train", "e1b_top03_dev", "E1b + 띠 0.3", {**FIRST, "mask": "on", "roi_top": E1B_ROI_TOP},
          split="dev", adopt=True),
     _exp("E2", "compare", "train", "e2_dark_dev", "E2 어두운 영역 검출(마스크 없음)", DARK, split="dev", adopt=True),
-    _exp("E3", "compare", "train", "e3_dark_mask_dev", "E3 + 노면 마스크(σ 노면 안)",
-         {**DARK, "mask": "on", "sigma_in_road": True}, split="dev", adopt=True),
-    _exp("E3s", "compare", "train", "e3_sigma_band_dev", "E3 + 노면 마스크(σ 띠 전체)",
-         {**DARK, "mask": "on", "sigma_in_road": False}, split="dev", adopt=True),
+    _exp("E3", "compare", "train", "e3_dark_mask_dev", "E3 어두운 영역 + 노면 마스크(σ 노면 안)",
+         {**DARK, "mask": "on", "sigma_in_road": True}, split="dev", adopt=True, follow_band=True),
+    _exp("E3s", "compare", "train", "e3_sigma_band_dev", "E3σ 어두운 영역 + 노면 마스크(σ 띠 전체)",
+         {**DARK, "mask": "on", "sigma_in_road": False}, split="dev", adopt=True, follow_band=True),
     # E4 자리 (Should, Plan.md 3.2 (3)·3.10): B가 후보 score를 채우고 evaluate_train에 τ 곡선(영상당 오검출 1·2개의 민감도)이 생기면
     # todo를 지우고 tool·opts(E3 설정 + τ 옵션)를 주며, rule1()을 같은 동작점의 민감도 비교로 바꾼다
-    _exp("E4", "compare", None, "e4_score_dev", "E4 점수 문턱 τ (Should)", split="dev", adopt=True, todo="점수 τ(B, Should)"),
-    *[_exp(f"E6_{kind}", "compare", "train", f"e6_{kind}_dev", f"E6 1회 {DEGRADE_NAMES[kind]}", {**DARK, "degrade": kind},
-           split="dev") for kind in et.DEGRADE_KINDS],
+    _exp("E4", "compare", None, "e4_score_dev", "E4 점수 문턱 τ (Should)", split="dev", adopt=True,
+         todo="점수 τ(Should: B의 score와 evaluate_train τ 곡선이 생긴 뒤)"),
+    # 39장 자동 ROI (참고): 손으로 정한 ROI 없이 도는지(확정본 6장 E1, 교수님 질문 'ROI 자동 설정'). 채택 판단에는 쓰지 않는다
+    _exp("E1_39", "compare", "run39", "e1_mask_auto", "E1 39장 자동 ROI (참고)", {**FIRST, "mask": "on"}, roi="auto", reference=True),
+    _exp("E3_39", "compare", "run39", "e3_dark_mask_auto", "E3 39장 자동 ROI (참고)", {**DARK, "mask": "on", "sigma_in_road": True},
+         roi="auto", reference=True, follow_band=True),
+    *[_exp(f"E6_{kind}", "compare", "train", f"e6_{kind}_dev", f"E6 1회 {DEGRADE_NAMES[kind]}", {"degrade": kind},
+           split="dev", follow_last=True) for kind in et.DEGRADE_KINDS],
     # 최종 단계 (config 그대로). 처리 시간을 보고서에 쓰는 39장 최종과 매칭을 앞에 둔다
     _exp("F39", "final", "run39", "final", "39장 최종 설정(roi.csv)", roi="csv"),
     _exp("FM", "final", "match", "final", "특징점·매칭 최종 설정"),
@@ -108,7 +126,7 @@ EXPERIMENTS = [
     _exp("R", "repro", "train", "final_test", "시험셋 재현 확인", split="test"),
 ]
 EXP = {e["id"]: e for e in EXPERIMENTS}
-ADOPT_IDS = [e["id"] for e in EXPERIMENTS if e.get("adopt")]          # E0, E1, E1b, E2, E3, E3s, E4
+ADOPT_ORDER = [e["id"] for e in EXPERIMENTS if e.get("adopt")]       # E1, E1b, E2, E3, E3s, E4
 
 METRICS = ["images", "n_damage", "n_none", "sensitivity", "specificity", "accuracy", "baseline_none", "balanced",
            "fp_per_image", "pred_per_image",
@@ -118,7 +136,9 @@ METRICS = ["images", "n_damage", "n_none", "sensitivity", "specificity", "accura
 STAGE_IDS = ["E0_all", "E0", "E1", "E1b", "E2", "E3", "E3s", "E4", "E5", "T0", "T"]      # 1번 단계별 표의 행 순서
 STAGE_HEAD = ["stage_id", "label", "data", "folder", "status", "commit"]
 COUNTRY_RUNS = (("E0", "1차"), ("E5", "최종"), ("T0", "1차"), ("T", "최종"))
-RUNS39 = (("F39e0", "1차 설정"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI)"))
+RUNS39 = (("F39e0", "1차 설정"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI)"),
+          ("E1_39", "E1 자동 ROI(참고)"), ("E3_39", "E3 자동 ROI(참고)"))
+IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"))
 GROUP39 = ["n_images", "n_gt", "n_damage", "n_none", "sensitivity_off", "sensitivity_on", "specificity_off", "specificity_on",
            "accuracy_off", "accuracy_on", "baseline_none"]
 SOURCE39 = GROUP39 + ["n_crack_off", "n_crack_on", "n_pothole_off", "n_pothole_on", "edges_off", "edges_on"]
@@ -129,16 +149,18 @@ PRE_TRAIN = [("에지 수", "edges_mean"), ("해리스 코너 수", "harris_mean
              ("균열 면적 (픽셀)", "area_crack_mean"), ("포트홀 후보 수", "pred_pothole_mean"), ("포트홀 면적 (픽셀)", "area_pothole_mean")]
 MATCH_ITEMS = [("SIFT 특징점 수(기준 A)", "kp_ref"), ("SIFT 특징점 수(대상)", "kp_target"), ("good 매칭 점 수", "good"),
                ("inlier 수", "inliers"), ("inlier 비율", "inlier_ratio")]
-DEGRADE_ROUNDS = (("1회(비교, E2 설정)", "E6_"), ("2회(최종 설정)", "F6_"))
+DEGRADE_ROUNDS = (("1회(비교)", "E6_"), ("2회(최종 설정)", "F6_"))
 DEGRADE_COLS = ["sensitivity", "specificity", "accuracy", "baseline_none", "balanced", "fp_per_image",
                 "crack_ctr_recall", "crack_ctr_recall_net", "pothole_ctr_recall", "pothole_ctr_recall_net",
                 "edges_mean", "harris_mean", "pred_crack_mean", "pred_pothole_mean", "area_crack_mean", "area_pothole_mean",
                 "judge_expect", "judge_hit_rate", "judge_base_rate"]
-TIME_MEANS = ["t_pre_ms_mean", "t_detect_ms_mean", "t_road_ms_mean"]   # 학습 데이터 처리 시간(한 번 잰 값의 평균): 2회만, 참고용
-ADOPT_COLUMNS = ["stage_id", "label", "status", "base", "changed",
-                 "sens_base", "sens", "sens_diff", "fp_base", "fp", "fp_diff", "rule1",
-                 "balanced_base", "balanced", "balanced_diff", "rule2",
-                 "crack_net_base", "crack_net", "crack_net_diff", "rule3", "verdict"]
+TIME_MEANS = ["t_pre_ms_mean", "t_detect_ms_mean", "t_road_ms_mean"]   # 학습 데이터 처리 시간(사진마다 한 번 잰 값의 평균): 참고용
+COMPARE_KEYS = (("sens", "sensitivity"), ("fp", "fp_per_image"), ("balanced", "balanced"), ("crack_net", "crack_ctr_recall_net"))
+ADOPT_COLUMNS = (["stage_id", "label", "status", "base", "changed"]
+                 + [f"{k}{s}" for k, _ in COMPARE_KEYS for s in ("_base", "", "_diff")]
+                 + ["time_base", "time", "time_diff", "rule1", "rule2", "rule3", "verdict",
+                    "ref_base", "ref_changed", "ref_sens_diff", "ref_fp_diff", "ref_balanced", "ref_balanced_diff",
+                    "ref_crack_net", "ref_crack_net_diff", "ref_rule2", "ref_rule3"])
 JUDGE_TAGS = ("blur", "dark", "bright", "noise")   # 사람 태그 가운데 골라야 할 전처리가 정해진 것(evaluate_train.EXPECTED_STEPS)
 
 
@@ -167,21 +189,21 @@ def parse_args(argv=None):
     parser.add_argument("stage", choices=list(STAGES),
                         help="compare(비교) → final(최종) → test(시험, 한 번만) → repro(재현, 10/12). tables는 표만 다시")
     parser.add_argument("--dry-run", action="store_true", help="돌릴 실험·명령·결과 폴더·예상 시간만 보여 주고 끝냄(아무것도 쓰지 않음)")
-    parser.add_argument("--yes", action="store_true", help="시작 전 확인(Enter)을 건너뜀")
+    parser.add_argument("--yes", action="store_true", help="시작 전 확인(건너뛸 실험·전원·시험셋 Enter)을 건너뜀")
     parser.add_argument("--reject", help="사람 확인(채택 규칙 1)에서 뺀 단계를 쉼표로(예: E1,E3). 빈 값('')이면 지움. "
                                          "주지 않으면 지난번 값(results/report/reject.txt)")
     args = parser.parse_args(argv)
     if args.reject is not None:
         ids = [s.strip() for s in args.reject.split(",") if s.strip()]
-        bad = [s for s in ids if s not in ADOPT_IDS[1:]]
+        bad = [s for s in ids if s not in ADOPT_ORDER]
         if bad:
-            parser.error(f"--reject는 {', '.join(ADOPT_IDS[1:])} 가운데서만 고른다: {', '.join(bad)}")
+            parser.error(f"--reject는 {', '.join(ADOPT_ORDER)} 가운데서만 고른다: {', '.join(bad)}")
         args.reject = ids
     return args
 
 
 # ---------------------------------------------------------
-# 실험 명령과 필요한 기능
+# 실험 설정과 명령
 # ---------------------------------------------------------
 
 def param_values(name):
@@ -189,11 +211,28 @@ def param_values(name):
     return {key: value for params in et.PARAM_SETS if params["name"] == name for key, value in params.items() if key != "name"}
 
 
-def command(exp):
-    """실험의 도구 명령행 인자와, 명령행으로 줄 수 없어 실행 중에만 고정할 config 값 {이름: 값}을 만든다.
-    run_experiment에는 --param-set이 없어 1차 legacy 값(evaluate_train의 base 세트)을 실행 중에만 덮고, --roi csv에서는
-    --roi-top을 받지 않아 띠 위쪽 비율도 실행 중에만 덮는다(39장은 모두 roi.csv에 있어 결과는 같고, 빠진 사진이 생겨도 1차 값을 쓰게)."""
-    opts, argv, pins = exp["opts"], [], {}
+def last_adopted(adopted):
+    """E1~E3 가운데 채택 순서로 마지막에 잠정 채택된 단계. 없으면 E0. E6 1회의 설정과 바꿀 config 값의 기준이다."""
+    return next((sid for sid in reversed(ADOPT_ORDER) if sid in adopted), "E0")
+
+
+def resolve(exp, adopted):
+    """실험이 실제로 쓸 옵션: 정해진 옵션에 비교 단계의 앞선 채택 결과를 반영한다. adopted는 잠정 채택된 단계 집합(E0 포함).
+    follow_band(마스크를 켜는 E3 쪽)는 E1b가 채택되면 띠 0.3, 아니면 0.5. 띠 0.3은 마스크를 켤 때만 뜻이 있어 E2는 0.5 그대로다.
+    follow_last(E6 1회)는 E1~E3 가운데 마지막 잠정 채택 단계의 설정(없으면 E0)에 저하 종류만 바꾼다."""
+    opts = dict(exp["opts"])
+    if exp.get("follow_band"):
+        opts["roi_top"] = E1B_ROI_TOP if "E1b" in adopted else FIRST_ROI_TOP
+    if exp.get("follow_last"):
+        opts = {**resolve(EXP[last_adopted(adopted)], adopted), "degrade": exp["opts"]["degrade"]}
+    return opts
+
+
+def command(exp, opts):
+    """실험의 도구 명령행 인자와, 명령행으로 줄 수 없어 실행 중에만 고정할 config 값 {이름: 값}을 만든다(opts는 resolve의 결과).
+    run_experiment에는 --param-set·--set이 없어 1차 legacy 값(evaluate_train의 base 세트)과 DARK_SIGMA_IN_ROAD를 실행 중에만 덮고,
+    --roi csv에서는 --roi-top을 받지 않아 띠 위쪽 비율도 실행 중에만 덮는다(39장은 모두 roi.csv에 있어 결과는 같다)."""
+    argv, pins = [], {}
     if exp["tool"] == "train":
         argv += ["--split", exp["split"]]
         if opts.get("params"):
@@ -211,7 +250,10 @@ def command(exp):
         else:
             argv += ["--roi-top", str(opts["roi_top"])]
     if "sigma_in_road" in opts:
-        argv += ["--set", f"DARK_SIGMA_IN_ROAD={opts['sigma_in_road']}"]
+        if exp["tool"] == "train":
+            argv += ["--set", f"DARK_SIGMA_IN_ROAD={opts['sigma_in_road']}"]
+        else:
+            pins["DARK_SIGMA_IN_ROAD"] = opts["sigma_in_road"]
     if opts.get("degrade"):
         argv += ["--degrade", opts["degrade"]]
     return argv + ["--name", exp["name"]], pins
@@ -227,16 +269,45 @@ def pins_text(pins):
     return ", ".join(parts + [f"{k}={v!r}" for k, v in rest.items()])
 
 
-def needs(exp):
-    """실험이 쓰는 (검출 방식, 노면 마스크 켬?): 옵션으로 준 값, 없으면 지금 config 값."""
-    opts = exp["opts"]
+def settings_text(opts):
+    """옵션을 사람이 읽는 설정 글로: '검출 dark, 노면 마스크 켬, 띠 0.3, σ 노면 안'. 옵션에 없는 값은 config."""
+    onoff = {"on": "켬", "off": "끔"}
+    parts = [f"검출 {opts.get('detect') or 'config'}", f"노면 마스크 {onoff.get(opts.get('mask'), 'config')}",
+             f"띠 {opts['roi_top']}" if "roi_top" in opts else "띠 config"]
+    if "sigma_in_road" in opts:
+        parts.append(f"σ {'노면 안' if opts['sigma_in_road'] else '띠 전체'}")
+    if opts.get("params"):
+        parts.append(f"legacy 값 {opts['params']}(1차)")
+    return ", ".join(parts)
+
+
+# ---------------------------------------------------------
+# 구현 여부
+# ---------------------------------------------------------
+
+def needs(opts):
+    """옵션이 쓰는 (검출 방식, 노면 마스크 켬?): 옵션으로 준 값, 없으면 지금 config 값."""
     mode = opts.get("detect") or C.DETECT_MODE
     mask = opts["mask"] == "on" if opts.get("mask") else bool(C.USE_ROAD_MASK)
     return mode, mask
 
 
-def dark_ready():
-    """dark 검출이 구현됐는지: 작은 합성 영상으로 두 검출 함수를 DETECT_MODE "dark"로 불러 자리의 NotImplementedError가 나는지 본다."""
+def todo_removed(path, test_name):
+    """A·B 시험 파일에서 그 시험 함수의 @todo 표시가 지워졌는지. 각 파트가 기능을 구현하면 지우는 통과 기준이라
+    (docs/tasks/A.md·B.md 4장) 구현 여부의 분명한 신호로 쓴다. 파일이나 시험 함수를 찾지 못하면 None."""
+    try:
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == test_name:
+            return not any(isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "todo"
+                           for d in node.decorator_list)
+    return None
+
+
+def dark_runs():
+    """합성 영상 검사(경고용): 작은 영상을 DETECT_MODE "dark"로 검출해 자리의 NotImplementedError가 나지 않는지."""
     gray = np.full((64, 64), 128, np.uint8)
     gray[28:36, 8:56] = 60                                  # 어두운 띠 하나
     with patched(C, {"DETECT_MODE": "dark"}):
@@ -250,9 +321,8 @@ def dark_ready():
     return True
 
 
-def mask_ready():
-    """노면 마스크가 자리(띠 전체 = 노면 255)에서 바뀌었는지: 왼쪽이 풀색인 합성 띠에서 노면 아님(0)이 하나라도 나오는지 본다.
-    자리와, 구현했지만 아무것도 빼지 못하는 마스크는 결과가 같아(E1 = E0) 둘 다 구현 전으로 본다."""
+def mask_removes_something():
+    """합성 영상 검사(경고용): 왼쪽이 풀색인 합성 띠에서 노면 마스크가 노면 아님(0)을 하나라도 내는지. 자리(전부 255)면 False."""
     band = np.full((120, 240, 3), 120, np.uint8)
     band[:, :100] = (40, 160, 60)                           # 채도가 높은 풀색(BGR)
     try:
@@ -265,19 +335,56 @@ def mask_ready():
 
 
 def readiness():
-    """dark 검출과 노면 마스크가 구현됐는지 {"dark": bool, "mask": bool}. 실행 한 번에 한 번만 잰다."""
-    return {"dark": dark_ready(), "mask": mask_ready()}
+    """노면 마스크·dark 검출의 구현 여부와 경고 {"mask": bool, "dark": bool, "notes": [경고]}. 실행 한 번에 한 번만 잰다.
+    구현 여부는 A·B 시험의 @todo가 지워졌는지(SIGNALS)로만 정한다. 합성 영상 검사는 신호와 어긋날 때 경고만 하므로,
+    진짜 마스크가 합성 띠에서 우연히 아무것도 안 지워도 E1을 건너뛰지 않는다(E1 = E0이면 '효과 없음' 결과로 남음).
+    신호를 찾지 못하면(시험 이름이 바뀜 등) 조용히 건너뛰지 않도록 구현된 것으로 보고 돌린다."""
+    probes = {"mask": mask_removes_something, "dark": dark_runs}
+    ready, notes = {}, []
+    for key, (path, test) in SIGNALS.items():
+        signal, probe = todo_removed(path, test), probes[key]()
+        ready[key] = True if signal is None else signal
+        where = f"{path}의 {test}"
+        if signal is None:
+            notes.append(f"{NEEDS[key]}: {where}를 찾지 못해 구현된 것으로 보고 돌린다(시험 이름이 바뀌었는지 확인)")
+        elif signal and not probe:
+            notes.append(f"{NEEDS[key]}: {where}의 @todo는 지워졌지만 {PROBE_FAIL[key]}")
+        elif not signal and probe:
+            notes.append(f"{NEEDS[key]}: {where}에 @todo가 남아 구현 전으로 보지만, {PROBE_PASS[key]}")
+    return {**ready, "notes": notes}
 
 
-def unmet(exp, ready):
-    """실험에 필요한데 아직 구현되지 않은 것의 이름 list(비면 돌릴 수 있음). 매칭은 ROI·검출을 쓰지 않아 늘 돌린다."""
+def unmet(exp, ready, opts=None):
+    """실험에 필요한데 아직 구현되지 않은 것의 이름 list(비면 돌릴 수 있음). opts를 주면 그 설정으로(resolve의 결과) 판단한다.
+    매칭은 ROI·검출을 쓰지 않아 늘 돌린다."""
     if exp.get("todo"):
         return [exp["todo"]]
     if exp["tool"] == "match":
         return []
-    mode, mask = needs(exp)
+    mode, mask = needs(opts if opts is not None else exp["opts"])
     return ([NEEDS["dark"]] if mode == "dark" and not ready["dark"] else []) + \
            ([NEEDS["mask"]] if mask and not ready["mask"] else [])
+
+
+def skip_list(exps, ready):
+    """시작 전에 보일 건너뛸 실험 [(실험, 빠진 기능)]. E3 쪽 띠는 앞선 채택으로 바뀌어도 필요한 기능은 같다.
+    E6 1회는 이미 돌아 채택된 단계의 설정만 따르므로 구현 전 기능 때문에 건너뛸 일이 없어 넣지 않는다."""
+    return [(exp, missing) for exp in exps if not exp.get("follow_last")
+            for missing in [unmet(exp, ready, resolve(exp, {"E0"}))] if missing]
+
+
+def print_skips(skips, ready):
+    """건너뛸 실험 목록을 눈에 띄게 보여 준다: 실험마다 빠진 기능, 판단 근거(@todo 신호), 합성 영상 경고."""
+    bar = "!" * 78
+    print(f"\n{bar}\n!! 건너뛸 실험 {len(skips)}개: 필요한 기능이 아직 구현 전으로 보임 (표에는 '아직 구현 전'으로 남음)")
+    for exp, missing in skips:
+        print(f"!!   {exp['id']:<6} {exp['label']}  ← {', '.join(missing)}")
+    for key, (path, test) in SIGNALS.items():
+        if not ready[key]:
+            print(f"!! 근거: {NEEDS[key]} = {path}의 {test}에 @todo가 남아 있음")
+    for note in ready["notes"]:
+        print(f"!! 경고: {note}")
+    print(bar)
 
 
 # ---------------------------------------------------------
@@ -338,11 +445,15 @@ def precheck(paths):
             ("커밋 안 된 변경", changes == [], change_note, True)]
 
 
-def print_checks(checks):
-    """실행 전 확인 결과를 한 줄씩 보여 준다: 통과, 멈춤(어기면 실행하지 않음), 알림(39장 정답)."""
+def print_checks(checks, ready):
+    """실행 전 확인 결과를 한 줄씩 보여 준다: 통과, 멈춤(어기면 실행하지 않음), 알림(39장 정답). 구현 여부와 그 경고도 함께."""
     print("실행 전 확인")
     for name, ok, note, blocking in checks:
         print(f"  [{'통과' if ok else ('멈춤' if blocking else '알림')}] {name}: {note}")
+    print("  [구현 여부] " + ", ".join(f"{NEEDS[k]} {'구현됨' if ready[k] else '구현 전'}" for k in SIGNALS)
+          + " (A·B 시험의 @todo 기준)")
+    for note in ready["notes"]:
+        print(f"  [경고] {note}")
 
 
 def confirm(message, yes, ask=input):
@@ -371,12 +482,15 @@ def run_context(stage, command_line):
                     f"pandas {pd.__version__}, {platform.platform()}"}
 
 
-def write_run_info(path, exp, argv, pins, status, started, seconds, context):
-    """결과 폴더에 실행 기록을 남긴다(결과가 어떤 코드·명령·설정에서 나왔는지 폴더만 보고 알게). config 값은 도구가 따로 쓴다."""
-    lines = [f"단계: {context['단계']}", f"실험: {exp['id']} {exp['label']}",
-             f"명령: python {TOOL_SCRIPT[exp['tool']]} {' '.join(argv)}", f"실행 중 고정한 config 값: {pins_text(pins)}",
-             f"상태: {status}", f"커밋: {context['커밋']}", f"시작: {started:%Y-%m-%d %H:%M:%S}", f"걸린 시간: {seconds:.1f}초",
-             f"환경: {context['환경']}", f"config 값: {CONFIG_FILE[exp['tool']]} (같은 폴더, 도구가 씀)"]
+def write_run_info(path, exp, run):
+    """결과 폴더에 실행 기록을 남긴다(결과가 어떤 코드·명령·설정에서 나왔는지 폴더만 보고 알게). '옵션' 줄은 표를 만들 때
+    앞선 채택과 실제로 돈 설정이 맞는지 보는 데 쓴다. config 값은 도구가 따로 쓴다(config_used*.txt)."""
+    lines = [f"단계: {run['context']['단계']}", f"실험: {exp['id']} {exp['label']}",
+             f"명령: python {TOOL_SCRIPT[exp['tool']]} {' '.join(run['argv'])}", f"옵션: {run['opts']!r}",
+             f"설정: {settings_text(run['opts'])}", f"설정 출처: {run['source'] or '-'}",
+             f"실행 중 고정한 config 값: {pins_text(run['pins'])}", f"상태: {run['status']}", f"커밋: {run['context']['커밋']}",
+             f"시작: {run['started']:%Y-%m-%d %H:%M:%S}", f"걸린 시간: {run['seconds']:.1f}초", f"환경: {run['context']['환경']}",
+             f"config 값: {CONFIG_FILE[exp['tool']]} (같은 폴더, 도구가 씀)"]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -386,6 +500,15 @@ def read_run_info(path):
         return {}
     pairs = (line.split(": ", 1) for line in path.read_text(encoding="utf-8").splitlines() if ": " in line)
     return dict(pairs)
+
+
+def parse_opts(text):
+    """run_info의 '옵션' 줄을 dict로. 없거나 읽을 수 없으면 None(run_all 밖에서 돌린 결과 등)."""
+    try:
+        value = ast.literal_eval(text) if text else None
+    except (ValueError, SyntaxError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def run_tool(exp, argv, paths):
@@ -401,26 +524,28 @@ def run_tool(exp, argv, paths):
     return rm.main(argv, paths["pairs"], paths["results"])
 
 
-def run_one(exp, paths, ready, context):
-    """실험 하나를 돌려 (상태, 걸린 초)를 돌려준다. 필요한 기능이 아직 없으면 돌리지 않고 '아직 구현 전'.
-    끝나면 결과 폴더에 run_info를 남긴다(실패해서 폴더가 없으면 남기지 않음)."""
-    missing = unmet(exp, ready)
+def run_one(exp, opts, paths, ready, context, source=""):
+    """실험 하나를 opts(resolve의 결과)로 돌려 (상태, 걸린 초)를 돌려준다. 필요한 기능이 아직 없으면 돌리지 않고 '아직 구현 전'.
+    끝나면 결과 폴더에 run_info를 남긴다(실패해서 폴더가 없으면 남기지 않음). source는 설정을 따온 단계(E6 1회)."""
+    missing = unmet(exp, ready, opts)
     if missing:
         return "아직 구현 전: " + "·".join(missing), 0.0
-    argv, pins = command(exp)
+    argv, pins = command(exp, opts)
     started, start = datetime.datetime.now(), time.perf_counter()
     try:
         with patched(C, pins):
             code = run_tool(exp, argv, paths)
         status = "완료" if code == 0 else f"실패: 끝 코드 {code} (실패한 사진은 위 출력)"
     except NotImplementedError as e:
-        status = f"아직 구현 전: {e}"
+        status = f"실패: 구현 신호와 달리 NotImplementedError ({e})"
     except (Exception, SystemExit) as e:                    # 명령행 오류(SystemExit)도 이 실험의 실패로 적고 다음으로
         status = f"실패: {type(e).__name__}: {e}"
     seconds = time.perf_counter() - start
     folder = Path(paths["results"]) / exp["name"]
     if folder.is_dir():
-        write_run_info(folder / RUN_INFO[exp["tool"]], exp, argv, pins, status, started, seconds, context)
+        write_run_info(folder / RUN_INFO[exp["tool"]], exp, {"context": context, "argv": argv, "opts": opts, "source": source,
+                                                              "pins": pins, "status": status, "started": started,
+                                                              "seconds": seconds})
     return status, seconds
 
 
@@ -468,40 +593,65 @@ def estimate(exp, counts, n39, n_pair_photos):
     return 0.0
 
 
-def print_plan(stage, exps, paths, ready, refusal):
+def plan_note(exp, adopted):
+    """실험 줄에 붙일 설명: 앞선 채택으로 설정이 정해지는 실험과 참고 실험."""
+    if exp.get("follow_last"):
+        source = last_adopted(adopted)
+        return f"설정: {source} ({'E1~E3 가운데 마지막 잠정 채택' if source != 'E0' else '잠정 채택 없음'})"
+    if exp.get("follow_band"):
+        note = f"띠 {E1B_ROI_TOP if 'E1b' in adopted else FIRST_ROI_TOP} ({'E1b 잠정 채택' if 'E1b' in adopted else 'E1b 채택 안 됨'})"
+        return note + (", 참고: 채택 판단에 쓰지 않음" if exp.get("reference") else "")
+    if exp.get("reference"):
+        return "참고: 채택 판단에 쓰지 않음"
+    return ""
+
+
+def print_plan(stage, exps, paths, ready, refusal, skips, reject):
     """--dry-run: 돌릴 실험·명령·결과 폴더·예상 시간을 보여 준다. 아무것도 쓰거나 돌리지 않는다."""
     counts = split_counts(paths)
     n39 = len(rx.list_images(None, paths["image_dirs"]))
     n_pairs = len(list(Path(paths["pairs"]).glob("*.jpg")))
     results = Path(paths["results"])
+    skipped = {exp["id"] for exp, _ in skips}
     print(f"[{STAGES[stage]} 단계] 실험 {len(exps)}개 (dry-run: 돌리지 않음)")
     if refusal:
         print(f"  ※ 지금 실제로 돌리면 거부됨: {refusal}")
-    total, everything, skipped = SEC_CHECK, SEC_CHECK, 0
+    if stage == "compare":
+        print("  ※ E1·E1b·E2·E3·E3σ는 끝날 때마다 잠정 판정해 E3 쪽 띠(E1b 채택 → 0.3)와 E6 1회 설정(마지막 잠정 채택)에 반영한다. "
+              "아래 명령은 아무것도 채택되지 않았을 때의 모양이다")
+        if reject:
+            print(f"  ※ 사람 확인에서 뺀 단계(지난번 값 포함): {', '.join(reject)}")
+    total, everything = SEC_CHECK, SEC_CHECK
     for i, exp in enumerate(exps, 1):
-        missing = unmet(exp, ready)
+        opts = resolve(exp, {"E0"})
         folder = results / exp["name"]
         sec = estimate(exp, counts, n39, n_pairs)
         everything += sec
-        print(f"{i:2d}. {exp['id']}  {exp['label']}")
+        note = plan_note(exp, {"E0"})
+        print(f"{i:2d}. {exp['id']}  {exp['label']}" + (f"  [{note}]" if note else ""))
         print(f"    폴더: {folder.as_posix()}/" + ("  (이미 있음: 덮어씀)" if folder.exists() else ""))
         if exp["tool"]:
-            argv, pins = command(exp)
+            argv, pins = command(exp, opts)
             print(f"    명령: python {TOOL_SCRIPT[exp['tool']]} {' '.join(argv)}")
             if pins:
                 print(f"    실행 중 고정: {pins_text(pins)}")
-        if missing:
-            skipped += 1
-            print(f"    건너뜀: 아직 구현 전 ({', '.join(missing)})")
+        if exp["id"] in skipped:
+            print(f"    건너뜀: 아직 구현 전 ({', '.join(unmet(exp, ready, opts))})")
         else:
             total += sec
             print(f"    예상: {duration(sec)}")
+    if skips:
+        print_skips(skips, ready)
+        print("실제 실행에서는 시작 전에 위 목록을 보여 주고 Enter를 기다린다(--yes면 그대로 진행)")
+    else:
+        for note in ready["notes"]:
+            print(f"경고: {note}")
     if stage == "final":
         print("시작할 때: 전원 연결·다른 프로그램 닫기 안내 후 Enter를 기다림(--yes면 건너뜀)")
     if stage == "test":
         print("시작할 때: 지금 config를 보여 주고 Enter를 기다림(--yes면 건너뜀). 1차 방법이 실패하면 test_once를 돌리지 않음")
     print(f"예상 합계: 약 {duration(total)} (실행 전 확인 포함"
-          + (f", 건너뛸 실험 {skipped}개 빼고), 모두 구현되면 약 {duration(everything)}" if skipped else ")")
+          + (f", 건너뛸 실험 {len(skips)}개 빼고), 모두 구현되면 약 {duration(everything)}" if skips else ")")
           + ". legacy·마스크 끔으로 잰 값이라 dark·노면 마스크는 더 걸릴 수 있음")
     print(f"표: {(results / REPORT_DIR).as_posix()}/ (table1_stages … table8_39_images.csv, adoption.csv, summary.md)")
 
@@ -517,46 +667,64 @@ def test_prompt():
 
 
 def run_stage(stage, args, paths, reject, command_line, ask=input):
-    """한 단계를 돈다: 거부 조건 → 실행 전 확인 → 시작 확인 → 실험을 차례로 → 표 만들기. 끝 코드는 main과 같다."""
+    """한 단계를 돈다: 거부 조건 → 실행 전 확인 → 건너뛸 실험·시작 확인 → 실험을 차례로 → 표 만들기. 끝 코드는 main과 같다.
+    비교 단계는 E0와 채택 단계가 끝날 때마다 잠정 판정(adoption)을 다시 내어 뒤 실험의 설정(resolve)에 반영한다."""
     exps = [e for e in EXPERIMENTS if e["stage"] == stage]
     ready = readiness()
-    results = Path(paths["results"])
-    refusal = stage_refusal(stage, results)
+    results_dir = Path(paths["results"])
+    refusal = stage_refusal(stage, results_dir)
+    skips = skip_list(exps, ready)
     if args.dry_run:
-        print_plan(stage, exps, paths, ready, refusal)
+        print_plan(stage, exps, paths, ready, refusal, skips, reject)
         return 0
     if refusal:
         print(f"멈춤: {refusal}")
         return 2
     checks = precheck(paths)
-    print_checks(checks)
+    print_checks(checks, ready)
     if any(blocking and not ok for _, ok, _, blocking in checks):
         print("멈춤: 위 확인을 통과하지 못함 (39장 정답 말고는 모두 통과해야 돌림)")
         return 2
-    if stage in ("test", "repro"):
-        missing = sorted({m for e in exps for m in unmet(e, ready)})
-        if missing:
-            print(f"멈춤: 시험셋은 설정에 필요한 기능을 다 갖춘 뒤 돌린다. 아직 구현 전: {', '.join(missing)}")
+    if stage in ("test", "repro") and skips:
+        print(f"멈춤: 시험셋은 설정에 필요한 기능을 다 갖춘 뒤 돌린다. 아직 구현 전: "
+              f"{', '.join(sorted({m for _, missing in skips for m in missing}))}")
+        return 2
+    if skips:
+        print_skips(skips, ready)
+        if not confirm("위 실험을 건너뛰고 나머지를 돌립니다.", args.yes, ask):
             return 2
     if stage == "final" and not confirm(FINAL_PROMPT, args.yes, ask):
         return 2
     if stage == "test" and not confirm(test_prompt(), args.yes, ask):
         return 2
+    if stage == "compare" and reject:
+        print(f"사람 확인에서 뺀 단계: {', '.join(reject)} (잠정 판정과 뒤 단계 설정에 반영)")
 
     context = run_context(stage, command_line)
-    start, done = time.perf_counter(), []
+    start, done, results, adopted = time.perf_counter(), [], {}, {"E0"}
     for i, exp in enumerate(exps, 1):
-        print(f"\n===== [{STAGES[stage]} {i}/{len(exps)}] {exp['id']} {exp['label']} -> {(results / exp['name']).as_posix()}/")
-        status, seconds = run_one(exp, paths, ready, context)
+        opts = resolve(exp, adopted)
+        source = last_adopted(adopted) if exp.get("follow_last") else ""
+        note = plan_note(exp, adopted)
+        print(f"\n===== [{STAGES[stage]} {i}/{len(exps)}] {exp['id']} {exp['label']} -> {(results_dir / exp['name']).as_posix()}/"
+              + (f"  [{note}]" if note else ""))
+        status, seconds = run_one(exp, opts, paths, ready, context, source)
         print(f"----- {exp['id']}: {status} ({duration(seconds)})")
         done.append((exp, status, seconds))
+        if exp["id"] == "E0" or exp.get("adopt"):
+            summary = train_summary(paths, exp, {"done": status == "완료"})
+            results[exp["id"]] = {"off": (summary or {}).get("off"), "status": status, "opts": opts}
+            table, adopted = adoption(results, reject)
+            if exp.get("adopt"):
+                row = table.set_index("stage_id").loc[exp["id"]]
+                print(f"      → 잠정 판정: {exp['id']} (비교 기준 {row['base']}) {row['verdict']}")
         if stage == "test" and status != "완료":
             print("멈춤: 시험 단계는 실패하면 다음 실험을 돌리지 않는다(test_once를 한 번만 재려고)")
             break
 
     print(f"\n===== {STAGES[stage]} 단계 끝 ({duration(time.perf_counter() - start)})")
     for exp, status, seconds in done:
-        print(f"  {exp['id']:<7} {exp['name']:<20} {status} ({duration(seconds)})")
+        print(f"  {exp['id']:<9} {exp['name']:<22} {status} ({duration(seconds)})")
     report = build_report(paths, reject, command_line)
     print_report(report, stage)
     return 1 if any(status.startswith("실패") for _, status, _ in done) else 0
@@ -572,18 +740,19 @@ def read_csv(path):
 
 
 def exp_state(exp, paths, ready):
-    """실험의 지금 상태 {"done", "status", "commit"}: 결과 파일이 있으면 run_info의 상태·커밋, 없으면 구현 전·실패·안 돌림."""
+    """실험의 지금 상태 {"done", "status", "commit", "opts", "source"}: 결과 파일이 있으면 run_info의 상태·커밋·옵션,
+    없으면 구현 전·실패·안 돌림. opts는 실제로 돈 옵션(run_info '옵션' 줄)이고 앞선 채택과 맞는지 볼 때 쓴다."""
     if exp["tool"] is None:
-        return {"done": False, "status": "아직 구현 전: " + exp["todo"], "commit": ""}
+        return {"done": False, "status": "아직 구현 전: " + exp["todo"], "commit": "", "opts": None, "source": ""}
     folder = Path(paths["results"]) / exp["name"]
     info = read_run_info(folder / RUN_INFO[exp["tool"]])
-    commit = info.get("커밋", "")[:7]
+    state = {"commit": info.get("커밋", "")[:7], "opts": parse_opts(info.get("옵션")), "source": info.get("설정 출처", "-")}
     if (folder / RESULT_FILE[exp["tool"]]).exists():
-        return {"done": True, "status": info.get("상태", "완료(run_all 밖에서 돌림)"), "commit": commit}
+        return {**state, "done": True, "status": info.get("상태", "완료(run_all 밖에서 돌림)")}
     missing = unmet(exp, ready)
     if missing:
-        return {"done": False, "status": "아직 구현 전: " + "·".join(missing), "commit": ""}
-    return {"done": False, "status": info.get("상태", "아직 안 돌림"), "commit": commit}
+        return {**state, "done": False, "status": "아직 구현 전: " + "·".join(missing), "commit": ""}
+    return {**state, "done": False, "status": info.get("상태", "아직 안 돌림")}
 
 
 def train_summary(paths, exp, state):
@@ -648,8 +817,16 @@ def blur_pairs(judge):
 # 채택 비교
 # ---------------------------------------------------------
 
+def base_of(sid, adopted):
+    """채택 비교의 기준(한 번에 하나만 바뀌게): E1←E0, E1b←E1, E2←E0, E3←마스크를 켠 1차 설정(E1b가 채택되면 E1b, 아니면 E1),
+    E3σ←E3, E4←E3. E3와 기준은 검출 방식만 다르다(E3의 띠도 E1b 채택을 따르므로)."""
+    if sid == "E3":
+        return "E1b" if "E1b" in adopted else "E1"
+    return {"E1": "E0", "E1b": "E1", "E2": "E0", "E3s": "E3", "E4": "E3"}[sid]
+
+
 def changed_text(a, b):
-    """두 단계 설정(opts)의 차이를 글로: 검출 legacy→dark, 노면 마스크 끔→켬, 띠 위쪽 0.5→0.3, σ 노면 안→띠 전체, legacy 값."""
+    """두 설정(opts)의 차이를 글로: 검출 legacy→dark, 노면 마스크 끔→켬, 띠 위쪽 0.5→0.3, σ 노면 안→띠 전체, legacy 값, 저하."""
     onoff, sigma = {"on": "켬", "off": "끔", None: "config"}, {True: "노면 안", False: "띠 전체", None: "config"}
     parts = []
     if a.get("detect") != b.get("detect"):
@@ -663,6 +840,8 @@ def changed_text(a, b):
         parts.append(f"σ {sigma[a.get('sigma_in_road')]}→{sigma[b.get('sigma_in_road')]}")
     if a.get("detect") == b.get("detect") == "legacy" and a.get("params") != b.get("params"):
         parts.append(f"legacy 값 {a.get('params') or 'config'}→{b.get('params') or 'config'}")
+    if a.get("degrade") != b.get("degrade"):
+        parts.append(f"저하 {a.get('degrade')}→{b.get('degrade')}")
     return ", ".join(parts) or "없음"
 
 
@@ -686,37 +865,73 @@ def rule1(values):
     return f"사람 확인 (민감도{arrow(ds)}·오검출{arrow(df)})"
 
 
-def adoption(off_rows, states, reject=()):
-    """채택 표: 비교 단계의 각 단계를 직전 채택 단계(E0 → E1 → E1b → E2 → E3 → E3 σ 띠 전체 순서에서 그때까지 잠정 채택된
-    마지막 단계, 처음은 E0)와 개발셋·전처리 끔으로 견준다(Plan.md 3.10 채택 규칙, 검출 튜닝은 전처리를 끈 상태).
-    규칙 2(균형 정확도가 오름)·3(우연을 뺀 균열 재현율이 1%p 넘게 떨어지지 않음)은 자동, 규칙 1은 rule1(사람 확인).
-    규칙 2·3을 넘으면 '잠정 채택'으로 다음 단계의 비교 기준이 되고, reject에 든 단계(사람이 규칙 1에서 뺀 것)는 채택하지 않는다.
-    off_rows: {단계: 전처리 끔 요약 행 또는 None} → (표, 마지막 잠정 채택 단계)"""
-    champion, rows = ADOPT_IDS[0], []
-    for sid in ADOPT_IDS[1:]:
-        exp, base, cur = EXP[sid], off_rows.get(champion), off_rows.get(sid)
-        row = {"stage_id": sid, "label": exp["label"], "status": states[sid]["status"], "base": champion,
-               "changed": "-" if exp.get("todo") else changed_text(EXP[champion]["opts"], exp["opts"])}
-        if cur is None or base is None:
-            row["verdict"] = states[sid]["status"] if cur is None else f"비교 기준 {champion}의 결과 없음"
-            rows.append(row)
-            continue
-        for key, col in (("sens", "sensitivity"), ("fp", "fp_per_image"), ("balanced", "balanced"),
-                         ("crack_net", "crack_ctr_recall_net")):
-            row.update({f"{key}_base": base[col], key: cur[col], f"{key}_diff": cur[col] - base[col]})
-        row["rule1"] = rule1(row)
-        row["rule2"] = rule_text(passes(row["balanced_diff"], lambda d: d > 0))
-        row["rule3"] = rule_text(passes(row["crack_net_diff"], lambda d: d >= -RULE3_DROP))
-        failed = [f"규칙 {n} {row[f'rule{n}']}" for n in (2, 3) if row[f"rule{n}"] != "통과"]
-        if sid in reject:
-            row["verdict"] = "되돌림: 사람 확인(규칙 1)에서 뺌"
-        elif failed:
-            row["verdict"] = "되돌림: " + ", ".join(failed)
+def time_per_image(row):
+    """영상 1장 처리 시간 ms(전처리 + 검출 + 노면 마스크의 평균 합). 사진마다 한 번 잰 값이라 채택 표의 참고값으로만 쓴다."""
+    return sum(float(row[c]) for c in TIME_MEANS) if all(c in row for c in TIME_MEANS) else float("nan")
+
+
+def compare_values(base, cur):
+    """두 요약 행(전처리 끔)의 채택 비교 값: 민감도·영상당 오검출·균형 정확도·우연을 뺀 균열 재현율의 기준·이번·차이와
+    규칙 1~3, 처리 시간(단일 실행 참고값)."""
+    values = {}
+    for key, col in COMPARE_KEYS:
+        values.update({f"{key}_base": base[col], key: cur[col], f"{key}_diff": cur[col] - base[col]})
+    values.update({"time_base": time_per_image(base), "time": time_per_image(cur)})
+    values["time_diff"] = values["time"] - values["time_base"]
+    values["rule1"] = rule1(values)
+    values["rule2"] = rule_text(passes(values["balanced_diff"], lambda d: d > 0))
+    values["rule3"] = rule_text(passes(values["crack_net_diff"], lambda d: d >= -RULE3_DROP))
+    return values
+
+
+def adoption(results, reject=()):
+    """채택 표: ADOPT_ORDER 순서로 각 단계를 정해진 비교 기준(base_of)과 개발셋·전처리 끔으로 견준다(Plan.md 3.10, 검출 튜닝 조건).
+    규칙 2(균형 정확도가 오름)·3(우연을 뺀 균열 재현율이 1%p 넘게 안 떨어짐)은 자동, 규칙 1은 rule1(사람 확인).
+    잠정 채택은 규칙 2·3을 넘고, 사람이 빼지 않았고(reject), 비교 기준이 E0이거나 잠정 채택된 단계일 때다(채택된 것 위에만 쌓아,
+    마스크를 채택하지 않았는데 마스크 + 띠 0.3이 채택되는 일이 없게). 기준과 네 값이 모두 같으면 '효과 없음'을 덧붙인다(구현 전이 아니라 결과).
+    앞선 채택으로 정해지는 설정(E3 쪽 띠)과 실제로 돈 설정(opts)이 다르면 '다시 돌려야 함'으로 두고 판단에 쓰지 않는다.
+    E3는 E2와의 차이(마스크만 다름)도 ref_ 열에 참고로 둔다(판단에는 쓰지 않음).
+    results: {단계: {"off": 전처리 끔 요약 행, "status": 상태, "opts": 실제로 돈 옵션}} (없는 단계는 아직 안 돌림)
+    → (표, 잠정 채택된 단계 집합(E0 포함))"""
+    adopted, invalid, rows = {"E0"}, set(), []
+    for sid in ADOPT_ORDER:
+        exp, base = EXP[sid], base_of(sid, adopted)
+        cur, expect = results.get(sid, {}), resolve(exp, adopted)
+        row = {"stage_id": sid, "label": exp["label"], "status": cur.get("status", "아직 안 돌림"), "base": base,
+               "changed": "-" if exp.get("todo") else changed_text(resolve(EXP[base], adopted), expect)}
+        cur_off = cur.get("off")
+        base_off = None if base in invalid else results.get(base, {}).get("off")
+        if cur_off is not None and cur.get("opts") is not None and cur["opts"] != expect:
+            invalid.add(sid)
+            row["verdict"] = f"다시 돌려야 함: 지금 채택으로는 {changed_text(cur['opts'], expect)} (compare를 다시)"
+        elif cur_off is None or base_off is None:
+            row["verdict"] = row["status"] if cur_off is None else f"비교 기준 {base}의 결과 없음"
         else:
-            row["verdict"] = "잠정 채택 (규칙 1은 사람 확인)"
-            champion = sid
+            row.update(compare_values(base_off, cur_off))
+            failed = [f"규칙 {n} {row[f'rule{n}']}" for n in (2, 3) if row[f"rule{n}"] != "통과"]
+            diffs = [row[f"{key}_diff"] for key, _ in COMPARE_KEYS]
+            same = not any(pd.isna(d) for d in diffs) and all(round(float(d), 6) == 0 for d in diffs)
+            if sid in reject:
+                row["verdict"] = "되돌림: 사람 확인(규칙 1)에서 뺌"
+            elif failed:
+                row["verdict"] = "되돌림: " + ", ".join(failed)
+            elif base not in adopted:
+                row["verdict"] = f"채택 안 함: 비교 기준({base})이 채택되지 않음"
+            else:
+                row["verdict"] = "잠정 채택 (규칙 1은 사람 확인)"
+                adopted.add(sid)
+            if same:
+                row["verdict"] += " (비교 기준과 같음: 효과 없음)"
+            e2 = results.get("E2", {}).get("off")
+            if sid == "E3" and e2 is not None:
+                ref = compare_values(e2, cur_off)
+                row.update({"ref_base": "E2", "ref_changed": changed_text(resolve(EXP["E2"], adopted), expect),
+                            "ref_sens_diff": ref["sens_diff"], "ref_fp_diff": ref["fp_diff"],
+                            "ref_balanced": ref["balanced_base"], "ref_balanced_diff": ref["balanced_diff"],
+                            "ref_crack_net": ref["crack_net_base"], "ref_crack_net_diff": ref["crack_net_diff"],
+                            "ref_rule2": ref["rule2"], "ref_rule3": ref["rule3"]})
         rows.append(row)
-    return pd.DataFrame(rows, columns=ADOPT_COLUMNS), champion
+    return pd.DataFrame(rows, columns=ADOPT_COLUMNS), adopted
 
 
 def section_owners(path="src/config.py"):
@@ -875,7 +1090,8 @@ def matching_table(paths, states, runs):
 
 
 def source_table(runs):
-    """6번 제공 vs 직접 촬영 표: 39장 실행마다 출처(제공·직접 촬영·전체)별 영상 단위 지표와 영상당 후보·에지 수(끔·켬)."""
+    """6번 제공 vs 직접 촬영 표: 39장 실행마다 출처(제공·직접 촬영·전체)별 영상 단위 지표와 영상당 후보·에지 수(끔·켬).
+    E1·E3 자동 ROI 줄은 비교 단계의 참고 실행이다(채택 판단에 쓰지 않음)."""
     rows = []
     for sid, method in RUNS39:
         data = runs[sid]
@@ -889,12 +1105,13 @@ def source_table(runs):
 
 def degrade_table(paths, states):
     """7번 인위 저하 표: 회차(1회 비교·2회 최종) × 저하 × 끔·켬의 검출 지표, 에지·해리스·후보 수·면적, 상태 판정 적중률과 원본 기준.
-    처리 시간은 최종 단계(2회) 값만 넣는다(한 번 잰 값의 평균이라 참고). 끝나지 않은 실험은 상태만 한 줄."""
+    1회는 E1~E3 가운데 마지막 잠정 채택 설정으로 돈다(settings_from). 처리 시간은 최종 단계(2회) 값만 넣는다(한 번 잰 값의 평균, 참고)."""
     rows = []
     for round_name, prefix in DEGRADE_ROUNDS:
         for kind in et.DEGRADE_KINDS:
             exp, state = EXP[prefix + kind], states[prefix + kind]
-            head = {"round": round_name, "degrade": kind, "folder": exp["name"], "status": state["status"]}
+            head = {"round": round_name, "settings_from": state["source"] if prefix == "E6_" else "config", "degrade": kind,
+                    "folder": exp["name"], "status": state["status"]}
             summary = train_summary(paths, exp, state)
             if not summary:
                 rows.append({**head, "preprocess": ""})
@@ -902,21 +1119,21 @@ def degrade_table(paths, states):
             for mode in ("off", "on"):
                 times = {c: summary[mode].get(c) for c in TIME_MEANS} if prefix == "F6_" else {}
                 rows.append({**head, "preprocess": mode, **{c: summary[mode].get(c) for c in DEGRADE_COLS}, **times})
-    return pd.DataFrame(rows, columns=["round", "degrade", "folder", "status", "preprocess"] + DEGRADE_COLS + TIME_MEANS)
+    return pd.DataFrame(rows, columns=["round", "settings_from", "degrade", "folder", "status", "preprocess"] + DEGRADE_COLS + TIME_MEANS)
 
 
 def image_table(runs):
     """8번 39장 영상별 최종 판정: 사진마다 정답 유무(없으면 '미완'), 손상 유무, 상태 판정이 고른 전처리와 사람 태그에 맞는지,
-    1차 설정·최종(roi.csv)·최종(자동 ROI)의 끔·켬 판정(correct)과 최종 켬의 hit_same·hit_any·후보 수. 포트홀은 이 표로 사례를 본다."""
-    columns = ["file", "source", "condition", "gt", "has_damage", "steps", "judge_expect", "judge_hit",
-               "first_correct_off", "first_correct_on", "final_correct_off", "final_correct_on",
-               "auto_correct_off", "auto_correct_on", "final_hit_same_on", "final_hit_any_on", "final_n_crack_on", "final_n_pothole_on"]
-    base = next((runs[sid] for sid in ("F39", "F39e0", "F39a") if runs[sid] is not None), None)
+    1차 설정·최종(roi.csv)·최종(자동 ROI)과 E1·E3 자동 ROI(참고)의 끔·켬 판정(correct), 최종 켬의 hit_same·hit_any·후보 수.
+    포트홀은 이 표로 사례를 본다."""
+    columns = (["file", "source", "condition", "gt", "has_damage", "steps", "judge_expect", "judge_hit"]
+               + [f"{prefix}_correct_{mode}" for prefix, _ in IMAGE_RUNS for mode in ("off", "on")]
+               + ["final_hit_same_on", "final_hit_any_on", "final_n_crack_on", "final_n_pothole_on"])
+    base = next((runs[sid] for _, sid in sorted(IMAGE_RUNS, key=lambda p: p[0] != "final") if runs[sid] is not None), None)
     if base is None:
         return pd.DataFrame(columns=columns)
     judge = judgements(base["metrics"])
-    tables = {prefix: runs[sid]["image"].set_index("file") if runs[sid] is not None else None
-              for prefix, sid in (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"))}
+    tables = {prefix: runs[sid]["image"].set_index("file") if runs[sid] is not None else None for prefix, sid in IMAGE_RUNS}
     rows = []
     for _, r in base["image"].iterrows():
         f = r["file"]
@@ -942,13 +1159,30 @@ def saved_reject(paths):
 
 def build_report(paths, reject=(), command_line="python tools/run_all.py tables"):
     """있는 결과 폴더로 보고서 표 CSV(1~8번, 채택 표)와 summary.md를 results/report/에 만든다. 돌리지 않은 실험은 상태만 적는다.
-    화면에 보여 줄 값(상태, 채택 표, 잠정 채택 방법, 바꿀 config 값, E0 재현, 재현 확인, 39장 정답 상태)을 돌려준다."""
+    앞선 채택으로 설정이 정해지는 실험(E3 쪽 띠, E6 1회)이 지금 채택과 다른 설정으로 돌았으면 '다시 돌려야 함'으로 표에서 뺀다.
+    화면에 보여 줄 값(상태, 채택 표, 잠정 채택 방법, 바꿀 config 값, E0 재현, 재현 확인, 39장 정답 상태, 경고)을 돌려준다."""
     out = Path(paths["results"]) / REPORT_DIR
     out.mkdir(parents=True, exist_ok=True)
     ready = readiness()
     states = {e["id"]: exp_state(e, paths, ready) for e in EXPERIMENTS}
-    summaries = {sid: train_summary(paths, EXP[sid], states[sid]) for sid in ADOPT_IDS + ["E0_all", "T0", "T"]}
-    adopt, champion = adoption({sid: (s or {}).get("off") for sid, s in summaries.items()}, states, reject)
+    summaries = {sid: train_summary(paths, EXP[sid], states[sid]) for sid in ["E0", "E0_all", "T0", "T"] + ADOPT_ORDER}
+    results = {sid: {"off": (summaries[sid] or {}).get("off"), "status": states[sid]["status"], "opts": states[sid]["opts"]}
+               for sid in ["E0"] + ADOPT_ORDER}
+    adopt, adopted = adoption(results, reject)
+    for exp in EXPERIMENTS:
+        state = states[exp["id"]]
+        if (exp.get("follow_band") or exp.get("follow_last")) and state["done"] and state["opts"] is not None:
+            expect = resolve(exp, adopted)
+            if state["opts"] != expect:
+                state.update(done=False, status=f"다시 돌려야 함: 지금 채택으로는 {changed_text(state['opts'], expect)} (compare를 다시)")
+    last = last_adopted(adopted)
+    notes = list(ready["notes"])
+    if last == "E2" and {"E1", "E1b"} & adopted:
+        notes.append("잠정 채택 방법은 순서상 마지막인 E2(마스크 없음)지만, 마스크를 켠 E1·E1b도 채택됐고 둘은 직접 견주지 않았다. 최종은 사람이 정한다")
+    stale = [sid for sid in states if states[sid]["status"].startswith("다시 돌려야 함")]
+    if stale:
+        notes.append(f"지금 채택과 다른 설정으로 돈 실험: {', '.join(stale)}. python tools/run_all.py compare를 다시 돌린다"
+                     + (f"(--reject {','.join(reject)})" if reject else ""))
     runs = {sid: run39(paths, EXP[sid], states[sid]) for sid, _ in RUNS39}
     missing, n39 = missing_gt(paths)
     tables = {"table1_stages.csv": stages_table(paths, states), "table2_by_country.csv": country_table(paths, states),
@@ -958,10 +1192,11 @@ def build_report(paths, reject=(), command_line="python tools/run_all.py tables"
     for name, table in tables.items():
         table.to_csv(out / name, encoding="utf-8-sig", index=False)
     (out / REJECT_FILE).write_text(",".join(reject), encoding="utf-8")
-    report = {"out": out, "states": states, "adopt": adopt, "champion": champion, "reject": list(reject),
-              "changes": config_changes(EXP[champion]["opts"]), "e0": e0_reproduction(summaries["E0_all"]),
-              "repro": repro_check(paths), "gt": (n39 - len(missing), n39), "runs": runs, "tables": tables,
-              "summaries": summaries, "created": f"{datetime.datetime.now():%Y-%m-%d %H:%M}", "command": command_line}
+    method = resolve(EXP[last], adopted)
+    report = {"out": out, "states": states, "adopt": adopt, "adopted": adopted, "last": last, "method": method,
+              "reject": list(reject), "changes": config_changes(method), "e0": e0_reproduction(summaries["E0_all"]),
+              "repro": repro_check(paths), "gt": (n39 - len(missing), n39), "runs": runs, "tables": tables, "notes": notes,
+              "ready": ready, "summaries": summaries, "created": f"{datetime.datetime.now():%Y-%m-%d %H:%M}", "command": command_line}
     (out / "summary.md").write_text("\n".join(summary_lines(report)) + "\n", encoding="utf-8")
     return report
 
@@ -1008,51 +1243,80 @@ def metric_cells(r):
 METRIC_HEAD = ["민감도", "특이도", "정답률 (기준선)", "균형 정확도", "영상당 오검출", "균열 재현율 (우연 뺌)", "포트홀 재현율 (우연 뺌)"]
 
 
-def summary_lines(r):
-    """보고서용 요약(summary.md) 줄: 결과 폴더 상태, 채택 비교와 바꿀 config 값, E0 재현, 표 1~8의 핵심 열, 시험셋 전·후, 재현 확인."""
-    t, states = r["tables"], r["states"]
-    has39, n39 = r["gt"]
-    gt_note = "모두 있음" if has39 == n39 else f"{has39}/{n39}장 → 39장 표(3·6·8번)는 미완"
-    lines = ["# 실험 결과 요약 (tools/run_all.py)", "",
-             f"- 만든 시각: {r['created']} ({r['command']})",
-             "- 같은 폴더에 table1~8과 adoption.csv(모든 열)가 있고, 아래는 핵심 열만 옮겼다.",
-             "- 읽는 법: 정답률 옆 괄호는 기준선('검출 없음'의 정답률)이고 균형 정확도의 기준선은 50%다. 재현율은 중심 기준이고 "
-             "옆 괄호는 우연을 뺀 값(실제 − 우연 대조군)이다. 영상당 오검출은 중심 기준으로 맞지 않은 후보 수다.",
-             "- 처리 시간은 최종 단계 값만 쓴다(4번 표의 39장 최종 = 끔·켬 각 5번 중앙값. 7번 표의 2회는 한 번 잰 값의 평균이라 참고).",
-             f"- 39장 정답 파일: {gt_note}", ""]
-
-    lines += ["## 결과 폴더", ""] + md_table(
-        ["단계", "실험", "폴더", "상태", "커밋"],
-        [[STAGES[e["stage"]], f"{e['id']} {e['label']}", e["name"], states[e["id"]]["status"], states[e["id"]]["commit"] or "-"]
-         for e in EXPERIMENTS])
-
-    lines += ["## 채택 비교 (개발셋, 전처리 끔)", "",
-              "각 단계를 직전 채택 단계(E0 → E1 → E1b → E2 → E3 → E3 σ 띠 전체 순서에서 그때까지 잠정 채택된 마지막 단계)와 견준다. "
-              "규칙 2·3은 자동으로 보고, 규칙 1(같은 오검출 수준의 민감도)은 점수 문턱이 없어 민감도와 영상당 오검출을 나란히 두고 사람이 본다"
-              "(Plan.md 3.10). 비교 기준과 설정이 둘 이상 다르면 '바뀐 설정'에 모두 적힌다.", ""]
+def adoption_lines(r):
+    """채택 비교 절의 줄: 채택 표, E3와 E2의 차이(참고), 잠정 채택 방법과 바꿀 config 값, 경고, 39장 자동 ROI(참고), E0 재현."""
+    lines = ["## 채택 비교 (개발셋, 전처리 끔)", "",
+             "비교는 한 번에 하나만 바뀌게 한다: E1←E0, E1b←E1, E2←E0, E3←마스크를 켠 1차 설정(E1b가 채택되면 E1b, 아니면 E1), "
+             "E3σ←E3. E1b가 채택되면 E3 쪽은 띠 0.3으로 돈다. 규칙 2·3은 자동으로 보고, 규칙 1(같은 오검출 수준의 민감도)은 "
+             "점수 문턱이 없어 민감도와 영상당 오검출을 나란히 두고 사람이 본다(Plan.md 3.10). 비교 기준이 채택되지 않은 단계는 "
+             "규칙을 넘어도 채택하지 않는다.", ""]
     rows = []
     for _, a in r["adopt"].iterrows():
         if pd.isna(a["rule2"]):
-            rows.append([a["stage_id"], a["base"], a["changed"], "-", "-", "-", a["verdict"]])
+            rows.append([a["stage_id"], a["base"], a["changed"], "-", "-", "-", "-", a["verdict"]])
             continue
         rows.append([a["stage_id"], a["base"], a["changed"],
                      f"{pct(a['sens_base'])}→{pct(a['sens'])}, {num(a['fp_base'])}→{num(a['fp'])} · {a['rule1']}",
                      f"{pct(a['balanced_base'])}→{pct(a['balanced'])} ({pp(a['balanced_diff'])}) {a['rule2']}",
-                     f"{pp(a['crack_net_base'])}→{pp(a['crack_net'])} ({pp(a['crack_net_diff'])}) {a['rule3']}", a["verdict"]])
+                     f"{pp(a['crack_net_base'])}→{pp(a['crack_net'])} ({pp(a['crack_net_diff'])}) {a['rule3']}",
+                     f"{num(a['time_base'], 1)}→{num(a['time'], 1)}", a["verdict"]])
     lines += md_table(["단계", "비교 기준", "바뀐 설정", "규칙 1: 민감도, 영상당 오검출", "규칙 2: 균형 정확도",
-                       "규칙 3: 우연 뺀 균열 재현율", "판정"], rows)
-    champion = EXP[r["champion"]]
-    lines += [f"- 잠정 채택 방법: {champion['id']} {champion['label']}"
-              + (f" (사람 확인에서 뺀 단계: {', '.join(r['reject'])})" if r["reject"] else ""),
+                       "규칙 3: 우연 뺀 균열 재현율", "처리 시간 ms/장 (참고)", "판정"], rows)
+    lines += ["- 처리 시간은 단일 실행 참고값(사진마다 한 번 잰 전처리·검출·노면 마스크 시간의 평균 합)이다. 보고서에는 최종 단계 값만 쓴다."]
+    e3 = r["adopt"].set_index("stage_id").loc["E3"]
+    if not pd.isna(e3["ref_rule2"]):
+        lines += [f"- E3를 E2와 견줌 (참고, 판단에 쓰지 않음, {e3['ref_changed']}): 균형 정확도 {pct(e3['ref_balanced'])}→{pct(e3['balanced'])} "
+                  f"({pp(e3['ref_balanced_diff'])}) {e3['ref_rule2']}, 우연 뺀 균열 재현율 {pp(e3['ref_crack_net'])}→{pp(e3['crack_net'])} "
+                  f"({pp(e3['ref_crack_net_diff'])}) {e3['ref_rule3']}, 민감도 {pp(e3['ref_sens_diff'])}, 영상당 오검출 {num(e3['ref_fp_diff'])}"]
+    last = EXP[r["last"]]
+    lines += [f"- 잠정 채택 방법: {last['id']} {last['label']} ({settings_text(r['method'])}). E1~E3 가운데 마지막 잠정 채택이고, "
+              "E6 1회도 이 설정으로 돈다" + (f". 사람 확인에서 뺀 단계: {', '.join(r['reject'])}" if r["reject"] else ""),
               "- 그 방법으로 가려면 바꿀 config 값 (run_all은 config를 고치지 않는다. 구역 주인이 고친다):"]
     lines += [f"  - `{name} = {value!r}` ({owner})" for name, value, owner in r["changes"]] or ["  - 없음 (지금 config 그대로)"]
-    lines += [""]
+    lines += [f"- 경고: {note}" for note in r["notes"]] + [""]
+
+    rows = []
+    for sid in ("E1_39", "E3_39"):
+        state, data = r["states"][sid], r["runs"][sid]
+        if data is None:
+            rows.append([EXP[sid]["label"], "-", "-", "-", "-", "-", "-", state["status"]])
+            continue
+        s = data["source"][data["source"]["source"] == "all"].iloc[0]
+        rows.append([EXP[sid]["label"], settings_text(state["opts"] or EXP[sid]["opts"]), int(s["n_images"]), int(s["n_gt"]),
+                     f"{pct(s['sensitivity_off'])} / {pct(s['sensitivity_on'])}", f"{pct(s['specificity_off'])} / {pct(s['specificity_on'])}",
+                     f"{pct(s['accuracy_off'])} / {pct(s['accuracy_on'])} ({pct(s['baseline_none'])})", gt_status(data["metrics"])])
+    lines += ["39장 자동 ROI (참고: 손으로 정한 ROI 없이 도는지 보는 것이고 채택 판단에는 쓰지 않는다)", ""]
+    lines += md_table(["실행", "설정", "장수", "정답 있는", "민감도 끔/켬", "특이도 끔/켬", "정답률 끔/켬 (기준선)", "정답"], rows)
     if r["e0"]:
         lines += ["E0 재현 확인 (Plan.md 3.2 (5), 804장·전처리 끔)", ""] + md_table(
             ["항목", "기준", "이번", "같음"], [[k, f"{e:,}", f"{a:,}", "O" if ok else "X"] for k, e, a, ok in r["e0"]])
     elif r["summaries"].get("E0_all"):
         lines += [f"- E0 재현 확인은 학습 사진 {N_TRAIN}장일 때만 한다(이번 e0_all은 "
                   f"{int(r['summaries']['E0_all']['off']['images'])}장).", ""]
+    return lines
+
+
+def summary_lines(r):
+    """보고서용 요약(summary.md) 줄: 결과 폴더 상태, 채택 비교와 바꿀 config 값, E0 재현, 표 1~8의 핵심 열, 시험셋 전·후, 재현 확인."""
+    t, states = r["tables"], r["states"]
+    has39, n39 = r["gt"]
+    gt_note = "모두 있음" if has39 == n39 else f"{has39}/{n39}장 → 39장 표(3·6·8번)는 미완"
+    ready = r["ready"]
+    lines = ["# 실험 결과 요약 (tools/run_all.py)", "",
+             f"- 만든 시각: {r['created']} ({r['command']})",
+             "- 같은 폴더에 table1~8과 adoption.csv(모든 열)가 있고, 아래는 핵심 열만 옮겼다.",
+             "- 읽는 법: 정답률 옆 괄호는 기준선('검출 없음'의 정답률)이고 균형 정확도의 기준선은 50%다. 재현율은 중심 기준이고 "
+             "옆 괄호는 우연을 뺀 값(실제 − 우연 대조군)이다. 영상당 오검출은 중심 기준으로 맞지 않은 후보 수다.",
+             "- 처리 시간은 최종 단계 값만 보고서에 쓴다(4번 표의 39장 최종 = 끔·켬 각 5번 중앙값). 채택 표의 시간은 한 번 잰 값의 평균이라 참고.",
+             f"- 39장 정답 파일: {gt_note}",
+             "- 구현 여부(A·B 시험의 @todo 기준): " + ", ".join(f"{NEEDS[k]} {'구현됨' if ready[k] else '구현 전'}" for k in SIGNALS), ""]
+
+    lines += ["## 결과 폴더", ""] + md_table(
+        ["단계", "실험", "폴더", "상태", "커밋"],
+        [[STAGES[e["stage"]], f"{e['id']} {e['label']}", e["name"], states[e["id"]]["status"], states[e["id"]]["commit"] or "-"]
+         for e in EXPERIMENTS])
+
+    lines += adoption_lines(r)
 
     lines += ["## 1. 단계별 표 (E0~E5, 시험셋)", "", "E6는 7번 표. 끝나지 않은 단계는 상태만 적는다.", ""]
     rows = []
@@ -1081,23 +1345,24 @@ def summary_lines(r):
             for _, m in t["table5_matching.csv"].iterrows() if not str(m["target"]).startswith("쌍 ") or m["target"] == "쌍 평균"]
     lines += md_table(["항목", "대상", "끔", "켬", "차이"], rows) if rows else ["아직 결과 없음 (최종 단계 뒤)", ""]
 
-    lines += ["## 6. 제공 vs 직접 촬영 (39장)", ""]
+    lines += ["## 6. 제공 vs 직접 촬영 (39장)", "", "'(참고)' 줄은 비교 단계의 자동 ROI 실행이고 채택 판단에 쓰지 않는다.", ""]
     rows = [[s["method"], s["source"], int(s["n_images"]), int(s["n_gt"]), f"{pct(s['sensitivity_off'])} / {pct(s['sensitivity_on'])}",
              f"{pct(s['specificity_off'])} / {pct(s['specificity_on'])}",
              f"{pct(s['accuracy_off'])} / {pct(s['accuracy_on'])} ({pct(s['baseline_none'])})",
              f"{num(s['n_crack_off'])} / {num(s['n_crack_on'])}", f"{num(s['n_pothole_off'])} / {num(s['n_pothole_on'])}", s["gt_status"]]
             for _, s in t["table6_provided_vs_own.csv"].iterrows()]
     lines += md_table(["방법", "출처", "장수", "정답 있는", "민감도 끔/켬", "특이도 끔/켬", "정답률 끔/켬 (기준선)",
-                       "균열 후보 끔/켬", "포트홀 후보 끔/켬", "정답"], rows) if rows else ["아직 결과 없음 (최종 단계 뒤)", ""]
+                       "균열 후보 끔/켬", "포트홀 후보 끔/켬", "정답"], rows) if rows else ["아직 결과 없음 (비교·최종 단계 뒤)", ""]
 
-    lines += ["## 7. 인위 저하 표 (개발셋)", ""]
+    lines += ["## 7. 인위 저하 표 (개발셋)", "", "1회는 E1~E3 가운데 마지막 잠정 채택 설정, 2회는 최종 설정(config)으로 돈다.", ""]
     rows = []
     for _, d in t["table7_degrade.csv"].iterrows():
+        round_name = f"{d['round']}, {d['settings_from']} 설정" if d["round"].startswith("1회") else d["round"]
         if d["preprocess"] not in ("off", "on"):
-            rows.append([d["round"], DEGRADE_NAMES[d["degrade"]], "-"] + ["-"] * 7 + [d["status"]])
+            rows.append([round_name, DEGRADE_NAMES[d["degrade"]], "-"] + ["-"] * 7 + [d["status"]])
             continue
         judge = "-" if pd.isna(d["judge_hit_rate"]) else f"{pct(d['judge_hit_rate'])} ({pct(d['judge_base_rate'])})"
-        rows.append([d["round"], DEGRADE_NAMES[d["degrade"]], "끔" if d["preprocess"] == "off" else "켬",
+        rows.append([round_name, DEGRADE_NAMES[d["degrade"]], "끔" if d["preprocess"] == "off" else "켬",
                      pct(d["sensitivity"]), pct(d["specificity"]), f"{pct(d['accuracy'])} ({pct(d['baseline_none'])})",
                      num(d["fp_per_image"]), f"{pct(d['crack_ctr_recall'])} ({pp(d['crack_ctr_recall_net'])})",
                      num(d["edges_mean"], 0), judge, d["status"]])
@@ -1132,7 +1397,7 @@ def condition_lines(table, runs):
     """3번 조건별 표 줄(최종 roi.csv만, 나머지는 CSV)과 E5 상태 판정 검증(같은 장소 정상·흔들림 쌍)."""
     lines = ["## 3. 조건별 표 (39장 최종 roi.csv)", "",
              "조건은 사람이 붙인 태그(직접 촬영은 이름, 제공 13장은 roi.csv)이고, '고른 전처리'는 상태 판정(analyze)의 결과다. "
-             "1차 설정·자동 ROI 행은 table3_by_condition.csv에 있다.", ""]
+             "1차 설정·자동 ROI·참고 실행의 행은 table3_by_condition.csv에 있다.", ""]
     rows = [[c["condition"], int(c["n_images"]), int(c["n_gt"]), f"{pct(c['sensitivity_off'])} / {pct(c['sensitivity_on'])}",
              f"{pct(c['specificity_off'])} / {pct(c['specificity_on'])}",
              f"{pct(c['accuracy_off'])} / {pct(c['accuracy_on'])} ({pct(c['baseline_none'])})",
@@ -1151,9 +1416,10 @@ def condition_lines(table, runs):
 
 
 def image_lines(table, gt_note):
-    """8번 39장 영상별 최종 판정 표 줄. 정답이 없는 사진은 '없음(미완)'이고 판정은 -."""
+    """8번 39장 영상별 최종 판정 표 줄. 정답이 없는 사진은 '없음(미완)'이고 판정은 -. E1·E3 자동 ROI(참고)의 판정은 CSV에 있다."""
     lines = [f"## 8. 39장 영상별 최종 판정 (정답 파일: {gt_note})", "",
-             "O 맞힘, X 틀림, - 정답 없음. 손상 영상은 같은 종류 후보가 맞으면, 손상 없는 영상은 후보가 0개면 맞힘(중심 기준).", ""]
+             "O 맞힘, X 틀림, - 정답 없음. 손상 영상은 같은 종류 후보가 맞으면, 손상 없는 영상은 후보가 0개면 맞힘(중심 기준). "
+             "E1·E3 자동 ROI(참고)의 판정은 table8_39_images.csv에 있다.", ""]
     if not len(table):
         return lines + ["아직 결과 없음 (최종 단계 뒤)", ""]
     rows = [[i["file"], i["condition"] if isinstance(i["condition"], str) else "unknown", i["gt"], mark(i["has_damage"]),
@@ -1166,7 +1432,7 @@ def image_lines(table, gt_note):
 
 
 def print_report(report, stage):
-    """표를 만든 뒤 화면에 핵심만: 표 위치, (비교·표만) 채택 판정과 바꿀 config 값·E0 재현, (재현) 같은지."""
+    """표를 만든 뒤 화면에 핵심만: 표 위치, (비교·표만) 잠정 판정과 바꿀 config 값·E0 재현, 경고, (시험) 전·후, (재현) 같은지."""
     print(f"\n표: {report['out'].as_posix()}/ (summary.md, table1~8, adoption.csv)")
     has39, n39 = report["gt"]
     if has39 < n39:
@@ -1175,13 +1441,15 @@ def print_report(report, stage):
         print("채택 비교 (개발셋, 전처리 끔):")
         for _, a in report["adopt"].iterrows():
             print(f"  {a['stage_id']:<4} 비교 기준 {a['base']:<4} {a['verdict']}")
-        champion = EXP[report["champion"]]
-        print(f"잠정 채택 방법: {champion['id']} {champion['label']}")
+        last = EXP[report["last"]]
+        print(f"잠정 채택 방법: {last['id']} {last['label']} ({settings_text(report['method'])})")
         print("바꿀 config 값 (config는 고치지 않음):" if report["changes"] else "바꿀 config 값: 없음")
         for name, value, owner in report["changes"]:
             print(f"  {name} = {value!r}  ({owner})")
         for key, expect, actual, ok in report["e0"]:
             print(f"E0 재현 {key}: 기준 {expect:,} / 이번 {actual:,} {'같음' if ok else '다름'}")
+    for note in report["notes"]:
+        print(f"경고: {note}")
     if stage == "test":
         print("\n".join(target_lines(report["summaries"])))
     if stage == "repro":
