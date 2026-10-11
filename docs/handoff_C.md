@@ -193,7 +193,7 @@ python tests/check_contract.py                      # 약속 검사
 python tests/test_c.py                              # C 시험 (A는 test_a, B는 test_b)
 python run_experiment.py --name <이름> [--only provided|own] [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3]   # 39장 끔·켬 → results/<이름>/
 python run_matching.py --name <이름>                # 쌍 사진 5쌍 매칭 → results/<이름>/matching.csv
-python demo.py [사진 경로 [roi_top roi_bottom]]     # 경로를 빼면 사진 목록에서 번호로 고름
+python demo.py [사진 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--save 그림.png]   # 경로를 빼면 사진 목록에서 번호로 고름. 옵션을 빼면 config 그대로
 python tools/label_gt.py [사진 경로]                # 정답 박스 (c 균열, p 포트홀, Enter, q 저장)
 python tools/evaluate_train.py --name <이름> [--split dev|test|all] [옵션]   # 학습 사진 평가 → results/<이름>/ (기본 개발셋, 5.2)
 python tools/convert_json_gt.py                     # data/train/ann JSON → gt/train CSV (이미 커밋됨)
@@ -228,7 +228,7 @@ python run_matching.py --name final
 
 ### 4.3 결과 폴더
 
-- `run_experiment`: `results/<이름>/metrics.csv`(영상마다 끔·켬 2행), `figures/<사진>.png`, `table_by_image.csv`·`table_by_source.csv`·`table_by_condition.csv`, `config_used.txt`.
+- `run_experiment`: `results/<이름>/metrics.csv`(영상마다 끔·켬 2행), `figures/<사진>.png`(6칸, (10/11 M8) 후보 칸에 노면 마스크를 반투명 초록으로 깔고 그 위에 후보), `table_by_image.csv`·`table_by_source.csv`·`table_by_condition.csv`, `config_used.txt`.
   - (10/11 M7) metrics.csv에 `edges_road`(노면 안 에지 수)·`t_road_ms`(반복 중앙값)가 row 9열 뒤에, 영상 단위 판정 `has_gt`·`has_damage`·`n_pred`·`hit_same`·`hit_any`·`correct`(evaluate.image_verdict, 중심 기준)가 정답 비교 열 뒤에 붙는다. 정답 파일이 없으면 판정 4칸(`has_damage`·`hit_same`·`hit_any`·`correct`)은 빈칸이고 `has_gt`·`n_pred`는 채운다.
   - source·condition 표 앞쪽에 `n_damage`·`n_none`, 정답 있는 영상의 `sensitivity`·`specificity`·`accuracy`(끔·켬·차이)와 정답률 바로 옆에 `baseline_none`이 있다. SUMMARY_METRICS에 `edges_road`·`t_road_ms`가 더해져 세 표 모두 끔·켬·차이로 나온다.
   - (10/11) table_by_image는 머리 열(상태 지표·roi_pixels) 바로 뒤에 `has_gt`·`has_damage`와 판정 `correct`·`hit_same`·`hit_any`의 `_off`·`_on`을 둔다. 포트홀처럼 개수가 적은 것을 영상별 사례로 보고하려는 것이고, 39장 최종 판정 표는 마지막 일괄 실행 스크립트에서 이것을 모아 만든다(사용자 계획).
@@ -269,7 +269,7 @@ python run_matching.py --name final
 
 ### 5.2 evaluate_train (B 파일, C가 M2에서 고치고 M6에서 `--degrade`를 더함)
 
-- (10/11 M6) `--degrade none|blur|dark|bright|noise`(기본 none): 640px로 맞춘 컬러 사진에 띠를 자르기 전 저하를 넣는다(`degrade`, 값은 config C 구역 DEGRADE_*). none은 복사본이라 옵션 없는 실행과 같다(`resize_width`는 이미 640px인 사진을 복사만 하므로 run_pipeline에 넘겨도 픽셀이 같음). dark·bright는 0~1 밝기에 감마를 건 표(반올림, 128 → 56·181), noise는 채널마다 σ 10 가우시안 잡음을 함수 안에서 DEGRADE_SEED로 만든다(그래서 크기가 같은 사진에는 같은 잡음 무늬가 들어간다).
+- (10/11 M6) `--degrade none|blur|dark|bright|noise`(기본 none): 640px로 맞춘 컬러 사진에 띠를 자르기 전 저하를 넣는다(`degrade`, 값은 config C 구역 DEGRADE_*). none은 복사본이라 옵션 없는 실행과 같다(`resize_width`는 이미 640px인 사진을 복사만 하므로 run_pipeline에 넘겨도 픽셀이 같음). dark·bright는 0~1 밝기에 감마를 건 표(반올림, 128 → 56·181), noise는 채널마다 σ 10 가우시안 잡음을 함수 안에서 seed = DEGRADE_SEED + 사진 바이트의 crc32로 만든다(10/11 고침. 처음엔 DEGRADE_SEED만 써서 크기가 같은 사진에 모두 같은 무늬가 들어갔다. 이제 사진마다 무늬가 다르고 같은 사진은 늘 같다. 파이썬 hash()는 실행마다 달라 쓰지 않음).
 - (10/11 M6) 상태 판정 적중률: 켬 행에서 저하 사진이 넣은 저하에 맞는 전처리를 고른 비율이 `judge_hit_rate`(blur → 샤프닝, dark → 감마 < 1, bright → 감마 > 1, noise → 잡티 제거), 같은 사진의 저하 없는 원본에서 같은 전처리를 고른 비율이 `judge_base_rate`다. 둘을 한 실행에서 함께 낸다(원래부터 그 전처리를 받던 사진이 섞여 있어서. 예: 804장의 29%가 저하 없이도 밝게 하는 감마). 끔 행과 none은 빈칸(NaN). 영상별 측정값의 처리 시간은 사진마다 한 번 잰 값이라 참고용이다.
 - (10/11 M6 검증, 임시 폴더, 개발 652장) 옵션 없음 = `--degrade none`(1,304행, 처리 시간 열 말고 같음). 옵션 없음은 M6 전 코드의 개발셋 결과와 같은 열 33개 × 1,304행이 모두 같았다. 다섯 가지 모두 오류 없이 1회 31~47초(noise가 가장 느림)였다. 원본 기준(`judge_base`)은 none 실행에서 실제로 고른 전처리와 네 가지 모두 652장이 같았다. 참고 적중률(저하 / 원본): blur → 샤프닝 1.00 / 0.05, dark → 감마 < 1 0.85 / 0.29, bright → 감마 > 1 0.32 / 0.03, noise → 잡티 제거 1.00 / 0.04. bright는 저하 뒤에도 평균 밝기가 과노출 기준(BRIGHT_MEAN_MIN 170)을 넘지 않는 사진이 많다. 진짜 E6 숫자는 마지막 일괄 실행에서 낸다.
 
@@ -318,6 +318,8 @@ python run_matching.py --name final
 - `run_matching`은 ROI 없이 640px 전체 흑백을 쓰고, 켬이면 기준 A를 포함한 모든 사진이 자기 상태에 맞는 전처리를 거친다.
 - 그림의 한글 글꼴은 `sys.platform`으로 고른다(윈도 맑은 고딕, 맥 AppleGothic, 그 밖은 □로 나옴). 최종 실행 컴퓨터가 윈도·맥이 아니면 그림 제목이 깨진다.
 - 데모 창 제목은 ASCII(`demo`)다. 윈도 HighGUI에서 한글 창 제목이 깨지기 때문이고, 패널의 한글은 OpenCV 5 내장 글꼴 `FontFace("sans")`로 그린다.
+- (10/11 M8) `visualize.draw_road`는 노면 마스크를 반투명 초록(config C 구역 `ROAD_OVERLAY_COLOR`·`ROAD_OVERLAY_ALPHA` 0.35)으로 `road.shape[0]`줄만 칠한다. run_experiment 비교 그림과 demo는 `draw_candidates(draw_road(...))`로 노면 위에 후보 윤곽을 그린다. 노면 마스크가 자리(전부 255)인 지금은 띠 전체가 초록이고, roi.csv에서 아래를 0.95로 자른 미국 3장은 띠 아래 줄이 칠해지지 않는다.
+- (10/11 M8) demo 화면: 위 띠 '전처리 끔'·'전처리 켬: 고른 전처리', 아래 띠 두 줄 '상태 판정: 평균·표준편차·라플라시안 분산·잡티·재흐림 비율(아직 없는 값은 -)'과 '설정: ROI(출처)·노면 마스크·검출'. 설정 줄은 옵션을 적용한 뒤의 config를 읽어 적으므로, 녹화한 데모만 보고도 조건을 안다. `--roi`·`--mask`·`--detect`는 실행 중에만 바꾸고 되돌리며 기본은 config를 따른다. ROI 비율과 `--roi auto`를 함께 주면 거부하고, 아직 없는 `--detect dark`는 '아직 구현되지 않은 설정' 문구와 끝 코드 1로 끝난다. `--save 그림.png`면 창 대신 같은 화면을 파일로 저장한다(한글 경로 대비 imencode + tofile).
 - `src/`에서 파일을 저장하는 함수는 `visualize.save_comparison` 하나다(Agg 백엔드, 저장 뒤 `plt.close`).
 
 ### 5.5 흩어진 판단의 이유
