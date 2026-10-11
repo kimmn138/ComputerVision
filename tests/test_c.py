@@ -874,7 +874,7 @@ def test_chance_control():
 
 
 def test_degrade():
-    """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 57), bright는 입력^0.5(128 → 181),
+    """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 56), bright는 입력^0.5(128 → 181),
     noise는 seed가 고정이라 두 번 해도 같다. 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다. 값은 config C 구역 DEGRADE_*."""
     from tools import evaluate_train as et
     a, _ = texture()
@@ -890,6 +890,18 @@ def test_degrade():
           "degrade: 감마 방향이나 값이 틀림 (128 → dark 57, bright 181)")
     check(np.array_equal(et.degrade(bgr, "noise"), out["noise"]) and not np.array_equal(out["noise"], bgr),
           "degrade: noise가 seed 고정이 아니거나 잡음이 들어가지 않음")
+
+
+def test_degrade_noise_per_photo():
+    """noise 저하의 잡음 무늬는 사진마다 다르고(seed = DEGRADE_SEED + 사진 바이트 crc32), 같은 사진은 언제 불러도 같다.
+    모든 사진에 같은 무늬가 들어가면 결과가 그 무늬 하나에 좌우될 수 있어서다. 0·255에 잘리지 않는 밝기(120·130)로 무늬만 비교한다."""
+    from tools import evaluate_train as et
+    a, b = np.full((64, 64, 3), 120, np.uint8), np.full((64, 64, 3), 130, np.uint8)
+    noise_a = et.degrade(a, "noise").astype(int) - 120
+    noise_b = et.degrade(b, "noise").astype(int) - 130
+    check(np.array_equal(et.degrade(a, "noise"), et.degrade(a, "noise")), "degrade noise: 같은 사진인데 잡음이 달라짐")
+    check((noise_a != noise_b).mean() > 0.5,
+          f"degrade noise: 크기가 같은 두 사진에 같은 잡음 무늬가 들어감 (같은 칸 {float((noise_a == noise_b).mean()):.2f})")
 
 
 def test_degrade_option_and_judge():
@@ -966,7 +978,8 @@ def main():
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,
                test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
-               test_train_options, test_chance_control, test_degrade, test_degrade_option_and_judge, test_degrade_main):
+               test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
+               test_degrade_option_and_judge, test_degrade_main):
         try:
             fn()
         except unittest.SkipTest as e:
