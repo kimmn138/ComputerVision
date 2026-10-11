@@ -1,4 +1,4 @@
-"""(파트 B) 검출 후보와 정답 박스를 비교하여 검출 성능을 평가한다."""
+"""검출 결과를 정답 박스와 비교해 성능(정밀도·재현율, 영상 단위 판정)을 잰다."""
 
 import csv
 from pathlib import Path
@@ -7,7 +7,7 @@ import numpy as np
 
 
 def load_gt(path):
-    """정답 CSV를 읽어 (x, y, w, h, kind) 목록으로 반환한다."""
+    """정답 CSV를 읽어 [(x, y, w, h, kind)]로 돌려준다. 파일이 없으면 None."""
     path = Path(path)
 
     if not path.exists():
@@ -55,7 +55,7 @@ def iou(a, b):
 
 
 def count_matches(pred, gt, thr):
-    """예측 박스와 정답 박스를 IoU 기준으로 일대일 대응시켜 개수를 센다."""
+    """검출 박스와 정답 박스를 IoU 기준으로 일대일 대응시켜 tp·fp·found·fn을 센다."""
     matched_gt = set()
     tp = 0
 
@@ -90,10 +90,8 @@ def count_matches(pred, gt, thr):
 
 
 def count_center_hits(pred, gt):
-    """검출 박스의 중심이 정답 박스 안에 있으면 맞힌 것으로 세어, IoU로는 놓치는 조각 검출도 평가한다.
-    균열 정답은 균열 전체를 감싼 큰 박스이고 검출은 그 안의 조각이라 IoU가 낮게 나오므로 IoU 기준과 함께 본다.
-    tp·fp는 검출 기준(중심이 어떤 정답 안에 들었는지, 한 정답에 여러 검출 가능),
-    found·fn은 정답 기준(안에 검출 중심이 하나라도 있는지)이라 tp와 found가 다를 수 있다."""
+    """검출 박스의 중심이 정답 박스 안이면 맞힌 것으로 센다.
+    큰 균열 정답 안의 조각 검출은 IoU가 낮아서, IoU 기준과 함께 본다."""
     centers = [(x + w / 2, y + h / 2) for x, y, w, h in pred]
 
     def inside(point, box):
@@ -112,7 +110,7 @@ def count_center_hits(pred, gt):
 
 
 def precision_recall(counts):
-    """검출 개수에서 정밀도와 재현율을 계산하며 분모가 0이면 NaN을 반환한다."""
+    """개수 dict로 (정밀도, 재현율)을 계산한다. 분모가 0이면 NaN."""
     tp = counts["tp"]
     fp = counts["fp"]
     found = counts["found"]
@@ -137,11 +135,8 @@ def precision_recall(counts):
 
 
 def image_verdict(pred_by_kind, gt):
-    """영상 한 장의 손상 판정이 맞았는지 본다(영상 단위 정답률·민감도·특이도용).
-    손상 영상은 정답에 있는 종류 중 하나라도 같은 종류 후보의 중심이 정답 박스 안이면 맞힘(hit_same),
-    손상 없는 영상은 후보가 0개여야 맞힘. hit_any는 종류와 상관없이 후보 중심이 정답 안에 든 경우로,
-    위치는 맞았는데 종류만 틀린 경우를 따로 보려고 센다.
-    pred_by_kind: {"crack": [(x, y, w, h)], "pothole": [...]}, gt: [(x, y, w, h, kind)], 둘 다 640px 전체 영상 좌표."""
+    """영상 한 장의 판정이 맞았는지 본다.
+    손상 영상: 같은 종류 후보의 중심이 정답 박스 안에 하나라도 있으면 맞힘. 손상 없는 영상: 후보가 0개면 맞힘."""
     truth_by_kind = {}
 
     for x, y, w, h, kind in gt:
@@ -175,9 +170,8 @@ def image_verdict(pred_by_kind, gt):
 
 
 def summarize_verdicts(verdicts):
-    """여러 장의 영상 판정을 민감도·특이도·정답률·균형 정확도와 '검출 없음' 기준선으로 묶는다. 분모가 0이면 NaN.
-    민감도 = 손상 영상 중 맞힌 비율, 특이도 = 손상 없는 영상 중 맞힌(후보 0개) 비율,
-    기준선 = 아무것도 검출하지 않을 때의 정답률(= 손상 없는 영상 비율)."""
+    """여러 장의 판정을 민감도·특이도·정답률·균형 정확도로 묶는다. 분모가 0이면 NaN.
+    baseline_none = 아무것도 검출하지 않았을 때의 정답률."""
     n = len(verdicts)
     n_damage = sum(1 for v in verdicts if v["has_damage"])
     n_none = n - n_damage

@@ -1,39 +1,13 @@
-"""(파트 B) 교수 제공 훈련 데이터(RDD2022 804장)에서 검출 성능을 정량 평가한다. 평가 체계는 C가 더함(Plan.md 3.2).
-사용법: 맨 위 폴더에서  python tools/convert_json_gt.py (정답 CSV를 먼저 만듦)
-        → python tools/evaluate_train.py [--split dev|test|all] [--name 이름] [--param-set base|…|all]
-                                         [--mask on|off] [--roi-top 0.3] [--detect legacy|dark] [--set NAME=VALUE]
-                                         [--degrade none|blur|dark|bright|noise]
-훈련 사진과 정답 CSV 폴더는 config B 구역의 TRAIN_IMAGE_DIR·TRAIN_GT_DIR.
-
-평가할 사진(--split): 국가별 이름순 순번 % 5 == 4이면 시험, 나머지는 개발(진단 35장은 개발에 고정).
-기본은 개발 652장이고, 시험 152장은 파라미터를 확정한 뒤 한 번만(10/11 17:00) 잰다.
-
-결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
-- train_detail.csv: 영상별 고른 전처리(steps)·에지·해리스·후보 면적·노면 픽셀·처리 시간, 개수와 영상 단위 판정
-  (has_damage·n_pred·hit_same·hit_any·correct, IoU 기준 correct_iou), 인위 저하일 때 상태 판정 적중(judge_hit·judge_base)
-- train_summary.csv: 합계. 종류·기준별 정밀도·재현율, 민감도·특이도·정답률·균형 정확도·기준선, 영상당 후보·오검출, 우연 대조군,
-  에지·해리스·후보 수·면적·처리 시간의 영상당 평균(_mean), 상태 판정 적중률(judge_hit_rate)과 원본 기준 비율(judge_base_rate)
-- per_source.csv: 같은 요약을 국가별로
-- config_used_train.txt: 이번 실행의 config 값, 파라미터 세트, 실행 옵션으로 바꾼 값, 인위 저하 종류
-파라미터: 기본은 config.py 값을 그대로 한 번 돌린다(params 열 = config).
---param-set으로 1차 튜닝 세트를 고르면 그 값으로 config를 실행 중에만 덮는다.
-base는 1차(10/06, results/tuning) 기준 값이라 E0 재현에 쓰고, all은 5세트를 모두 돈다.
---mask·--roi-top·--detect·--set도 config.py 파일은 고치지 않고 실행 중에만 값을 바꾼 뒤 끝나면 되돌린다.
---degrade(인위 저하 E6, Plan.md 3.2 (6)): 640px 컬러 사진에 띠를 자르기 전 일부러 화질을 떨어뜨린다(값은 config C 구역 DEGRADE_*).
-저하마다 끔·켬으로 돌고, 켬에서 상태 판정이 넣은 저하에 맞는 전처리를 고른 비율(judge_hit_rate)과, 같은 사진의 저하 없는 원본에서
-그 전처리를 고른 비율(judge_base_rate)을 나란히 낸다. 원래부터 그 전처리를 받던 사진이 섞여 있어(804장의 29%가 밝게 하는 감마) 둘을 견준다.
-처리 시간은 사진마다 한 번 잰 값의 평균이라 참고용이다. 보고서의 처리 시간은 run_experiment(반복 중앙값)의 최종 실행 값을 쓴다.
-
-run_experiment와 같은 조건으로 평가한다:
-- pipeline.run_pipeline(640px → ROI 자르기 → 전처리 끔/켬 → 검출)을 그대로 쓰고, 끔·켬 두 줄을 모두 낸다.
-- ROI는 run_experiment.get_roi와 같이 roi.csv에서 찾고, 없으면 config 기본값(ROI_TOP_DEFAULT·ROI_BOTTOM_DEFAULT).
-- 후보 좌표는 run_experiment.to_full_boxes로 640px 전체 영상 좌표로 옮긴다(y + y0).
-- ROI 밖에 있는 정답도 빼지 않고 놓친 것(FN)으로 센다.
-판정은 두 가지를 함께 낸다:
-- iou: IoU ≥ IOU_THRESH, 정답 하나에 검출 하나(evaluate.count_matches)
-- ctr: 검출 중심이 정답 박스 안(evaluate.count_center_hits). 큰 정답 박스 안의 조각 검출도 맞힘으로 셈
-영상 단위: 손상 영상은 같은 종류 후보가 하나라도 맞으면(ctr), 손상 없는 영상은 후보가 0개면 맞힘(evaluate.image_verdict).
-우연 대조군: 640px 높이가 같은 사진끼리 이름순으로 묶고 i번 후보를 i+1번 정답과 비교한 재현율(사진이 1장뿐인 높이는 뺌)."""
+"""학습 데이터(RDD2022 804장)에서 전처리 끔·켬의 검출 성능을 정량 평가한다.
+실행: python tools/evaluate_train.py --name <이름> [--split dev|test|all] [--degrade blur|dark|bright|noise]
+결과: results/<이름>/
+- train_detail.csv: 사진별 측정값·정답 비교·판정
+- train_summary.csv: 전체 요약 (정밀도·재현율, 민감도·특이도·정답률, 영상당 오검출 등)
+- per_source.csv: 국가별 요약
+처리 과정은 run_experiment와 같다(pipeline.run_pipeline). 판정 기준은 두 가지다:
+- iou: IoU ≥ IOU_THRESH로 정답과 일대일 대응
+- ctr: 검출 중심이 정답 박스 안 (큰 정답 박스 안의 조각 검출도 맞힘으로 셈)
+--degrade를 주면 사진에 일부러 화질 저하를 넣고, 전처리가 이를 얼마나 회복하는지 잰다."""
 
 import argparse
 import ast
@@ -59,24 +33,24 @@ from src.evaluate import (  # noqa: E402
 )
 
 
-RESULTS_ROOT = Path("results")              # 결과는 results/<name>/ (이름 규칙은 run_experiment와 같음)
+RESULTS_ROOT = Path("results")
 
 DETAIL_NAME = "train_detail.csv"
 SUMMARY_NAME = "train_summary.csv"
-CONFIG_NAME = "config_used_train.txt"       # run_experiment의 config_used.txt와 같은 폴더에서 겹치지 않게
+CONFIG_NAME = "config_used_train.txt"
 SOURCE_NAME = "per_source.csv"
 
 ROI_PATH = Path("data/roi.csv")
 
 KINDS = ("crack", "pothole")
-MODES = (("off", False), ("on", True))     # 전처리 끔·켬 (run_experiment의 preprocess 열과 같은 이름)
+MODES = (("off", False), ("on", True))     # 전처리 끔·켬
 CRITERIA = ("iou", "ctr")                  # iou: IoU 일대일, ctr: 검출 중심이 정답 박스 안
 COUNT_KEYS = ("tp", "fp", "found", "fn")
 
-# 영상별 판정 열(train_detail.csv): 앞 5개는 evaluate.image_verdict(중심 기준), 뒤 2개는 같은 판정을 IoU 기준으로
+# 사진별 판정 열: 앞 5개는 중심 기준, 뒤 2개는 IoU 기준
 VERDICT_COLUMNS = ["has_damage", "n_pred", "hit_same", "hit_any", "correct", "hit_same_iou", "correct_iou"]
 
-# 요약 열(train_summary.csv·per_source.csv): 영상 단위 지표와 영상당 후보·오검출(Plan.md 3.2 (1) '보고할 값')
+# 요약 표의 영상 단위 지표 열
 IMAGE_COLUMNS = [
     "n_damage", "n_none",
     "sensitivity", "specificity", "accuracy", "balanced", "baseline_none",
@@ -84,33 +58,30 @@ IMAGE_COLUMNS = [
     "pred_per_image", "fp_per_image",
 ]
 
-# 우연 대조군 열: 종류별 대조군 재현율과 '실제 − 대조군'(중심 기준, 채택 규칙 3번), 대조군에서 뺀 사진 수
+# 우연 대조군 열: 우연히 맞는 재현율과 '실제 − 우연'
 CHANCE_COLUMNS = [
     f"{kind}_ctr_recall_{name}"
     for kind in KINDS
     for name in ("chance", "net")
 ] + ["chance_skipped"]
 
-# 영상별 측정값(train_detail.csv): pipeline row의 값과 노면 마스크 시간·자동 띠 경계 시간(사진 전체 노면 마스크, 자동 띠가 꺼져 있으면 0).
-# 평가표의 '전처리 전·후 비교' 항목(에지·특징점 수, 후보 수·면적, 처리 시간)을 학습 데이터에서도 내려고 남긴다. 후보 수는 pred_crack·pred_pothole 열에 있다
+# 사진별 측정값 열 (에지·코너 수, 후보 면적, 처리 시간)
 ROW_MEASURES = ["edges", "harris", "area_crack", "area_pothole", "roi_pixels", "t_pre_ms", "t_detect_ms"]
-RESULT_TIMES = ["t_road_ms", "t_band_ms"]   # run_pipeline 결과의 row 밖 처리 시간
+RESULT_TIMES = ["t_road_ms", "t_band_ms"]   # row 밖의 처리 시간
 MEASURE_COLUMNS = ROW_MEASURES + RESULT_TIMES
 
-# 요약의 영상당 평균(열 이름 끝 _mean). 처리 시간은 사진마다 한 번 잰 값의 평균이라 참고용
+# 요약의 영상당 평균 열 (이름 끝 _mean)
 MEAN_SOURCES = ["edges", "harris", "pred_crack", "pred_pothole", "area_crack", "area_pothole", "t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms"]
 MEAN_COLUMNS = [f"{name}_mean" for name in MEAN_SOURCES]
 
-# 상태 판정 적중(인위 저하일 때 켬 행): 고를 전처리 이름, 저하 사진에서 고른 비율, 같은 사진의 저하 없는 원본에서 고른 비율
+# 인위 저하 때 상태 판정이 맞는 전처리를 골랐는지 (저하 사진, 저하 없는 원본)
 JUDGE_COLUMNS = ["judge_expect", "judge_hit_rate", "judge_base_rate"]
 
 
 # ---------------------------------------------------------
-# 개발/시험 나누기 (Plan.md 3.2 (3)·부록 B)
-#
-# 국가별로 이름순 정렬한 순번(0부터) % SPLIT_EVERY == SPLIT_TEST_INDEX이면 시험용이다.
-# 진단 35장(부록 A)은 원인 분석에서 결과를 이미 본 영상이라 개발용에 고정한다.
-# 영상 처리를 사진 이름으로 나누는 예외가 아니라 '평가 분할의 정의'다(검출·전처리에는 쓰지 않음).
+# 개발/시험 나누기
+# 국가별 이름순 순번 % 5 == 4이면 시험셋, 나머지는 개발셋.
+# 원인 분석에 이미 쓴 진단 35장은 개발셋에 고정한다.
 # ---------------------------------------------------------
 
 SPLIT_EVERY = 5
@@ -128,16 +99,14 @@ DIAG35 = (
 
 
 # ---------------------------------------------------------
-# 인위 저하 (E6, Plan.md 3.2 (6))
-#
-# 학습 데이터는 대부분 화질이 정상이라, 정답이 있는 사진의 화질을 일부러 떨어뜨려
-# 전처리가 떨어진 검출 성능을 얼마나 되돌리는지와 상태 판정이 저하를 맞게 알아보는지 잰다.
-# 640px 컬러 사진에 띠를 자르기 전에 넣고, 값은 config C 구역의 DEGRADE_*를 쓴다.
+# 인위 저하
+# 학습 사진은 대부분 화질이 좋아서, 일부러 화질을 떨어뜨려
+# 전처리가 성능을 얼마나 되돌리는지, 상태 판정이 저하를 알아보는지 잰다.
 # ---------------------------------------------------------
 
 DEGRADE_KINDS = ("none", "blur", "dark", "bright", "noise")
 
-# 저하마다 상태 판정이 골라야 할 전처리: (표에 쓸 이름, 고른 steps가 맞는지 보는 함수)
+# 저하마다 골라야 할 전처리: (이름, 맞게 골랐는지 확인하는 함수)
 EXPECTED_STEPS = {
     "blur": ("샤프닝", lambda steps: bool(steps["sharpen"])),
     "dark": ("밝게 하는 감마(< 1)", lambda steps: steps["tone"] == "gamma" and steps["gamma"] < 1),
@@ -147,18 +116,13 @@ EXPECTED_STEPS = {
 
 
 # ---------------------------------------------------------
-# 파라미터 후보
-#
+# 파라미터 세트
 # 기본 실행은 config.py 값을 그대로 쓴다(CONFIG_SET).
-# 아래 1차 튜닝 세트는 --param-set으로 고를 때만 쓴다.
-# base는 1차(10/06, results/tuning) 기준 값을 숫자로 고정해 둔 것이라
-# config B 구역이 바뀐 뒤에도 E0(1차 방법)를 다시 낼 수 있다.
-#
-# config.py 파일은 수정하지 않는다.
-# 실행 중 C.xxx 값만 임시 변경한 뒤 반드시 원복한다.
+# 아래 1차 튜닝 세트는 --param-set으로 고를 때만 실행 중에 덮어쓴다.
+# base = 1차 방법의 값 (비교 기준선 재현용)
 # ---------------------------------------------------------
 
-CONFIG_SET = {"name": "config"}            # 덮어쓰는 값이 없는 세트: config.py 값 그대로
+CONFIG_SET = {"name": "config"}            # config.py 값 그대로
 
 PARAM_SETS = [
     {
@@ -259,8 +223,7 @@ PARAM_SETS = [
 
 
 def parse_args(argv=None):
-    """평가할 사진(--split)·결과 폴더(--name)·1차 튜닝 세트(--param-set)와, 이번 실행에만 바꿀 config 값
-    (--mask·--roi-top·--detect·--set)을 명령행에서 읽는다. 1차 결과 폴더 이름과 잘못된 값은 거부한다."""
+    """명령행 옵션을 읽는다. 잘못된 값이나 서로 겹치는 옵션은 거부한다."""
     parser = argparse.ArgumentParser(description="훈련 데이터 전체 평가")
 
     parser.add_argument(
@@ -326,7 +289,7 @@ def parse_args(argv=None):
     except ValueError as e:
         parser.error(str(e))
 
-    # 같은 값을 두 옵션이 바꾸면 어느 쪽이 적용됐는지 헷갈리므로 막는다
+    # --set과 --param-set이 같은 값을 바꾸지 못하게 막음
     swept = {
         key
         for params in select_param_sets(args.param_set)
@@ -342,8 +305,8 @@ def parse_args(argv=None):
 
 
 def parse_set(item):
-    """'NAME=VALUE' 하나를 (이름, 값)으로 읽는다. 값은 파이썬 값(False·0.3·(3, 12))으로 읽고, 안 되면 글자 그대로(dark).
-    config에 없는 이름은 오타일 수 있으므로 ValueError."""
+    """'NAME=VALUE'를 (이름, 값)으로 읽는다. 값은 파이썬 값으로, 안 되면 문자열로 읽는다.
+    config에 없는 이름은 ValueError."""
     name, sep, text = item.partition("=")
     name = name.strip()
 
@@ -359,7 +322,7 @@ def parse_set(item):
 
 
 def runtime_overrides(args):
-    """명령행 옵션을 이번 실행에만 쓸 config 값 {이름: 값}으로 바꾼다(config.py 파일은 고치지 않음)."""
+    """명령행 옵션을 이번 실행에만 바꿀 config 값 {이름: 값}으로 바꾼다."""
     overrides = {}
 
     if args.mask is not None:
@@ -379,7 +342,7 @@ def runtime_overrides(args):
 
 
 def select_param_sets(name):
-    """돌릴 파라미터 세트를 고른다: 없으면 config 값 그대로 한 세트, 'all'이면 1차 5세트, 아니면 그 이름의 세트."""
+    """돌릴 파라미터 세트 list를 고른다(None이면 config 값, 'all'이면 1차 5세트 전부)."""
     if name is None:
         return [CONFIG_SET]
 
@@ -394,13 +357,12 @@ def select_param_sets(name):
 
 
 def source_of(name):
-    """사진 이름에서 국가(데이터 출처)를 뽑는다: 'Japan_000156.jpg' → 'Japan', 'China_Drone_000035.jpg' → 'China_Drone'."""
+    """사진 이름에서 국가(출처)를 뽑는다. 예: 'China_Drone_000035.jpg' → 'China_Drone'."""
     return Path(name).stem.rsplit("_", 1)[0]
 
 
 def assign_split(names):
-    """사진 이름마다 개발('dev')·시험('test')을 정한다. 국가별 이름순 순번(0부터) % 5 == 4이면 시험이고,
-    진단 35장은 개발에 고정한다. 무작위가 없어 누가 돌려도 같다(Plan.md 3.2 (3)·부록 B)."""
+    """사진 이름마다 개발('dev')·시험('test')을 정한다. 무작위가 없어 언제 돌려도 같다."""
     by_source = {}
 
     for name in sorted(names):
@@ -418,20 +380,15 @@ def assign_split(names):
 
 
 def gamma_lut(gamma):
-    """0~255 밝기를 0~1로 바꿔 gamma 제곱한 뒤 반올림해 되돌리는 표. gamma > 1이면 어두워지고 < 1이면 밝아진다."""
+    """감마 보정 표(LUT)를 만든다. gamma > 1이면 어두워지고 < 1이면 밝아진다."""
     x = np.arange(256) / 255.0
 
     return np.clip(np.round((x ** gamma) * 255), 0, 255).astype(np.uint8)
 
 
 def degrade(bgr, kind):
-    """640px 컬러 사진에 일부러 화질 저하를 넣은 새 영상을 돌려준다(인위 저하 E6). 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다.
-    띠를 자르기 전에 넣어 상태 판정과 전처리가 사진 전체의 저하를 보게 한다. 값은 config C 구역 DEGRADE_*:
-    none = 그대로(복사본), blur = 가우시안 σ DEGRADE_BLUR_SIGMA, dark = 0~1 밝기^DEGRADE_DARK_GAMMA(어두워짐),
-    bright = 0~1 밝기^DEGRADE_BRIGHT_GAMMA(밝아짐, 과노출 흉내), noise = 채널마다 가우시안 잡음 σ DEGRADE_NOISE_SIGMA.
-    잡음은 함수 안에서 seed = DEGRADE_SEED + 사진 바이트의 crc32로 난수 생성기를 새로 만든다. 같은 사진은 언제 불러도 같고
-    (같은 입력이면 같은 출력), 사진마다 무늬가 달라 모든 사진에 같은 흠집 난 렌즈를 끼운 꼴이 되지 않는다.
-    파이썬 hash()는 실행마다 값이 달라져 쓰지 않는다."""
+    """컬러 사진에 일부러 화질 저하(blur·dark·bright·noise)를 넣은 새 영상을 돌려준다.
+    잡음의 seed는 사진 내용으로 정해, 같은 사진은 늘 같은 결과가 나온다."""
     if kind == "none":
         return bgr.copy()
 
@@ -451,7 +408,7 @@ def degrade(bgr, kind):
 
 
 def degrade_text(kind):
-    """config_used·화면에 적을 저하 설명. 값은 config C 구역 DEGRADE_*에서 읽는다."""
+    """화면·기록에 적을 저하 설명을 만든다."""
     texts = {
         "none": "없음",
         "blur": f"가우시안 σ {C.DEGRADE_BLUR_SIGMA}",
@@ -464,8 +421,7 @@ def degrade_text(kind):
 
 
 def judge_steps(small, roi):
-    """저하를 넣지 않은 640px 사진의 띠에서 상태 판정이 고르는 전처리를 돌려준다(run_pipeline 켬과 같은 순서:
-    띠 자르기 → 흑백 → measure_quality → choose_steps). 적중률을 '원래부터 그 전처리를 받던 비율'과 견주려고 쓴다."""
+    """저하 없는 원본에서 상태 판정이 고르는 전처리를 돌려준다(저하 사진의 결과와 비교용)."""
     band, _ = io_utils.crop_roi(small, roi["top"], roi["bottom"])
     gray = cv.cvtColor(band, cv.COLOR_BGR2GRAY)
 
@@ -473,7 +429,7 @@ def judge_steps(small, roi):
 
 
 def measure_columns(out):
-    """영상별 측정값: 고른 전처리, 에지·해리스 코너 수, 후보 면적, 노면 픽셀 수, 처리 시간(사진마다 한 번 잰 값)과 노면 마스크·자동 띠 경계 시간."""
+    """사진별 측정값 열(고른 전처리, 에지·코너 수, 후보 면적, 처리 시간)을 만든다."""
     return {
         "steps": analyze.steps_to_text(out["steps"]),
         **{key: out["row"][key] for key in ROW_MEASURES},
@@ -482,8 +438,7 @@ def measure_columns(out):
 
 
 def judge_columns(kind, steps, base_steps, use_preprocess):
-    """상태 판정 적중 열. 켬 행이고 인위 저하가 있으면, 저하 사진에서 고른 전처리(steps)와 같은 사진의 저하 없는 원본에서 고른
-    전처리(base_steps)가 넣은 저하에 맞는지(EXPECTED_STEPS)를 적는다. 끔 행(상태 판정을 하지 않음)과 저하 없음(none)은 빈칸."""
+    """상태 판정이 저하에 맞는 전처리를 골랐는지 적는다. 끔 행이나 저하 없음이면 빈칸."""
     expect = EXPECTED_STEPS.get(kind)
 
     if expect is None or not use_preprocess:
@@ -493,7 +448,7 @@ def judge_columns(kind, steps, base_steps, use_preprocess):
 
 
 def split_gt(gt):
-    """GT 목록을 균열과 포트홀 박스로 분리한다."""
+    """정답 목록을 (균열 박스 list, 포트홀 박스 list)로 나눈다."""
     cracks = []
     potholes = []
 
@@ -510,7 +465,7 @@ def split_gt(gt):
 
 
 def backup_params(extra_keys=()):
-    """튜닝 세트와 실행 옵션(--mask·--roi-top·--detect·--set)이 바꾸는 config 파라미터를 백업한다."""
+    """실행 중에 바뀔 수 있는 config 값을 백업한다."""
     keys = {
         key
         for params in PARAM_SETS
@@ -525,7 +480,7 @@ def backup_params(extra_keys=()):
 
 
 def apply_param_set(params):
-    """한 파라미터 후보를 실행 중 config 객체에 적용한다."""
+    """파라미터 세트를 실행 중 config에 적용한다."""
     for key, value in params.items():
         if key == "name":
             continue
@@ -534,14 +489,13 @@ def apply_param_set(params):
 
 
 def restore_params(backup):
-    """실행 전 config 파라미터로 복원한다."""
+    """백업해 둔 config 값으로 되돌린다."""
     for key, value in backup.items():
         setattr(C, key, value)
 
 
 def predict_one(bgr, roi, use_preprocess):
-    """훈련 영상 한 장을 run_experiment와 같은 조건(ROI·전처리)으로 검출해 종류별 후보 상자(640px 전체 좌표)와 run_pipeline 결과를 돌려준다.
-    상자는 우연 대조군에서 다른 영상의 정답과 다시 비교하려고, 결과는 640px 높이·측정값·고른 전처리를 쓰려고 돌려준다."""
+    """사진 1장을 검출해 (종류별 후보 상자(640px 전체 좌표), run_pipeline 결과)를 돌려준다."""
     out = pipeline.run_pipeline(
         bgr,
         roi["top"],
@@ -554,7 +508,7 @@ def predict_one(bgr, roi, use_preprocess):
         "pothole": out["potholes"],
     }
 
-    # 후보는 노면(ROI) 기준이므로 정답과 같은 640px 전체 영상 좌표로 옮긴다
+    # 노면 띠 좌표 → 640px 전체 좌표
     pred_by_kind = {
         kind: rx.to_full_boxes(regions_by_kind[kind], out["y0"])
         for kind in KINDS
@@ -564,7 +518,7 @@ def predict_one(bgr, roi, use_preprocess):
 
 
 def score_one(pred_by_kind, gt):
-    """후보 상자(640px 전체 좌표)를 정답과 두 기준(iou·ctr)으로 비교한 개수와, 영상 단위 판정(중심·IoU 기준)을 돌려준다."""
+    """후보 상자를 정답과 두 기준(iou·ctr)으로 비교한 개수와 영상 단위 판정을 돌려준다."""
     truth_by_kind = dict(zip(KINDS, split_gt(gt)))
 
     result = {}
@@ -587,7 +541,7 @@ def score_one(pred_by_kind, gt):
 
     verdict = image_verdict(pred_by_kind, gt)
 
-    # 같은 판정을 IoU 기준으로: 종류별 found는 같은 종류 정답과 맞춘 수라, 하나라도 0보다 크면 같은 종류로 맞힘
+    # 같은 판정을 IoU 기준으로도 냄
     hit_same_iou = any(result[f"{kind}_iou_found"] > 0 for kind in KINDS)
 
     result.update(verdict)
@@ -598,18 +552,16 @@ def score_one(pred_by_kind, gt):
 
 
 def evaluate_one(bgr, gt, roi, use_preprocess):
-    """훈련 영상 한 장을 run_experiment와 같은 조건(ROI·전처리)으로 검출해 정답과 두 기준으로 비교한다."""
+    """사진 1장을 검출해 정답과 비교한 결과를 돌려준다."""
     pred_by_kind, _ = predict_one(bgr, roi, use_preprocess)
 
     return score_one(pred_by_kind, gt)
 
 
 def chance_found(names, heights, preds, gts):
-    """우연 대조군(Plan.md 3.2 (3)·부록 B): 640px 높이가 같은 사진끼리 이름순으로 묶고, i번 사진의 후보를
-    i+1번 사진의 같은 종류 정답과 중심 기준으로 비교해 찾은 정답 수를 센다(마지막 사진은 첫 사진과).
-    정답 상자가 크면 후보 중심이 우연히 들어가므로, 실제 재현율에서 이 값을 빼 '우연을 뺀 재현율'을 낸다.
-    사진이 1장뿐인 높이 묶음은 자기 자신과 비교하게 되므로 빼고, 뺀 사진 수를 함께 돌려준다.
-    → ({종류: 찾은 정답 수}, {종류: 비교한 정답 수}, 뺀 사진 수)"""
+    """우연 대조군: 한 사진의 후보를 '다른' 사진(같은 높이)의 정답과 비교해, 우연히 맞는 정도를 잰다.
+    정답 박스가 크면 후보 중심이 우연히 들어가므로, 실제 재현율에서 이 값을 빼서 본다.
+    ({종류: 찾은 정답 수}, {종류: 비교한 정답 수}, 뺀 사진 수)를 돌려준다."""
     groups = {}
 
     for name in sorted(names):
@@ -636,7 +588,7 @@ def chance_found(names, heights, preds, gts):
 
 
 def count_columns():
-    """영상별 결과의 개수 열 이름: gt_·pred_ 개수와 종류·기준별 tp·fp·found·fn."""
+    """사진별 개수 열 이름(정답·후보 수, 종류·기준별 tp·fp·found·fn)을 만든다."""
     columns = []
 
     for kind in KINDS:
@@ -651,7 +603,7 @@ def count_columns():
 
 
 def metric_text(value):
-    """NaN을 CSV에 읽기 쉬운 문자열로 바꾼다."""
+    """숫자를 CSV에 쓸 문자열로 바꾼다(NaN은 'NaN')."""
     if np.isnan(value):
         return "NaN"
 
@@ -659,14 +611,12 @@ def metric_text(value):
 
 
 def ratio(numerator, denominator):
-    """비율을 계산하며 분모가 0이면 NaN을 돌려준다."""
+    """비율을 계산한다. 분모가 0이면 NaN."""
     return numerator / denominator if denominator else np.nan
 
 
 def summarize(keys, rows, preds, gts):
-    """영상별 행 묶음 하나(한 파라미터 세트·전처리 조건, 또는 그중 한 국가)를 요약 한 줄로 만든다.
-    종류·기준별 개수와 정밀도·재현율(영상별 비율의 평균이 아니라 합계로), 영상 단위 지표, 영상당 후보·오검출, 우연 대조군.
-    keys: 맨 앞 열(params·preprocess, 국가별이면 source), preds: {사진 이름: 종류별 후보 상자}, gts: {사진 이름: 정답}"""
+    """사진별 행 묶음을 요약 한 줄로 만든다: 정밀도·재현율(개수 합계로 계산), 영상 단위 지표, 우연 대조군, 평균값."""
     row = {
         **keys,
         "images": len(rows),
@@ -698,7 +648,7 @@ def summarize(keys, rows, preds, gts):
         "accuracy_iou": ratio(sum(r["correct_iou"] for r in rows), len(rows)),
         "sensitivity_any": ratio(sum(r["hit_any"] for r in damaged), len(damaged)),
         "pred_per_image": ratio(n_pred, len(rows)),
-        "fp_per_image": ratio(n_pred - n_hit, len(rows)),       # 중심 기준으로 안 맞은 후보
+        "fp_per_image": ratio(n_pred - n_hit, len(rows)),       # 중심 기준으로 틀린 후보
     }
 
     row["n_damage"] = verdicts["n_damage"]
@@ -719,11 +669,11 @@ def summarize(keys, rows, preds, gts):
 
     row["chance_skipped"] = skipped
 
-    # 평가표의 전처리 전·후 비교 항목(에지·해리스 수, 후보 수·면적, 처리 시간)의 영상당 평균
+    # 측정값의 영상당 평균
     for name in MEAN_SOURCES:
         row[f"{name}_mean"] = metric_text(ratio(sum(r[name] for r in rows), len(rows)))
 
-    # 상태 판정 적중률: 판정이 있는 행(인위 저하가 있는 켬 행)만. 끔 행과 저하 없음은 NaN
+    # 상태 판정 적중률 (인위 저하가 있는 켬 행만)
     judged = [r for r in rows if r["judge_hit"] is not None]
     expect = EXPECTED_STEPS.get(keys.get("degrade"))
     row["judge_expect"] = expect[0] if expect else ""
@@ -734,8 +684,7 @@ def summarize(keys, rows, preds, gts):
 
 
 def summary_fieldnames(extra=()):
-    """요약 표의 열: 파라미터·전처리·인위 저하(·국가)·영상 수, 종류·기준별 개수와 정밀도·재현율, 영상 단위 지표, 우연 대조군,
-    측정값의 영상당 평균, 상태 판정 적중률."""
+    """요약 표의 열 이름 list를 만든다."""
     columns = ["params", "preprocess", "degrade", *extra, "images"]
 
     for kind in KINDS:
@@ -748,7 +697,7 @@ def summary_fieldnames(extra=()):
 
 
 def save_csv(path, rows, fieldnames):
-    """결과 행을 UTF-8(BOM) CSV로 저장한다."""
+    """결과 행을 CSV로 저장한다(엑셀에서 한글이 깨지지 않게 BOM 포함)."""
     with path.open(
         "w",
         encoding="utf-8-sig",
@@ -764,8 +713,7 @@ def save_csv(path, rows, fieldnames):
 
 
 def write_config(path, param_sets, overrides, degrade_kind="none"):
-    """이번 실행의 config 값, 돌린 파라미터 세트 이름, 실행 옵션으로 바꾼 값, 인위 저하 종류를 남긴다(결과가 어떤 설정에서 나왔는지 알 수 있게).
-    실행 옵션을 적용한 뒤에 부르므로 위쪽 config 값에도 바꾼 값이 들어 있다."""
+    """이번 실행의 config 값과 파라미터 세트·옵션·인위 저하 종류를 파일로 남긴다."""
     rx.write_config(path)
 
     names = ", ".join(params["name"] for params in param_sets)
@@ -778,7 +726,7 @@ def write_config(path, param_sets, overrides, degrade_kind="none"):
 
 
 def print_summary(summary_rows):
-    """요약을 콘솔 표로 보여 준다: 종류마다 IoU 기준과 중심 기준의 정밀도 / 재현율."""
+    """종류·기준별 정밀도 / 재현율을 콘솔 표로 보여 준다."""
     header = " | ".join(
         f"{kind + ' ' + criterion + ' P / R':>15s}"
         for kind in KINDS
@@ -801,7 +749,7 @@ def print_summary(summary_rows):
 
 
 def print_image_summary(summary_rows):
-    """영상 단위 지표를 콘솔 표로 보여 준다: 민감도·특이도·정답률(기준선)·균형 정확도·영상당 오검출·우연을 뺀 균열 재현율(중심)."""
+    """영상 단위 지표(민감도·특이도·정답률 등)를 콘솔 표로 보여 준다."""
     keys = ("sensitivity", "specificity", "accuracy", "baseline_none", "balanced", "fp_per_image", "crack_ctr_recall_net")
 
     print()
@@ -818,7 +766,7 @@ def print_image_summary(summary_rows):
 
 
 def main(argv=None):
-    """훈련 데이터에서 고른 분할(기본 개발)을 고른 파라미터 세트(기본 config 값)와 실행 옵션으로 전처리 끔·켬 평가해 results/<name>/에 저장한다."""
+    """학습 데이터를 전처리 끔·켬으로 평가해 results/<이름>/에 저장한다."""
     args = parse_args(argv)
     param_sets = select_param_sets(args.param_set)
 
@@ -842,7 +790,7 @@ def main(argv=None):
             "src/config.py B 구역의 TRAIN_IMAGE_DIR을 그 경로로 바꾸세요."
         )
 
-    # 정답 CSV가 하나도 없으면 사진마다 [GT 없음]만 찍히므로 먼저 멈춘다
+    # 정답 CSV가 하나도 없으면 먼저 멈춤
     if not any(gt_dir.glob("*.csv")):
         raise RuntimeError(
             f"정답 CSV가 없습니다: {gt_dir}\n"
@@ -850,7 +798,7 @@ def main(argv=None):
             "(JSON 폴더는 config B 구역의 TRAIN_ANN_DIR)."
         )
 
-    # 나누기는 사진 전체 이름으로 정한다(고른 분할만으로 정하면 국가별 순번이 달라짐)
+    # 개발/시험 나누기는 전체 사진 목록으로 정함
     split = assign_split([path.name for path in all_paths])
 
     image_paths = [
@@ -861,11 +809,11 @@ def main(argv=None):
 
     n_gt_files = sum(1 for _ in gt_dir.glob("*.csv"))
 
-    # 사진이 일부만 있으면 순번이 밀려 계획의 나누기(시험 152·개발 652)와 달라진다
+    # 사진이 일부만 있으면 나누기가 달라질 수 있어 경고
     if n_gt_files != len(all_paths):
         print(f"경고: 사진 {len(all_paths)}장과 정답 CSV {n_gt_files}개의 수가 달라 개발/시험 나누기가 계획과 다를 수 있습니다.")
 
-    # 사진·정답을 확인한 뒤에 폴더를 만든다(입력이 없을 때 빈 결과 폴더가 남지 않게)
+    # 입력을 확인한 뒤에 결과 폴더를 만듦
     out_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -885,7 +833,7 @@ def main(argv=None):
     n_default_roi = 0
 
     try:
-        # 실행 옵션은 실행 내내 적용하고, 튜닝 세트는 그 위에 덮는다(같은 값을 둘 다 바꾸는 것은 parse_args가 막음)
+        # 실행 옵션을 먼저 적용하고, 파라미터 세트는 그 위에 덮음
         apply_param_set(args.overrides)
 
         write_config(
@@ -911,7 +859,7 @@ def main(argv=None):
 
         print("=" * 72)
 
-        # 사진은 한 번만 읽고, 그 사진으로 파라미터 세트 × 전처리 끔·켬을 모두 돌린다
+        # 사진마다 한 번 읽어 파라미터 세트 × 전처리 끔·켬을 모두 돌림
         for index, image_path in enumerate(
             image_paths,
             start=1,
@@ -930,7 +878,7 @@ def main(argv=None):
             n_default_roi += used_default
             gts[image_path.name] = gt
 
-            # 인위 저하는 640px 컬러에 띠를 자르기 전에 넣는다(none이면 복사본). run_pipeline은 이미 640px인 사진을 그대로 쓴다
+            # 인위 저하는 띠를 자르기 전 640px 컬러 사진에 넣음
             small = io_utils.resize_width(bgr)
             image = degrade(small, args.degrade)
             base_steps = judge_steps(small, roi) if args.degrade in EXPECTED_STEPS else None
