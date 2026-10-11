@@ -1,7 +1,10 @@
 """(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 노면 마스크와 검출 결과를 한 창에 나란히 띄운다.
 사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark]
-                                        [--save 그림 경로]
-- 영상 경로를 빼면(VS Code ▶ 버튼 등) data 아래 사진 목록을 번호로 보여 주고 고르게 한다.
+                                        [--save 그림 경로] [--list]
+- 영상 경로를 빼면(VS Code ▶ 버튼) 파일 선택 창(맨 앞, 처음 폴더 data/)으로 사진을 고르고 --roi auto로 띄운다.
+  결과 창을 닫으면 다시 선택 창이 뜨고, 취소하면 끝난다. 못 읽는 사진(HEIC 등)은 안내 창을 띄우고 다음 사진을 고르게 한다.
+  tkinter를 쓸 수 없는 컴퓨터면 안내 문구를 낸 뒤 번호 목록으로 넘어간다.
+- --list: 선택 창 대신 data 아래 사진 목록을 번호로 보여 주고 고르게 한다(예전 방식).
 - ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다. --roi auto면 roi.csv 없이 기본 띠(run_experiment와 같음).
 - --mask·--detect는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
 - 창: 끔·켬 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보. 위 띠에 고른 전처리, 아래 띠에 상태 판정 값과 설정.
@@ -31,6 +34,9 @@ LABEL_COLOR = (255, 255, 255)   # 제목 띠 글자: 흰색 (BGR)
 LABEL_X = 8
 DATA_DIR = "data"
 EXCLUDE_DIRS = ("train",)       # data/train은 B의 훈련 사진 804장이라 고르는 목록에서 뺌
+DIALOG_TITLE = "시연할 사진 고르기 (취소하면 끝)"
+DIALOG_TYPES = [("사진", "*.jpg *.jpeg *.png *.bmp *.heic *.heif"), ("모든 파일", "*.*")]
+HEIC_EXTS = (".heic", ".heif")  # 아이폰 기본 형식. 이 OpenCV는 읽지 못함
 # 아래 띠에 적을 상태 판정 값의 이름(한글, 한글을 못 쓸 때의 영문). measure_quality에 키가 늘면 키 이름 그대로 붙는다
 QUALITY_NAMES = {"mean": ("평균", "mean"), "std": ("표준편차", "std"), "lap_var": ("라플라시안 분산", "lap_var"),
                  "noise": ("잡티", "noise"), "blur_ratio": ("재흐림 비율", "blur_ratio")}
@@ -39,18 +45,27 @@ QUALITY_NAMES = {"mean": ("평균", "mean"), "std": ("표준편차", "std"), "la
 def parse_args(argv=None):
     """영상 경로, 선택 ROI 비율 2개, 노면 띠 방식(--roi), 이번 실행에만 바꿀 config 값(--mask·--detect), 저장 경로(--save)를 읽는다.
     비율이 1개이거나 0 <= top < bottom <= 1이 아니면, 또는 비율과 --roi auto를 함께 주면 사용법과 함께 멈춘다.
-    영상 경로를 빼면 path는 None(main이 목록에서 고르게 함)."""
+    영상 경로를 빼면 path는 None(main이 선택 창이나 --list 목록에서 고르게 함). --roi를 빼면 선택 창은 auto, 경로·--list는 csv.
+    --list와 경로를 함께 주거나, 선택 창(경로·--list 없음)에 --save를 주면(고를 때마다 같은 파일을 덮어씀) 멈춘다."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬의 노면 마스크와 검출 결과를 한 창에 띄우는 발표 시연")
-    parser.add_argument("path", nargs="?", help="영상 경로. 빼면 data 아래 사진 목록에서 번호로 고름")
+    parser.add_argument("path", nargs="?", help="영상 경로. 빼면 파일 선택 창(--list면 번호 목록)에서 고름")
     parser.add_argument("roi", nargs="*", type=float, metavar="roi_top roi_bottom",
                         help="노면 비율 2개(0~1). 빼면 roi.csv, 없으면 config 기본값")
-    parser.add_argument("--roi", dest="roi_mode", choices=rx.ROI_MODES, default="csv",
-                        help="노면 띠: csv = roi.csv에 사진마다 정한 범위(기본), auto = roi.csv 없이 기본 띠(run_experiment와 같음)")
+    parser.add_argument("--roi", dest="roi_mode", choices=rx.ROI_MODES,
+                        help="노면 띠: csv = roi.csv에 사진마다 정한 범위, auto = roi.csv 없이 기본 띠(run_experiment와 같음). "
+                             "빼면 경로·--list는 csv, 선택 창은 auto")
     parser.add_argument("--mask", choices=("on", "off"), help="노면 마스크(USE_ROAD_MASK)를 이번 실행에만 켬·끔. 빼면 config")
     parser.add_argument("--detect", choices=("legacy", "dark"), help="검출 방식(DETECT_MODE)을 이번 실행에만 바꿈. 빼면 config")
     parser.add_argument("--save", metavar="그림 경로", help="창을 띄우지 않고 같은 화면을 그림 파일(.png)로 저장")
+    parser.add_argument("--list", action="store_true", help="선택 창 대신 data 아래 사진 목록에서 번호로 고름(예전 방식)")
     parser.set_defaults(roi_top=None)       # run_experiment.runtime_overrides와 같은 모양(시연은 띠를 ROI 비율로 정함)
     args = parser.parse_args(argv)
+    if args.list and args.path is not None:
+        parser.error("--list는 사진 경로 없이 쓸 것(경로를 주면 목록이 필요 없음)")
+    if args.save and args.path is None and not args.list:
+        parser.error("--save는 사진 경로나 --list와 함께 쓸 것(선택 창에서는 고를 때마다 같은 파일을 덮어씀)")
+    if args.roi_mode is None:
+        args.roi_mode = "auto" if args.path is None and not args.list else "csv"
     if len(args.roi) not in (0, 2):
         parser.error(f"ROI 비율은 0개 또는 2개여야 함 ({len(args.roi)}개)")
     if args.roi and not 0 <= args.roi[0] < args.roi[1] <= 1:
@@ -85,6 +100,47 @@ def pick_image(root=DATA_DIR, input_fn=input):
         if answer.isdigit() and 1 <= int(answer) <= len(paths):
             return paths[int(answer) - 1]
         print("목록에 있는 번호를 입력")
+
+
+def make_chooser(root_dir=DATA_DIR):
+    """파일 선택 창 도구 (choose, warn, close)를 만든다. tkinter를 쓸 수 없으면(설치 안 됨·화면 없음) None.
+    선택 창이 VS Code 뒤에 숨지 않게 숨긴 부모 창을 맨 앞(-topmost)으로 두고, 처음 폴더는 root_dir, 다음부터는 마지막에 고른 폴더.
+    choose()는 고른 경로(취소면 None), warn(글)은 안내 창, close()는 부모 창을 닫는다."""
+    try:
+        import tkinter
+        from tkinter import filedialog, messagebox
+        root = tkinter.Tk()
+    except Exception:                                   # ImportError, 화면이 없을 때의 TclError 등
+        return None
+    root.withdraw()
+    root.attributes("-topmost", True)
+    folder = {"dir": os.path.abspath(root_dir) if os.path.isdir(root_dir) else os.getcwd()}
+
+    def choose():
+        root.lift()
+        root.focus_force()
+        path = filedialog.askopenfilename(parent=root, title=DIALOG_TITLE, initialdir=folder["dir"], filetypes=DIALOG_TYPES)
+        if not path:                                    # 취소면 "" 또는 ()
+            return None
+        folder["dir"] = os.path.dirname(path)
+        return path
+
+    def warn(text):
+        messagebox.showwarning("시연", text, parent=root)
+
+    return choose, warn, root.destroy
+
+
+def read_error_text(path):
+    """사진을 읽지 못했을 때 보여 줄 알기 쉬운 안내. HEIC(아이폰)는 jpg로 바꾸는 방법까지 알려 준다."""
+    name = os.path.basename(path)
+    if os.path.splitext(path)[1].lower() in HEIC_EXTS:
+        return (f"아이폰 HEIC 사진은 읽을 수 없습니다: {name}\n"
+                "JPG로 바꿔서 골라 주세요. (아이폰 설정 → 카메라 → 포맷 → '높은 호환성'으로 찍거나, "
+                "사진을 메일·메신저로 보내면 jpg로 바뀝니다)")
+    if not os.path.exists(path):
+        return f"파일이 없습니다: {path}"
+    return f"사진 파일이 아니거나 깨진 파일이라 읽을 수 없습니다: {name}\n(jpg·png 사진을 골라 주세요)"
 
 
 def choose_roi(path, roi_args, roi_table, mode="csv"):
@@ -210,45 +266,51 @@ def report_table(row_off, row_on):
 
 def show(img):
     """창을 띄우고 아무 키나 누르거나 X로 닫을 때까지 기다린다.
-    waitKey(0)만 쓰면 X로 닫았을 때 윈도에서 영원히 기다리므로, 짧게 기다리며 창이 보이는지 같이 본다."""
+    waitKey(0)만 쓰면 X로 닫았을 때 윈도에서 영원히 기다리므로, 짧게 기다리며 창이 보이는지 같이 본다.
+    VS Code 뒤에 숨지 않게 맨 앞(WND_PROP_TOPMOST)으로 띄운다(지원하지 않는 OpenCV면 그냥 띄움)."""
     cv.namedWindow(WINDOW_NAME, cv.WINDOW_AUTOSIZE)
     cv.imshow(WINDOW_NAME, img)
+    try:
+        cv.setWindowProperty(WINDOW_NAME, cv.WND_PROP_TOPMOST, 1)
+    except (AttributeError, cv.error):
+        pass
     while cv.getWindowProperty(WINDOW_NAME, cv.WND_PROP_VISIBLE) >= 1:
         if cv.waitKey(KEY_POLL_MS) != -1:
             break
     cv.destroyAllWindows()
 
 
-def main(argv=None):
-    """영상 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
-    (--save면 창 대신 그림 파일로 저장). --mask·--detect는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다. 종료 코드를 돌려준다."""
-    args = parse_args(argv)
-    if args.path is None:
-        args.path = pick_image()
-        if args.path is None:
-            print("사진을 고르지 않아 종료")
-            return 0
+def demo_one(path, args, show_fn=None, warn=None):
+    """사진 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
+    (--save면 창 대신 그림 파일로 저장). --mask·--detect는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다.
+    못 읽는 사진·설정 오류는 알기 쉬운 문구를 콘솔(과 warn이 있으면 안내 창)에 내고 1을 돌려준다. 끝 코드를 돌려준다."""
+    def report(text):
+        print(text)
+        if warn is not None:
+            warn(text)
+
     try:
-        bgr = io_utils.load_image(args.path)
-        top, bottom, roi_source = choose_roi(args.path, args.roi, io_utils.load_roi_table(ROI_PATH), args.roi_mode)
+        bgr = io_utils.load_image(path)
     except FileNotFoundError:
-        print(f"파일을 읽을 수 없음: {args.path}")
+        report(read_error_text(path))
         return 1
+    try:
+        top, bottom, roi_source = choose_roi(path, args.roi, io_utils.load_roi_table(ROI_PATH), args.roi_mode)
     except ValueError as e:
-        print(f"{ROI_PATH} 형식 오류: {e}")
+        report(f"{ROI_PATH} 형식 오류: {e}")
         return 1
 
     backup = rx.apply_overrides(rx.runtime_overrides(args))
     try:
         try:
             outs = {use: pipeline.run_pipeline(bgr, top, bottom, use) for use in (False, True)}
-        except NotImplementedError as e:            # 예: 아직 구현 전인 --detect dark
-            print(f"아직 구현되지 않은 설정이라 시연할 수 없음: {e}")
+        except NotImplementedError as e:            # 예: 아직 구현 전인 검출 방식
+            report(f"아직 구현되지 않은 설정이라 시연할 수 없음: {e}")
             return 1
         unicode_ok = has_unicode_text()
         steps_text = analyze.steps_to_text(outs[True]["steps"])
         footer = make_footer(outs[True]["quality"], top, bottom, roi_source, unicode_ok)
-        print(f"영상: {args.path}")
+        print(f"영상: {path}")
         print(f"ROI: top {top}, bottom {bottom} ({roi_source})")
         print(f"설정: 노면 마스크 {'켬' if C.USE_ROAD_MASK else '끔'}, 검출 {C.DETECT_MODE}")
         print(make_footer(outs[True]["quality"], top, bottom, roi_source, True)[0])
@@ -266,8 +328,47 @@ def main(argv=None):
         save_image(args.save, view)
         print(f"화면을 저장함: {args.save}")
     else:
-        show(view)
+        (show_fn or show)(view)
     return 0
+
+
+def dialog_loop(args, tools, show_fn=None):
+    """선택 창으로 사진을 고를 때마다 시연하고, 결과 창을 닫으면 다시 고르게 한다. 취소하면 0으로 끝난다.
+    발표 중에 멈추지 않도록 못 읽는 사진이나 처리 중 오류는 안내 창을 띄우고 다음 사진을 고르게 한다. tools = (choose, warn, close)."""
+    choose, warn, close = tools
+    try:
+        while True:
+            path = choose()
+            if path is None:
+                print("사진 고르기를 취소해 시연을 끝냄")
+                return 0
+            try:
+                demo_one(path, args, show_fn, warn)
+            except Exception as e:                  # 처음 보는 사진에서 생긴 뜻밖의 오류도 시연을 멈추지 않게
+                text = f"처리 중 오류가 나서 이 사진은 건너뜁니다: {os.path.basename(path)}\n({type(e).__name__}: {e})"
+                print(text)
+                warn(text)
+    finally:
+        close()
+
+
+def main(argv=None, chooser_factory=None, show_fn=None):
+    """사진을 고르는 방식(경로 → 그 사진, --list → 번호 목록, 둘 다 없으면 파일 선택 창 반복)을 정해 시연한다. 끝 코드를 돌려준다.
+    선택 창을 쓸 수 없으면(tkinter 없음) 안내 문구를 낸 뒤 번호 목록으로 넘어간다.
+    chooser_factory·show_fn은 시험에서 가짜 선택 창·결과 창을 쓰려고 둔 인자이고, 실행은 기본값(make_chooser·show)을 쓴다."""
+    args = parse_args(argv)
+    if args.path is not None:
+        return demo_one(args.path, args, show_fn)
+    if not args.list:
+        tools = (chooser_factory or make_chooser)()
+        if tools is not None:
+            return dialog_loop(args, tools, show_fn)
+        print("파일 선택 창(tkinter)을 이 컴퓨터에서 쓸 수 없어 번호 목록으로 고릅니다")
+    path = pick_image()
+    if path is None:
+        print("사진을 고르지 않아 종료")
+        return 0
+    return demo_one(path, args, show_fn)
 
 
 if __name__ == "__main__":

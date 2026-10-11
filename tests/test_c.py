@@ -8,6 +8,7 @@ import functools
 import io
 import math
 import os
+import struct
 import sys
 import tempfile
 import unittest
@@ -664,6 +665,113 @@ def test_demo_main_save():
     check(after == before and after_dark == before, f"demo.main: 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
     check(dark_code == 1 and not dark_saved and "아직 구현되지 않은" in dark_printed.getvalue(),
           "demo.main: 검출기 오류(가짜 검출기)에 알기 쉬운 문구와 1로 끝나지 않았거나 그림을 저장함")
+
+
+def test_demo_dialog_args():
+    """선택 창 모드의 명령행: 인자가 없으면 --roi auto, --list·경로는 csv, 직접 준 --roi는 그대로.
+    --list와 경로를 함께 주거나 선택 창에 --save를 주면(고를 때마다 덮어씀) 거부하고, --list와 --save는 함께 쓸 수 있다."""
+    a = parse_quietly(demo.parse_args, [])
+    check(a is not None and a.path is None and not a.list and a.roi_mode == "auto",
+          f"demo.parse_args: 인자 없이 실행하면 선택 창(--roi auto)이 아님 ({a})")
+    b = parse_quietly(demo.parse_args, ["--list"])
+    check(b is not None and b.list and b.roi_mode == "csv", f"demo.parse_args: --list가 예전 방식(roi.csv 띠)이 아님 ({b})")
+    c = parse_quietly(demo.parse_args, ["--roi", "csv", "--mask", "off"])
+    check(c is not None and c.roi_mode == "csv" and rx.runtime_overrides(c) == {"USE_ROAD_MASK": False},
+          "demo.parse_args: 선택 창에서 직접 준 --roi·--mask를 따르지 않음")
+    for bad in (["a.jpg", "--list"], ["--save", "v.png"]):
+        check(parse_quietly(demo.parse_args, bad) is None, f"demo.parse_args: 잘못된 조합 {bad}를 받아들임")
+    check(parse_quietly(demo.parse_args, ["--list", "--save", "v.png"]) is not None, "demo.parse_args: --list --save를 거부함")
+
+
+def test_demo_read_error_text():
+    """못 읽는 사진의 안내: HEIC(대문자 확장자 포함)는 jpg로 바꾸는 방법, 없는 파일은 '없음', 깨진 파일은 jpg·png를 고르라는 문구."""
+    heic = demo.read_error_text("x/IMG_0001.HEIC")
+    check("HEIC" in heic and "JPG로 바꿔" in heic and "높은 호환성" in heic, f"read_error_text: HEIC 안내가 없음 ({heic})")
+    check("파일이 없습니다" in demo.read_error_text("no/such_photo.jpg"), "read_error_text: 없는 파일 안내가 틀림")
+    with tempfile.TemporaryDirectory() as tmp:
+        broken = os.path.join(tmp, "broken.jpg")
+        with open(broken, "wb") as f:
+            f.write(b"not an image")
+        check("깨진 파일" in demo.read_error_text(broken), "read_error_text: 깨진 파일 안내가 틀림")
+
+
+def jpg_with_orientation(img, orientation):
+    """jpg 바이트에 EXIF Orientation 태그 하나만 든 APP1 조각을 넣는다(폰 사진의 회전 정보 흉내)."""
+    ifd = struct.pack("<H", 1) + struct.pack("<HHII", 0x0112, 3, 1, orientation) + struct.pack("<I", 0)
+    body = b"Exif\x00\x00" + b"II*\x00" + struct.pack("<I", 8) + ifd
+    data = cv.imencode(".jpg", img)[1].tobytes()
+    return data[:2] + b"\xff\xe1" + struct.pack(">H", len(body) + 2) + body + data[2:]
+
+
+def test_demo_dialog_loop():
+    """선택 창 반복(가짜 선택 창·결과 창): roi.csv에 없는 대문자 .JPG, 한글·띄어쓰기 폴더의 .png, 회전 정보(6)가 든 가로 화소
+    4000×3000 폰 사진은 --roi auto로 결과 창을 띄우고(폰 사진은 세로로 섬), HEIC와 깨진 jpg는 안내 창을 띄운 뒤 계속한다.
+    처리 중 뜻밖의 오류도 안내 후 계속하고, 취소하면 0으로 끝나며 선택 창을 닫는다. 실행 뒤 config는 그대로."""
+    rng = np.random.default_rng(7)
+    before = (C.USE_ROAD_MASK, C.DETECT_MODE)
+    with tempfile.TemporaryDirectory() as tmp:
+        gray = cv.GaussianBlur(rng.integers(90, 160, (480, 640), dtype=np.uint8), (0, 0), 1.5)
+        bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+        ko_dir = os.path.join(tmp, "한글 폴더 1")
+        os.makedirs(ko_dir)
+        upper, png, phone, heic, broken = (os.path.join(tmp, "NEW_PHOTO_9.JPG"), os.path.join(ko_dir, "사진 A.png"),
+                                           os.path.join(ko_dir, "폰 사진.jpg"), os.path.join(tmp, "IMG_0001.heic"),
+                                           os.path.join(tmp, "broken.jpg"))
+        cv.imencode(".jpg", bgr)[1].tofile(upper)
+        cv.imencode(".png", bgr)[1].tofile(png)
+        with open(phone, "wb") as f:
+            f.write(jpg_with_orientation(cv.resize(bgr, (4000, 3000)), 6))
+        with open(heic, "wb") as f:
+            f.write(b"\x00\x00\x00\x18ftypheic" + b"\x00" * 64)
+        with open(broken, "wb") as f:
+            f.write(b"not an image")
+
+        def run(picks, pipeline_fn=None):
+            order, shown, warned, closed = iter(picks + [None]), [], [], []
+            tools = (lambda: next(order), warned.append, lambda: closed.append(True))
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                if pipeline_fn is None:
+                    code = demo.main([], lambda: tools, shown.append)
+                else:
+                    with patched(pipeline, "run_pipeline", pipeline_fn):
+                        code = demo.main([], lambda: tools, shown.append)
+            return code, shown, warned, closed, printed.getvalue()
+
+        code, shown, warned, closed, out = run([upper, heic, png, broken, phone])
+        check(code == 0 and len(shown) == 3 and closed == [True],
+              f"demo 선택 창: 3장을 띄우고 취소에서 0으로 끝나지 않음 (끝 코드 {code}, 띄운 {len(shown)}장, 닫음 {closed})")
+        check(len(warned) == 2 and "HEIC" in warned[0] and "깨진 파일" in warned[1],
+              f"demo 선택 창: HEIC·깨진 파일 안내 창이 틀림 ({warned})")
+        check(out.count("기본 띠, --roi auto") == 3, "demo 선택 창: 고른 사진을 --roi auto로 돌리지 않음")
+        if len(shown) == 3:
+            panel_w, panel_h = shown[2].shape[1] // 2, shown[2].shape[0] - 3 * C.DEMO_LABEL_HEIGHT
+            check(panel_h > panel_w, f"demo 선택 창: 회전 정보가 든 폰 사진이 세로로 서지 않음 (패널 {panel_w}×{panel_h})")
+
+        def broken_pipeline(*args, **kwargs):
+            raise RuntimeError("시험용 뜻밖의 오류")
+
+        code, shown, warned, closed, out = run([upper, png], broken_pipeline)
+        check(code == 0 and not shown and len(warned) == 2 and all("건너뜁니다" in w for w in warned) and closed == [True],
+              f"demo 선택 창: 처리 중 오류에서 안내 후 계속하지 않음 (끝 코드 {code}, {warned})")
+    check((C.USE_ROAD_MASK, C.DETECT_MODE) == before, "demo 선택 창: 실행 뒤 config가 되돌아오지 않음")
+
+
+def test_demo_no_tkinter():
+    """tkinter를 쓸 수 없는 컴퓨터: make_chooser는 None이고, main은 오류 없이 안내 문구를 낸 뒤 번호 목록(--list 방식)으로 넘어간다."""
+    saved = {name: sys.modules.get(name) for name in ("tkinter", "tkinter.filedialog", "tkinter.messagebox")}
+    sys.modules["tkinter"] = None                           # import tkinter가 ImportError를 내게
+    try:
+        check(demo.make_chooser() is None, "make_chooser: tkinter가 없는데 None이 아님")
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+    with patched(demo, "pick_image", lambda: None), contextlib.redirect_stdout(io.StringIO()) as printed:
+        code = demo.main([], lambda: None)
+    check(code == 0 and "번호 목록으로" in printed.getvalue() and "사진을 고르지 않아" in printed.getvalue(),
+          f"demo.main: tkinter가 없을 때 안내 후 번호 목록으로 넘어가지 않음 ({printed.getvalue().strip()})")
 
 
 def fake_pair_name(path):
@@ -1380,6 +1488,7 @@ def main():
                test_summary_tables, test_run_options, test_get_roi_auto, test_median_road_time, test_edges_on_road,
                test_verdict_columns, test_group_verdict_tables, test_image_table_verdicts, test_run_main_options, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
                test_demo_options, test_demo_footer, test_demo_main_save,
+               test_demo_dialog_args, test_demo_read_error_text, test_demo_dialog_loop, test_demo_no_tkinter,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,
