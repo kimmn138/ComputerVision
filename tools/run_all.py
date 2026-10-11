@@ -1,5 +1,6 @@
 """(파트 C) E0~E6 실험을 단계마다 명령 하나로 돌리고, 보고서 표(CSV)와 요약(summary.md)을 만든다(Plan.md 3.7·3.10).
-사용법: 맨 위 폴더에서  python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes] [--reject E1,E3]
+사용법: 맨 위 폴더에서  python tools/run_all.py compare|final|test|repro|tables [--dry-run] [--yes]
+                                              [--accept E1b] [--reject E1,E3] [--force dark,mask]
 순서: compare(비교) → 사용자가 채택을 정하고 구역 주인이 config를 고침 → final(최종) → test(시험, 한 번만) → (10/12) repro(재현)
 - compare: 개발셋에서 E0(804장 재현 포함)·E1·E1b·E2·E3·E3σ를 차례로 돌리며, 끝날 때마다 채택 규칙 2·3으로 잠정 판정해 뒤 단계 설정에 반영한다.
   비교는 한 번에 하나만 바뀌게: E1은 E0와, E1b는 E1과, E2는 E0와, E3는 마스크를 켠 1차 설정(E1, E1b가 채택되면 E1b)과, E3σ는 E3와.
@@ -7,7 +8,9 @@
   E6 1회(저하 다섯 가지)는 E1~E3 가운데 마지막으로 잠정 채택된 단계의 설정으로(없으면 E0), 39장 E1·E3 자동 ROI는 채택 판단에 쓰지 않는 참고로 돈다.
   E0·E1·E1b는 1차 값(--param-set base, legacy, 띠 0.5)으로 고정해 config가 바뀐 뒤에 다시 돌려도 같은 조건이다.
   채택 표(규칙 1은 민감도와 영상당 오검출을 나란히 둔 사람 확인, 처리 시간은 단일 실행 참고값)와 바꿀 config 값 목록(구역 주인과 함께)을 낸다.
-  config 파일은 고치지 않는다. 사람이 규칙 1에서 뺀 단계는 --reject로 주고, 그 때문에 뒤 단계 설정이 바뀌면 표가 '다시 돌려야 함'으로 알린다.
+  채택 표 위에는 검출기(1차·dark) × 노면 마스크(끔·켬) 네 칸(E0·E1·E2·E3, E1b가 채택되면 마스크를 켠 칸은 띠 0.3)과 E3σ 한 줄을 나란히 둔다.
+  자동 판정은 길잡이이고 최종 채택은 사람이 정한다: --accept(채택)·--reject(되돌림)는 자동 판정보다 앞서고 results/report/에 남아 유지되며,
+  그 때문에 뒤 단계 설정이 바뀌면 표가 '다시 돌려야 함'으로 알린다. config 파일은 고치지 않는다.
 - final: config 그대로(채택 결과를 반영한 최종 설정)로 39장(최종 roi.csv·최종 자동 ROI·1차 설정), 매칭, E5(개발셋 끔·켬), E6 2회.
   처리 시간은 이 단계 값만 보고서에 쓴다. 시작할 때 전원 연결·다른 프로그램 닫기를 알리고 Enter를 기다린다(--yes면 건너뜀).
 - test: 시험셋을 한 번만 잰다. results/test_once가 있으면 거부한다. 같은 시험셋에서 1차 방법(e0_test)을 먼저 돌려 전·후를 견준다.
@@ -18,8 +21,10 @@
 실행 전 확인: 39장 정답 파일(빠지면 이름을 알리고 39장 표에 '미완'), 학습 사진 804장, 약속 검사, 커밋 안 된 변경. 뒤의 셋은 어기면 멈춘다.
 구현 여부: 노면 마스크·dark 검출은 A·B 시험의 해당 @todo가 지워졌는지(각 파트의 통과 기준)로 정하고, 합성 영상 검사는 어긋날 때 경고만 한다.
 구현 전 기능이 필요한 실험은 건너뛰고 표에 '아직 구현 전'으로 적되, 시작 전에 목록을 크게 보여 주고 Enter를 기다린다(--yes면 그대로 진행).
+--force dark,mask면 @todo가 남은 기능도 쓰고, 그 기능을 쓴 실험은 표에 '강제 실행(시험 미통과)'으로 남긴다(구현했지만 시험 하나를 아직 못 넘긴 경우).
 결과: 실험마다 results/<폴더>/ (도구의 결과·config_used*.txt와, run_all이 남기는 run_info*.txt: 커밋 해시·명령·옵션·고정한 값)
-      표는 results/report/: table1_stages … table8_39_images.csv, adoption.csv, summary.md(보고서용 요약), reject.txt."""
+      표는 results/report/: table1_stages … table8_39_images.csv, adoption.csv·adoption_grid.csv, summary.md(보고서용 요약),
+      accept.txt·reject.txt(사람이 정한 채택·되돌림)."""
 import argparse
 import ast
 import collections
@@ -46,7 +51,8 @@ from tools import evaluate_train as et  # noqa: E402
 
 STAGES = {"compare": "비교", "final": "최종", "test": "시험", "repro": "재현", "tables": "표만"}
 REPORT_DIR = "report"               # 표는 results/report/
-REJECT_FILE = "reject.txt"          # 사람 확인에서 뺀 단계(다음 단계에서 표를 다시 만들어도 유지되게)
+DECISION_FILES = {"accept": "accept.txt", "reject": "reject.txt"}   # 사람이 정한 채택·되돌림(다음 단계에서 표를 다시 만들어도 유지되게)
+FORCED_MARK = "강제 실행(시험 미통과)"   # --force로 A·B 시험의 @todo가 남은 기능을 쓴 실험의 표시
 N_TRAIN = 804                       # 학습 사진 수. 일부만 있으면 개발/시험 나누기가 계획(652·152)과 달라진다
 PLANNED_SPLIT = {"all": 804, "dev": 652, "test": 152}   # 학습 사진이 없을 때 예상 시간에 쓰는 장수 (Plan.md 3.2 (3))
 
@@ -156,6 +162,11 @@ DEGRADE_COLS = ["sensitivity", "specificity", "accuracy", "baseline_none", "bala
                 "judge_expect", "judge_hit_rate", "judge_base_rate"]
 TIME_MEANS = ["t_pre_ms_mean", "t_detect_ms_mean", "t_road_ms_mean"]   # 학습 데이터 처리 시간(사진마다 한 번 잰 값의 평균): 참고용
 COMPARE_KEYS = (("sens", "sensitivity"), ("fp", "fp_per_image"), ("balanced", "balanced"), ("crack_net", "crack_ctr_recall_net"))
+# 채택 표 위의 네 칸 (검출기, 노면 마스크, 단계): 마스크를 켠 1차 칸은 E1b가 채택되면 E1b(띠 0.3). E3σ는 E3 아래 한 줄
+GRID_CELLS = (("1차(legacy)", "끔", "E0"), ("1차(legacy)", "켬", "E1"), ("dark", "끔", "E2"), ("dark", "켬", "E3"),
+              ("dark", "켬 (σ 띠 전체)", "E3s"))
+GRID_METRICS = ["sensitivity", "specificity", "balanced", "fp_per_image", "crack_ctr_recall_net"]
+GRID_COLUMNS = ["detector", "mask", "band", "stage_id"] + GRID_METRICS + ["time", "status"]
 ADOPT_COLUMNS = (["stage_id", "label", "status", "base", "changed"]
                  + [f"{k}{s}" for k, _ in COMPARE_KEYS for s in ("_base", "", "_diff")]
                  + ["time_base", "time", "time_diff", "rule1", "rule2", "rule3", "verdict",
@@ -184,21 +195,36 @@ def default_paths():
 
 
 def parse_args(argv=None):
-    """단계(compare·final·test·repro·tables)와 --dry-run·--yes·--reject를 읽는다. --reject는 채택을 견주는 단계(E1~E4) 이름만 받는다."""
+    """단계(compare·final·test·repro·tables)와 --dry-run·--yes·--accept·--reject·--force를 읽는다.
+    --accept·--reject는 채택을 견주는 단계(E1~E4) 이름만 받고 같은 단계를 둘 다에 넣으면 거부한다. --force는 dark·mask만 받는다."""
     parser = argparse.ArgumentParser(description="E0~E6 일괄 실행과 보고서 표")
     parser.add_argument("stage", choices=list(STAGES),
                         help="compare(비교) → final(최종) → test(시험, 한 번만) → repro(재현, 10/12). tables는 표만 다시")
     parser.add_argument("--dry-run", action="store_true", help="돌릴 실험·명령·결과 폴더·예상 시간만 보여 주고 끝냄(아무것도 쓰지 않음)")
     parser.add_argument("--yes", action="store_true", help="시작 전 확인(건너뛸 실험·전원·시험셋 Enter)을 건너뜀")
-    parser.add_argument("--reject", help="사람 확인(채택 규칙 1)에서 뺀 단계를 쉼표로(예: E1,E3). 빈 값('')이면 지움. "
+    parser.add_argument("--accept", help="사람이 채택하기로 정한 단계를 쉼표로(예: E1b). 자동 판정보다 앞선다. 빈 값('')이면 지움. "
+                                         "주지 않으면 지난번 값(results/report/accept.txt)")
+    parser.add_argument("--reject", help="사람이 되돌리기로 정한 단계(예: 규칙 1에서 뺀 것)를 쉼표로(예: E1,E3). 빈 값('')이면 지움. "
                                          "주지 않으면 지난번 값(results/report/reject.txt)")
+    parser.add_argument("--force", help="A·B 시험의 @todo가 남아 있어도 쓸 기능을 쉼표로: dark, mask. "
+                                        f"그 기능을 쓴 실험은 표에 '{FORCED_MARK}'으로 남는다")
     args = parser.parse_args(argv)
-    if args.reject is not None:
-        ids = [s.strip() for s in args.reject.split(",") if s.strip()]
-        bad = [s for s in ids if s not in ADOPT_ORDER]
-        if bad:
-            parser.error(f"--reject는 {', '.join(ADOPT_ORDER)} 가운데서만 고른다: {', '.join(bad)}")
-        args.reject = ids
+    for flag in ("accept", "reject"):
+        value = getattr(args, flag)
+        if value is not None:
+            ids = [s.strip() for s in value.split(",") if s.strip()]
+            bad = [s for s in ids if s not in ADOPT_ORDER]
+            if bad:
+                parser.error(f"--{flag}는 {', '.join(ADOPT_ORDER)} 가운데서만 고른다: {', '.join(bad)}")
+            setattr(args, flag, ids)
+    both = set(args.accept or []) & set(args.reject or [])
+    if both:
+        parser.error(f"--accept와 --reject에 같은 단계가 있음: {', '.join(sorted(both))}")
+    force = [s.strip() for s in (args.force or "").split(",") if s.strip()]
+    bad = [s for s in force if s not in SIGNALS]
+    if bad:
+        parser.error(f"--force는 {', '.join(SIGNALS)} 가운데서만 고른다: {', '.join(bad)}")
+    args.force = set(force)
     return args
 
 
@@ -334,13 +360,14 @@ def mask_removes_something():
     return bool(np.any(np.asarray(road) == 0))
 
 
-def readiness():
-    """노면 마스크·dark 검출의 구현 여부와 경고 {"mask": bool, "dark": bool, "notes": [경고]}. 실행 한 번에 한 번만 잰다.
-    구현 여부는 A·B 시험의 @todo가 지워졌는지(SIGNALS)로만 정한다. 합성 영상 검사는 신호와 어긋날 때 경고만 하므로,
-    진짜 마스크가 합성 띠에서 우연히 아무것도 안 지워도 E1을 건너뛰지 않는다(E1 = E0이면 '효과 없음' 결과로 남음).
-    신호를 찾지 못하면(시험 이름이 바뀜 등) 조용히 건너뛰지 않도록 구현된 것으로 보고 돌린다."""
+def readiness(force=()):
+    """노면 마스크·dark 검출의 구현 여부와 경고 {"mask": bool, "dark": bool, "notes": [경고], "forced": {강제로 쓴 기능}}.
+    실행 한 번에 한 번만 잰다. 구현 여부는 A·B 시험의 @todo가 지워졌는지(SIGNALS)로만 정한다. 합성 영상 검사는 신호와 어긋날 때
+    경고만 하므로, 진짜 마스크가 합성 띠에서 우연히 아무것도 안 지워도 E1을 건너뛰지 않는다(E1 = E0이면 '효과 없음' 결과로 남음).
+    신호를 찾지 못하면(시험 이름이 바뀜 등) 조용히 건너뛰지 않도록 구현된 것으로 보고 돌린다.
+    force(--force)에 든 기능은 @todo가 남아 있어도 쓰고 forced에 넣는다(그 기능을 쓴 실험은 표에 '강제 실행(시험 미통과)')."""
     probes = {"mask": mask_removes_something, "dark": dark_runs}
-    ready, notes = {}, []
+    ready, notes, forced = {}, [], set()
     for key, (path, test) in SIGNALS.items():
         signal, probe = todo_removed(path, test), probes[key]()
         ready[key] = True if signal is None else signal
@@ -351,7 +378,12 @@ def readiness():
             notes.append(f"{NEEDS[key]}: {where}의 @todo는 지워졌지만 {PROBE_FAIL[key]}")
         elif not signal and probe:
             notes.append(f"{NEEDS[key]}: {where}에 @todo가 남아 구현 전으로 보지만, {PROBE_PASS[key]}")
-    return {**ready, "notes": notes}
+        if not ready[key] and key in force:
+            ready[key] = True
+            forced.add(key)
+            notes.append(f"{NEEDS[key]}: {where}에 @todo가 남아 있지만 --force로 쓴다. 이 기능을 쓴 실험은 표에 '{FORCED_MARK}'으로 남는다"
+                         + ("" if probe else f". 다만 {PROBE_FAIL[key]}"))
+    return {**ready, "notes": notes, "forced": forced}
 
 
 def unmet(exp, ready, opts=None):
@@ -364,6 +396,15 @@ def unmet(exp, ready, opts=None):
     mode, mask = needs(opts if opts is not None else exp["opts"])
     return ([NEEDS["dark"]] if mode == "dark" and not ready["dark"] else []) + \
            ([NEEDS["mask"]] if mask and not ready["mask"] else [])
+
+
+def forced_needs(exp, ready, opts):
+    """실험이 쓰는 기능 가운데 --force로 쓴 것(A·B 시험의 @todo가 아직 남은 기능)의 이름 list. 표에 '강제 실행(시험 미통과)'으로 남긴다."""
+    if exp.get("todo") or exp["tool"] == "match":
+        return []
+    mode, mask = needs(opts)
+    return ([NEEDS["dark"]] if mode == "dark" and "dark" in ready["forced"] else []) + \
+           ([NEEDS["mask"]] if mask and "mask" in ready["forced"] else [])
 
 
 def skip_list(exps, ready):
@@ -450,10 +491,14 @@ def print_checks(checks, ready):
     print("실행 전 확인")
     for name, ok, note, blocking in checks:
         print(f"  [{'통과' if ok else ('멈춤' if blocking else '알림')}] {name}: {note}")
-    print("  [구현 여부] " + ", ".join(f"{NEEDS[k]} {'구현됨' if ready[k] else '구현 전'}" for k in SIGNALS)
-          + " (A·B 시험의 @todo 기준)")
+    print("  [구현 여부] " + ", ".join(f"{NEEDS[k]} {readiness_word(ready, k)}" for k in SIGNALS) + " (A·B 시험의 @todo 기준)")
     for note in ready["notes"]:
         print(f"  [경고] {note}")
+
+
+def readiness_word(ready, key):
+    """구현 여부 한 낱말: 구현됨, 구현 전, 강제(--force, @todo가 남은 채 씀)."""
+    return "강제(--force)" if key in ready.get("forced", ()) else ("구현됨" if ready[key] else "구현 전")
 
 
 def confirm(message, yes, ask=input):
@@ -488,6 +533,7 @@ def write_run_info(path, exp, run):
     lines = [f"단계: {run['context']['단계']}", f"실험: {exp['id']} {exp['label']}",
              f"명령: python {TOOL_SCRIPT[exp['tool']]} {' '.join(run['argv'])}", f"옵션: {run['opts']!r}",
              f"설정: {settings_text(run['opts'])}", f"설정 출처: {run['source'] or '-'}",
+             f"강제 실행: {'·'.join(run['forced']) or '없음'}",
              f"실행 중 고정한 config 값: {pins_text(run['pins'])}", f"상태: {run['status']}", f"커밋: {run['context']['커밋']}",
              f"시작: {run['started']:%Y-%m-%d %H:%M:%S}", f"걸린 시간: {run['seconds']:.1f}초", f"환경: {run['context']['환경']}",
              f"config 값: {CONFIG_FILE[exp['tool']]} (같은 폴더, 도구가 씀)"]
@@ -525,11 +571,12 @@ def run_tool(exp, argv, paths):
 
 
 def run_one(exp, opts, paths, ready, context, source=""):
-    """실험 하나를 opts(resolve의 결과)로 돌려 (상태, 걸린 초)를 돌려준다. 필요한 기능이 아직 없으면 돌리지 않고 '아직 구현 전'.
-    끝나면 결과 폴더에 run_info를 남긴다(실패해서 폴더가 없으면 남기지 않음). source는 설정을 따온 단계(E6 1회)."""
+    """실험 하나를 opts(resolve의 결과)로 돌려 (상태, 걸린 초, 강제로 쓴 기능 list)를 돌려준다. 필요한 기능이 아직 없으면 돌리지 않고
+    '아직 구현 전'. 끝나면 결과 폴더에 run_info를 남긴다(실패해서 폴더가 없으면 남기지 않음). source는 설정을 따온 단계(E6 1회)."""
     missing = unmet(exp, ready, opts)
     if missing:
-        return "아직 구현 전: " + "·".join(missing), 0.0
+        return "아직 구현 전: " + "·".join(missing), 0.0, []
+    forced = forced_needs(exp, ready, opts)
     argv, pins = command(exp, opts)
     started, start = datetime.datetime.now(), time.perf_counter()
     try:
@@ -537,16 +584,16 @@ def run_one(exp, opts, paths, ready, context, source=""):
             code = run_tool(exp, argv, paths)
         status = "완료" if code == 0 else f"실패: 끝 코드 {code} (실패한 사진은 위 출력)"
     except NotImplementedError as e:
-        status = f"실패: 구현 신호와 달리 NotImplementedError ({e})"
+        status = f"실패: {'강제로 썼지만' if forced else '구현 신호와 달리'} NotImplementedError ({e})"
     except (Exception, SystemExit) as e:                    # 명령행 오류(SystemExit)도 이 실험의 실패로 적고 다음으로
         status = f"실패: {type(e).__name__}: {e}"
     seconds = time.perf_counter() - start
     folder = Path(paths["results"]) / exp["name"]
     if folder.is_dir():
         write_run_info(folder / RUN_INFO[exp["tool"]], exp, {"context": context, "argv": argv, "opts": opts, "source": source,
-                                                              "pins": pins, "status": status, "started": started,
-                                                              "seconds": seconds})
-    return status, seconds
+                                                              "pins": pins, "forced": forced, "status": status,
+                                                              "started": started, "seconds": seconds})
+    return status, seconds, forced
 
 
 def stage_refusal(stage, results):
@@ -606,7 +653,13 @@ def plan_note(exp, adopted):
     return ""
 
 
-def print_plan(stage, exps, paths, ready, refusal, skips, reject):
+def human_text(human):
+    """사람이 정한 채택·되돌림을 한 줄로: '채택 E1b, 되돌림 E2'. 없으면 빈 글."""
+    parts = [f"{word} {', '.join(human[key])}" for key, word in (("accept", "채택"), ("reject", "되돌림")) if human.get(key)]
+    return ", ".join(parts)
+
+
+def print_plan(stage, exps, paths, ready, refusal, skips, human):
     """--dry-run: 돌릴 실험·명령·결과 폴더·예상 시간을 보여 준다. 아무것도 쓰거나 돌리지 않는다."""
     counts = split_counts(paths)
     n39 = len(rx.list_images(None, paths["image_dirs"]))
@@ -619,8 +672,8 @@ def print_plan(stage, exps, paths, ready, refusal, skips, reject):
     if stage == "compare":
         print("  ※ E1·E1b·E2·E3·E3σ는 끝날 때마다 잠정 판정해 E3 쪽 띠(E1b 채택 → 0.3)와 E6 1회 설정(마지막 잠정 채택)에 반영한다. "
               "아래 명령은 아무것도 채택되지 않았을 때의 모양이다")
-        if reject:
-            print(f"  ※ 사람 확인에서 뺀 단계(지난번 값 포함): {', '.join(reject)}")
+        if human_text(human):
+            print(f"  ※ 사람이 정한 것(지난번 값 포함, 자동 판정보다 앞섬): {human_text(human)}")
     total, everything = SEC_CHECK, SEC_CHECK
     for i, exp in enumerate(exps, 1):
         opts = resolve(exp, {"E0"})
@@ -639,7 +692,8 @@ def print_plan(stage, exps, paths, ready, refusal, skips, reject):
             print(f"    건너뜀: 아직 구현 전 ({', '.join(unmet(exp, ready, opts))})")
         else:
             total += sec
-            print(f"    예상: {duration(sec)}")
+            forced = forced_needs(exp, ready, opts)
+            print(f"    예상: {duration(sec)}" + (f"  ({FORCED_MARK}: {', '.join(forced)})" if forced else ""))
     if skips:
         print_skips(skips, ready)
         print("실제 실행에서는 시작 전에 위 목록을 보여 주고 Enter를 기다린다(--yes면 그대로 진행)")
@@ -659,23 +713,26 @@ def print_plan(stage, exps, paths, ready, refusal, skips, reject):
 FINAL_PROMPT = "처리 시간을 잽니다: 노트북 전원을 연결하고 다른 프로그램을 닫아 주세요."
 
 
-def test_prompt():
-    """시험 단계 시작 확인 문구: 한 번만 잰다는 것과 지금 config의 채택 관련 값."""
+def test_prompt(ready):
+    """시험 단계 시작 확인 문구: 한 번만 잰다는 것, 지금 config의 채택 관련 값, --force로 쓰는 기능."""
+    forced = [NEEDS[k] for k in SIGNALS if k in ready.get("forced", ())]
     return ("시험셋은 한 번만 잽니다. 이 결과를 보고 파라미터를 고치지 않습니다(Plan.md 3.10).\n"
             f"지금 config: DETECT_MODE={C.DETECT_MODE!r}, USE_ROAD_MASK={C.USE_ROAD_MASK}, "
-            f"ROI_TOP_DEFAULT={C.ROI_TOP_DEFAULT}, DARK_SIGMA_IN_ROAD={C.DARK_SIGMA_IN_ROAD}")
+            f"ROI_TOP_DEFAULT={C.ROI_TOP_DEFAULT}, DARK_SIGMA_IN_ROAD={C.DARK_SIGMA_IN_ROAD}"
+            + (f"\n--force로 쓰는 기능(A·B 시험 미통과, 표에 '{FORCED_MARK}'): {', '.join(forced)}" if forced else ""))
 
 
-def run_stage(stage, args, paths, reject, command_line, ask=input):
+def run_stage(stage, args, paths, human, command_line, ask=input):
     """한 단계를 돈다: 거부 조건 → 실행 전 확인 → 건너뛸 실험·시작 확인 → 실험을 차례로 → 표 만들기. 끝 코드는 main과 같다.
-    비교 단계는 E0와 채택 단계가 끝날 때마다 잠정 판정(adoption)을 다시 내어 뒤 실험의 설정(resolve)에 반영한다."""
+    비교 단계는 E0와 채택 단계가 끝날 때마다 잠정 판정(adoption, 사람이 정한 --accept·--reject가 앞섬)을 다시 내어
+    뒤 실험의 설정(resolve)에 반영한다. human = {"accept": [...], "reject": [...]}"""
     exps = [e for e in EXPERIMENTS if e["stage"] == stage]
-    ready = readiness()
+    ready = readiness(args.force)
     results_dir = Path(paths["results"])
     refusal = stage_refusal(stage, results_dir)
     skips = skip_list(exps, ready)
     if args.dry_run:
-        print_plan(stage, exps, paths, ready, refusal, skips, reject)
+        print_plan(stage, exps, paths, ready, refusal, skips, human)
         return 0
     if refusal:
         print(f"멈춤: {refusal}")
@@ -695,10 +752,10 @@ def run_stage(stage, args, paths, reject, command_line, ask=input):
             return 2
     if stage == "final" and not confirm(FINAL_PROMPT, args.yes, ask):
         return 2
-    if stage == "test" and not confirm(test_prompt(), args.yes, ask):
+    if stage == "test" and not confirm(test_prompt(ready), args.yes, ask):
         return 2
-    if stage == "compare" and reject:
-        print(f"사람 확인에서 뺀 단계: {', '.join(reject)} (잠정 판정과 뒤 단계 설정에 반영)")
+    if stage == "compare" and human_text(human):
+        print(f"사람이 정한 것: {human_text(human)} (자동 판정보다 앞서고 뒤 단계 설정에 반영)")
 
     context = run_context(stage, command_line)
     start, done, results, adopted = time.perf_counter(), [], {}, {"E0"}
@@ -708,26 +765,27 @@ def run_stage(stage, args, paths, reject, command_line, ask=input):
         note = plan_note(exp, adopted)
         print(f"\n===== [{STAGES[stage]} {i}/{len(exps)}] {exp['id']} {exp['label']} -> {(results_dir / exp['name']).as_posix()}/"
               + (f"  [{note}]" if note else ""))
-        status, seconds = run_one(exp, opts, paths, ready, context, source)
-        print(f"----- {exp['id']}: {status} ({duration(seconds)})")
-        done.append((exp, status, seconds))
+        status, seconds, forced = run_one(exp, opts, paths, ready, context, source)
+        shown = status + (f" · {FORCED_MARK}: {'·'.join(forced)}" if forced else "")
+        print(f"----- {exp['id']}: {shown} ({duration(seconds)})")
+        done.append((exp, shown, seconds))
         if exp["id"] == "E0" or exp.get("adopt"):
             summary = train_summary(paths, exp, {"done": status == "완료"})
-            results[exp["id"]] = {"off": (summary or {}).get("off"), "status": status, "opts": opts}
-            table, adopted = adoption(results, reject)
+            results[exp["id"]] = {"off": (summary or {}).get("off"), "status": shown, "opts": opts, "forced": forced}
+            table, adopted = adoption(results, human["reject"], human["accept"])
             if exp.get("adopt"):
                 row = table.set_index("stage_id").loc[exp["id"]]
-                print(f"      → 잠정 판정: {exp['id']} (비교 기준 {row['base']}) {row['verdict']}")
+                print(f"      → 판정: {exp['id']} (비교 기준 {row['base']}) {row['verdict']}")
         if stage == "test" and status != "완료":
             print("멈춤: 시험 단계는 실패하면 다음 실험을 돌리지 않는다(test_once를 한 번만 재려고)")
             break
 
     print(f"\n===== {STAGES[stage]} 단계 끝 ({duration(time.perf_counter() - start)})")
-    for exp, status, seconds in done:
-        print(f"  {exp['id']:<9} {exp['name']:<22} {status} ({duration(seconds)})")
-    report = build_report(paths, reject, command_line)
+    for exp, shown, seconds in done:
+        print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
+    report = build_report(paths, human, command_line)
     print_report(report, stage)
-    return 1 if any(status.startswith("실패") for _, status, _ in done) else 0
+    return 1 if any(shown.startswith("실패") for _, shown, _ in done) else 0
 
 
 # ---------------------------------------------------------
@@ -740,15 +798,19 @@ def read_csv(path):
 
 
 def exp_state(exp, paths, ready):
-    """실험의 지금 상태 {"done", "status", "commit", "opts", "source"}: 결과 파일이 있으면 run_info의 상태·커밋·옵션,
-    없으면 구현 전·실패·안 돌림. opts는 실제로 돈 옵션(run_info '옵션' 줄)이고 앞선 채택과 맞는지 볼 때 쓴다."""
+    """실험의 지금 상태 {"done", "status", "commit", "opts", "source", "forced"}: 결과 파일이 있으면 run_info의 상태·커밋·옵션,
+    없으면 구현 전·실패·안 돌림. opts는 실제로 돈 옵션(run_info '옵션' 줄)이고 앞선 채택과 맞는지 볼 때 쓴다.
+    --force로 돈 실험은 forced(쓴 기능 이름)가 있고 상태 뒤에 '강제 실행(시험 미통과)'이 붙는다."""
     if exp["tool"] is None:
-        return {"done": False, "status": "아직 구현 전: " + exp["todo"], "commit": "", "opts": None, "source": ""}
+        return {"done": False, "status": "아직 구현 전: " + exp["todo"], "commit": "", "opts": None, "source": "", "forced": ""}
     folder = Path(paths["results"]) / exp["name"]
     info = read_run_info(folder / RUN_INFO[exp["tool"]])
-    state = {"commit": info.get("커밋", "")[:7], "opts": parse_opts(info.get("옵션")), "source": info.get("설정 출처", "-")}
+    forced = "" if info.get("강제 실행", "없음") == "없음" else info["강제 실행"]
+    state = {"commit": info.get("커밋", "")[:7], "opts": parse_opts(info.get("옵션")), "source": info.get("설정 출처", "-"),
+             "forced": forced}
     if (folder / RESULT_FILE[exp["tool"]]).exists():
-        return {**state, "done": True, "status": info.get("상태", "완료(run_all 밖에서 돌림)")}
+        return {**state, "done": True,
+                "status": info.get("상태", "완료(run_all 밖에서 돌림)") + (f" · {FORCED_MARK}: {forced}" if forced else "")}
     missing = unmet(exp, ready)
     if missing:
         return {**state, "done": False, "status": "아직 구현 전: " + "·".join(missing), "commit": ""}
@@ -884,15 +946,31 @@ def compare_values(base, cur):
     return values
 
 
-def adoption(results, reject=()):
+def auto_verdict(row, base, adopted):
+    """자동 판정(길잡이): (판정 글, 채택?). 규칙 2·3을 넘고 비교 기준이 E0이거나 채택된 단계일 때만 채택이다(채택된 것 위에만 쌓아,
+    마스크를 채택하지 않았는데 마스크 + 띠 0.3이 채택되는 일이 없게). 기준과 네 값이 모두 같으면 '효과 없음'을 덧붙인다(구현 전이 아니라 결과)."""
+    failed = [f"규칙 {n} {row[f'rule{n}']}" for n in (2, 3) if row[f"rule{n}"] != "통과"]
+    if failed:
+        text, ok = "되돌림: " + ", ".join(failed), False
+    elif base not in adopted:
+        text, ok = f"채택 안 함: 비교 기준({base})이 채택되지 않음", False
+    else:
+        text, ok = "잠정 채택 (규칙 1은 사람 확인)", True
+    diffs = [row[f"{key}_diff"] for key, _ in COMPARE_KEYS]
+    if not any(pd.isna(d) for d in diffs) and all(round(float(d), 6) == 0 for d in diffs):
+        text += " (비교 기준과 같음: 효과 없음)"
+    return text, ok
+
+
+def adoption(results, reject=(), accept=()):
     """채택 표: ADOPT_ORDER 순서로 각 단계를 정해진 비교 기준(base_of)과 개발셋·전처리 끔으로 견준다(Plan.md 3.10, 검출 튜닝 조건).
-    규칙 2(균형 정확도가 오름)·3(우연을 뺀 균열 재현율이 1%p 넘게 안 떨어짐)은 자동, 규칙 1은 rule1(사람 확인).
-    잠정 채택은 규칙 2·3을 넘고, 사람이 빼지 않았고(reject), 비교 기준이 E0이거나 잠정 채택된 단계일 때다(채택된 것 위에만 쌓아,
-    마스크를 채택하지 않았는데 마스크 + 띠 0.3이 채택되는 일이 없게). 기준과 네 값이 모두 같으면 '효과 없음'을 덧붙인다(구현 전이 아니라 결과).
+    규칙 2(균형 정확도가 오름)·3(우연을 뺀 균열 재현율이 1%p 넘게 안 떨어짐)은 자동, 규칙 1은 rule1(사람 확인)이고 자동 판정은 auto_verdict.
+    자동 판정은 길잡이이고 사람이 정한 것이 앞선다: accept(--accept)에 든 단계는 결과가 있으면 규칙·비교 기준과 상관없이 채택하고,
+    reject(--reject)에 든 단계는 채택하지 않는다. 둘 다 판정 칸에 자동 판정을 함께 적는다. 강제 실행(--force)한 단계는 판정 끝에 표시한다.
     앞선 채택으로 정해지는 설정(E3 쪽 띠)과 실제로 돈 설정(opts)이 다르면 '다시 돌려야 함'으로 두고 판단에 쓰지 않는다.
     E3는 E2와의 차이(마스크만 다름)도 ref_ 열에 참고로 둔다(판단에는 쓰지 않음).
-    results: {단계: {"off": 전처리 끔 요약 행, "status": 상태, "opts": 실제로 돈 옵션}} (없는 단계는 아직 안 돌림)
-    → (표, 잠정 채택된 단계 집합(E0 포함))"""
+    results: {단계: {"off": 전처리 끔 요약 행, "status": 상태, "opts": 실제로 돈 옵션, "forced": 강제로 쓴 기능}} (없는 단계는 아직 안 돌림)
+    → (표, 채택된 단계 집합(E0 포함))"""
     adopted, invalid, rows = {"E0"}, set(), []
     for sid in ADOPT_ORDER:
         exp, base = EXP[sid], base_of(sid, adopted)
@@ -904,25 +982,24 @@ def adoption(results, reject=()):
         if cur_off is not None and cur.get("opts") is not None and cur["opts"] != expect:
             invalid.add(sid)
             row["verdict"] = f"다시 돌려야 함: 지금 채택으로는 {changed_text(cur['opts'], expect)} (compare를 다시)"
-        elif cur_off is None or base_off is None:
-            row["verdict"] = row["status"] if cur_off is None else f"비교 기준 {base}의 결과 없음"
+        elif cur_off is None:
+            row["verdict"] = row["status"] + (" (--accept는 결과가 있어야 반영)" if sid in accept else "")
         else:
-            row.update(compare_values(base_off, cur_off))
-            failed = [f"규칙 {n} {row[f'rule{n}']}" for n in (2, 3) if row[f"rule{n}"] != "통과"]
-            diffs = [row[f"{key}_diff"] for key, _ in COMPARE_KEYS]
-            same = not any(pd.isna(d) for d in diffs) and all(round(float(d), 6) == 0 for d in diffs)
-            if sid in reject:
-                row["verdict"] = "되돌림: 사람 확인(규칙 1)에서 뺌"
-            elif failed:
-                row["verdict"] = "되돌림: " + ", ".join(failed)
-            elif base not in adopted:
-                row["verdict"] = f"채택 안 함: 비교 기준({base})이 채택되지 않음"
+            if base_off is None:
+                auto, ok = f"비교 기준 {base}의 결과 없음", False
             else:
-                row["verdict"] = "잠정 채택 (규칙 1은 사람 확인)"
+                row.update(compare_values(base_off, cur_off))
+                auto, ok = auto_verdict(row, base, adopted)
+            if sid in reject:
+                row["verdict"] = f"되돌림: 사람이 뺌(--reject). 자동 판정: {auto}"
+            elif sid in accept:
+                row["verdict"] = f"채택: 사람이 정함(--accept). 자동 판정: {auto}"
                 adopted.add(sid)
-            if same:
-                row["verdict"] += " (비교 기준과 같음: 효과 없음)"
-            e2 = results.get("E2", {}).get("off")
+            else:
+                row["verdict"] = auto
+                if ok:
+                    adopted.add(sid)
+            e2 = None if "E2" in invalid else results.get("E2", {}).get("off")
             if sid == "E3" and e2 is not None:
                 ref = compare_values(e2, cur_off)
                 row.update({"ref_base": "E2", "ref_changed": changed_text(resolve(EXP["E2"], adopted), expect),
@@ -930,8 +1007,30 @@ def adoption(results, reject=()):
                             "ref_balanced": ref["balanced_base"], "ref_balanced_diff": ref["balanced_diff"],
                             "ref_crack_net": ref["crack_net_base"], "ref_crack_net_diff": ref["crack_net_diff"],
                             "ref_rule2": ref["rule2"], "ref_rule3": ref["rule3"]})
+        if cur.get("forced"):
+            row["verdict"] += f" · {FORCED_MARK}"
         rows.append(row)
     return pd.DataFrame(rows, columns=ADOPT_COLUMNS), adopted
+
+
+def grid_rows(summaries, states, adopted):
+    """채택 표 위의 네 칸: 검출기(1차·dark) × 노면 마스크(끔·켬)와 E3σ 한 줄(개발셋, 전처리 끔). 자동 판정은 길잡이라
+    네 조합을 한 표에 나란히 두어 사람이 바로 견주게 한다(예: E1은 떨어졌는데 E3가 E1보다 나은 경우, E1·E2가 둘 다 채택된 경우).
+    E1b가 채택되면 마스크를 켠 칸은 띠 0.3이다(1차 칸은 E1b, dark 칸은 띠 0.3으로 돈 E3). '다시 돌려야 함'이거나 아직 안 돈 칸은
+    상태만 적는다. 처리 시간은 단일 실행 참고값이다."""
+    rows = []
+    for detector, mask, sid in GRID_CELLS:
+        if sid == "E1" and "E1b" in adopted:
+            sid = "E1b"
+        state = states[sid]
+        off = (summaries.get(sid) or {}).get("off") if state["done"] else None
+        row = {"detector": detector, "mask": mask, "band": resolve(EXP[sid], adopted).get("roi_top"), "stage_id": sid,
+               "status": state["status"]}
+        if off is not None:
+            row.update({c: off[c] for c in GRID_METRICS})
+            row["time"] = time_per_image(off)
+        rows.append(row)
+    return pd.DataFrame(rows, columns=GRID_COLUMNS)
 
 
 def section_owners(path="src/config.py"):
@@ -1024,11 +1123,16 @@ def country_table(paths, states):
     return pd.DataFrame(rows, columns=["data", "method", "folder", "preprocess", "source"] + METRICS)
 
 
-def condition_table(runs):
+def run_labels(states):
+    """39장 실행의 표 이름 {단계: 이름}. --force로 돈 실행은 이름 뒤에 '[강제 실행(시험 미통과)]'을 붙인다."""
+    return {sid: method + (f" [{FORCED_MARK}]" if states[sid]["forced"] else "") for sid, method in RUNS39}
+
+
+def condition_table(runs, labels):
     """3번 조건별 표: 39장 실행마다 조건(사람이 붙인 태그: 직접 촬영은 이름, 제공 13장은 roi.csv)별 영상 단위 지표와
     상태 판정(analyze)이 고른 전처리를 나란히(Plan.md 3.7 3번). 태그가 blur·dark·bright·noise면 맞는 전처리를 고른 수도 센다."""
     rows = []
-    for sid, method in RUNS39:
+    for sid, _ in RUNS39:
         data = runs[sid]
         if data is None:
             continue
@@ -1038,7 +1142,7 @@ def condition_table(runs):
             picked = [j for j in judge.values() if cond == "all" or j["condition"] == cond]
             judged = [j for j in picked if j["hit"] is not None]
             chosen = collections.Counter(j["steps"] for j in picked).most_common()
-            rows.append({"method": method, "folder": EXP[sid]["name"], "condition": cond, "gt_status": status,
+            rows.append({"method": labels[sid], "folder": EXP[sid]["name"], "condition": cond, "gt_status": status,
                          **{c: r.get(c) for c in GROUP39},
                          "steps_chosen": "; ".join(f"{s} {n}장" for s, n in chosen),
                          "judge_expect": judged[0]["expect"] if judged and cond != "all" else "",
@@ -1089,16 +1193,16 @@ def matching_table(paths, states, runs):
     return pd.DataFrame(rows, columns=["item", "target", "off", "on", "diff"])
 
 
-def source_table(runs):
+def source_table(runs, labels):
     """6번 제공 vs 직접 촬영 표: 39장 실행마다 출처(제공·직접 촬영·전체)별 영상 단위 지표와 영상당 후보·에지 수(끔·켬).
     E1·E3 자동 ROI 줄은 비교 단계의 참고 실행이다(채택 판단에 쓰지 않음)."""
     rows = []
-    for sid, method in RUNS39:
+    for sid, _ in RUNS39:
         data = runs[sid]
         if data is None:
             continue
         status = gt_status(data["metrics"])
-        rows += [{"method": method, "folder": EXP[sid]["name"], "source": r["source"], "gt_status": status,
+        rows += [{"method": labels[sid], "folder": EXP[sid]["name"], "source": r["source"], "gt_status": status,
                   **{c: r.get(c) for c in SOURCE39}} for _, r in data["source"].iterrows()]
     return pd.DataFrame(rows, columns=["method", "folder", "source", "gt_status"] + SOURCE39)
 
@@ -1151,24 +1255,26 @@ def image_table(runs):
     return pd.DataFrame(rows, columns=columns)
 
 
-def saved_reject(paths):
-    """지난번에 저장한 '사람 확인에서 뺀 단계'. 없으면 빈 list."""
-    path = Path(paths["results"]) / REPORT_DIR / REJECT_FILE
+def saved_ids(paths, kind):
+    """지난번에 저장한 사람의 결정(kind: accept 채택, reject 되돌림)의 단계 list. 없으면 빈 list."""
+    path = Path(paths["results"]) / REPORT_DIR / DECISION_FILES[kind]
     return [s for s in path.read_text(encoding="utf-8").strip().split(",") if s] if path.exists() else []
 
 
-def build_report(paths, reject=(), command_line="python tools/run_all.py tables"):
-    """있는 결과 폴더로 보고서 표 CSV(1~8번, 채택 표)와 summary.md를 results/report/에 만든다. 돌리지 않은 실험은 상태만 적는다.
+def build_report(paths, human=None, command_line="python tools/run_all.py tables"):
+    """있는 결과 폴더로 보고서 표 CSV(1~8번, 채택 표, 네 칸 표)와 summary.md를 results/report/에 만든다. 돌리지 않은 실험은 상태만 적는다.
+    사람이 정한 채택·되돌림(human = {"accept", "reject"})이 자동 판정보다 앞서고, accept.txt·reject.txt에 남아 다음에도 쓰인다.
     앞선 채택으로 설정이 정해지는 실험(E3 쪽 띠, E6 1회)이 지금 채택과 다른 설정으로 돌았으면 '다시 돌려야 함'으로 표에서 뺀다.
-    화면에 보여 줄 값(상태, 채택 표, 잠정 채택 방법, 바꿀 config 값, E0 재현, 재현 확인, 39장 정답 상태, 경고)을 돌려준다."""
+    화면에 보여 줄 값(상태, 채택 표, 네 칸 표, 채택 방법, 바꿀 config 값, E0 재현, 재현 확인, 39장 정답 상태, 경고)을 돌려준다."""
+    human = {"accept": [], "reject": [], **(human or {})}
     out = Path(paths["results"]) / REPORT_DIR
     out.mkdir(parents=True, exist_ok=True)
     ready = readiness()
     states = {e["id"]: exp_state(e, paths, ready) for e in EXPERIMENTS}
     summaries = {sid: train_summary(paths, EXP[sid], states[sid]) for sid in ["E0", "E0_all", "T0", "T"] + ADOPT_ORDER}
-    results = {sid: {"off": (summaries[sid] or {}).get("off"), "status": states[sid]["status"], "opts": states[sid]["opts"]}
-               for sid in ["E0"] + ADOPT_ORDER}
-    adopt, adopted = adoption(results, reject)
+    results = {sid: {"off": (summaries[sid] or {}).get("off"), "status": states[sid]["status"], "opts": states[sid]["opts"],
+                     "forced": states[sid]["forced"]} for sid in ["E0"] + ADOPT_ORDER}
+    adopt, adopted = adoption(results, human["reject"], human["accept"])
     for exp in EXPERIMENTS:
         state = states[exp["id"]]
         if (exp.get("follow_band") or exp.get("follow_last")) and state["done"] and state["opts"] is not None:
@@ -1178,23 +1284,31 @@ def build_report(paths, reject=(), command_line="python tools/run_all.py tables"
     last = last_adopted(adopted)
     notes = list(ready["notes"])
     if last == "E2" and {"E1", "E1b"} & adopted:
-        notes.append("잠정 채택 방법은 순서상 마지막인 E2(마스크 없음)지만, 마스크를 켠 E1·E1b도 채택됐고 둘은 직접 견주지 않았다. 최종은 사람이 정한다")
+        notes.append("채택 방법은 순서상 마지막인 E2(마스크 없음)지만, 마스크를 켠 E1·E1b도 채택됐고 둘은 직접 견주지 않았다. "
+                     "위 네 칸 표를 보고 사람이 정한다(--accept·--reject)")
     stale = [sid for sid in states if states[sid]["status"].startswith("다시 돌려야 함")]
     if stale:
         notes.append(f"지금 채택과 다른 설정으로 돈 실험: {', '.join(stale)}. python tools/run_all.py compare를 다시 돌린다"
-                     + (f"(--reject {','.join(reject)})" if reject else ""))
+                     "(사람이 정한 --accept·--reject는 저장돼 있어 그대로 반영)")
+    forced = [sid for sid in states if states[sid]["forced"] and states[sid]["done"]]
+    if forced:
+        notes.append(f"{FORCED_MARK}: {', '.join(forced)}. A·B 시험의 @todo가 남은 기능을 --force로 썼다")
     runs = {sid: run39(paths, EXP[sid], states[sid]) for sid, _ in RUNS39}
+    labels = run_labels(states)
     missing, n39 = missing_gt(paths)
+    grid = grid_rows(summaries, states, adopted)
     tables = {"table1_stages.csv": stages_table(paths, states), "table2_by_country.csv": country_table(paths, states),
-              "table3_by_condition.csv": condition_table(runs), "table4_preprocess.csv": preprocess_table(paths, states, runs),
-              "table5_matching.csv": matching_table(paths, states, runs), "table6_provided_vs_own.csv": source_table(runs),
-              "table7_degrade.csv": degrade_table(paths, states), "table8_39_images.csv": image_table(runs), "adoption.csv": adopt}
+              "table3_by_condition.csv": condition_table(runs, labels), "table4_preprocess.csv": preprocess_table(paths, states, runs),
+              "table5_matching.csv": matching_table(paths, states, runs), "table6_provided_vs_own.csv": source_table(runs, labels),
+              "table7_degrade.csv": degrade_table(paths, states), "table8_39_images.csv": image_table(runs), "adoption.csv": adopt,
+              "adoption_grid.csv": grid}
     for name, table in tables.items():
         table.to_csv(out / name, encoding="utf-8-sig", index=False)
-    (out / REJECT_FILE).write_text(",".join(reject), encoding="utf-8")
+    for kind, file in DECISION_FILES.items():
+        (out / file).write_text(",".join(human[kind]), encoding="utf-8")
     method = resolve(EXP[last], adopted)
-    report = {"out": out, "states": states, "adopt": adopt, "adopted": adopted, "last": last, "method": method,
-              "reject": list(reject), "changes": config_changes(method), "e0": e0_reproduction(summaries["E0_all"]),
+    report = {"out": out, "states": states, "adopt": adopt, "adopted": adopted, "last": last, "method": method, "grid": grid,
+              "human": human, "labels": labels, "changes": config_changes(method), "e0": e0_reproduction(summaries["E0_all"]),
               "repro": repro_check(paths), "gt": (n39 - len(missing), n39), "runs": runs, "tables": tables, "notes": notes,
               "ready": ready, "summaries": summaries, "created": f"{datetime.datetime.now():%Y-%m-%d %H:%M}", "command": command_line}
     (out / "summary.md").write_text("\n".join(summary_lines(report)) + "\n", encoding="utf-8")
@@ -1243,13 +1357,33 @@ def metric_cells(r):
 METRIC_HEAD = ["민감도", "특이도", "정답률 (기준선)", "균형 정확도", "영상당 오검출", "균열 재현율 (우연 뺌)", "포트홀 재현율 (우연 뺌)"]
 
 
+def grid_lines(grid):
+    """채택 표 위의 네 칸 표 줄: 검출기(1차·dark) × 노면 마스크(끔·켬)와 E3σ 한 줄. 아직 안 돈 칸·다시 돌려야 할 칸은 상태만."""
+    rows = []
+    for _, g in grid.iterrows():
+        head = [g["detector"], g["mask"], g["band"], g["stage_id"]]
+        if pd.isna(g["fp_per_image"]):
+            rows.append(head + ["-"] * 6 + [g["status"]])
+        else:
+            rows.append(head + [pct(g["sensitivity"]), pct(g["specificity"]), pct(g["balanced"]), num(g["fp_per_image"]),
+                                pp(g["crack_ctr_recall_net"]), num(g["time"], 1), g["status"]])
+    return (["### 검출기 × 노면 마스크 (개발셋, 전처리 끔)", "",
+             "네 조합을 자동 판정과 상관없이 나란히 둔다. 최종 채택은 이 표와 아래 판정을 보고 사람이 정한다(--accept·--reject). "
+             "E1b가 채택되면 마스크를 켠 칸은 띠 0.3이다. E3σ는 E3 아래 한 줄이다.", ""]
+            + md_table(["검출기", "노면 마스크", "띠 위쪽", "단계", "민감도", "특이도", "균형 정확도", "영상당 오검출",
+                        "우연 뺀 균열 재현율", "처리 시간 ms/장 (참고)", "상태"], rows))
+
+
 def adoption_lines(r):
-    """채택 비교 절의 줄: 채택 표, E3와 E2의 차이(참고), 잠정 채택 방법과 바꿀 config 값, 경고, 39장 자동 ROI(참고), E0 재현."""
+    """채택 비교 절의 줄: 네 칸 표, 단계별 판정 표, E3와 E2의 차이(참고), 사람이 정한 것, 채택 방법과 바꿀 config 값, 경고,
+    39장 자동 ROI(참고), E0 재현."""
     lines = ["## 채택 비교 (개발셋, 전처리 끔)", "",
              "비교는 한 번에 하나만 바뀌게 한다: E1←E0, E1b←E1, E2←E0, E3←마스크를 켠 1차 설정(E1b가 채택되면 E1b, 아니면 E1), "
              "E3σ←E3. E1b가 채택되면 E3 쪽은 띠 0.3으로 돈다. 규칙 2·3은 자동으로 보고, 규칙 1(같은 오검출 수준의 민감도)은 "
-             "점수 문턱이 없어 민감도와 영상당 오검출을 나란히 두고 사람이 본다(Plan.md 3.10). 비교 기준이 채택되지 않은 단계는 "
-             "규칙을 넘어도 채택하지 않는다.", ""]
+             "점수 문턱이 없어 민감도와 영상당 오검출을 나란히 두고 사람이 본다(Plan.md 3.10). 자동 판정은 비교 기준이 채택되지 않은 "
+             "단계를 규칙을 넘어도 채택하지 않는다. 자동 판정은 길잡이이고, 사람이 정한 --accept·--reject가 앞선다.", ""]
+    lines += grid_lines(r["grid"])
+    lines += ["### 단계별 판정", ""]
     rows = []
     for _, a in r["adopt"].iterrows():
         if pd.isna(a["rule2"]):
@@ -1269,8 +1403,10 @@ def adoption_lines(r):
                   f"({pp(e3['ref_balanced_diff'])}) {e3['ref_rule2']}, 우연 뺀 균열 재현율 {pp(e3['ref_crack_net'])}→{pp(e3['crack_net'])} "
                   f"({pp(e3['ref_crack_net_diff'])}) {e3['ref_rule3']}, 민감도 {pp(e3['ref_sens_diff'])}, 영상당 오검출 {num(e3['ref_fp_diff'])}"]
     last = EXP[r["last"]]
-    lines += [f"- 잠정 채택 방법: {last['id']} {last['label']} ({settings_text(r['method'])}). E1~E3 가운데 마지막 잠정 채택이고, "
-              "E6 1회도 이 설정으로 돈다" + (f". 사람 확인에서 뺀 단계: {', '.join(r['reject'])}" if r["reject"] else ""),
+    if human_text(r["human"]):
+        lines += [f"- 사람이 정한 것(자동 판정보다 앞섬, results/report/accept.txt·reject.txt에 남음): {human_text(r['human'])}"]
+    lines += [f"- 채택 방법: {last['id']} {last['label']} ({settings_text(r['method'])}). 자동 판정과 사람이 정한 것을 합쳐 "
+              "E1~E3 가운데 마지막으로 채택된 단계이고, E6 1회도 이 설정으로 돈다",
               "- 그 방법으로 가려면 바꿀 config 값 (run_all은 config를 고치지 않는다. 구역 주인이 고친다):"]
     lines += [f"  - `{name} = {value!r}` ({owner})" for name, value, owner in r["changes"]] or ["  - 없음 (지금 config 그대로)"]
     lines += [f"- 경고: {note}" for note in r["notes"]] + [""]
@@ -1278,11 +1414,12 @@ def adoption_lines(r):
     rows = []
     for sid in ("E1_39", "E3_39"):
         state, data = r["states"][sid], r["runs"][sid]
+        label = EXP[sid]["label"] + (f" [{FORCED_MARK}]" if state["forced"] and state["done"] else "")
         if data is None:
-            rows.append([EXP[sid]["label"], "-", "-", "-", "-", "-", "-", state["status"]])
+            rows.append([label, "-", "-", "-", "-", "-", "-", state["status"]])
             continue
         s = data["source"][data["source"]["source"] == "all"].iloc[0]
-        rows.append([EXP[sid]["label"], settings_text(state["opts"] or EXP[sid]["opts"]), int(s["n_images"]), int(s["n_gt"]),
+        rows.append([label, settings_text(state["opts"] or EXP[sid]["opts"]), int(s["n_images"]), int(s["n_gt"]),
                      f"{pct(s['sensitivity_off'])} / {pct(s['sensitivity_on'])}", f"{pct(s['specificity_off'])} / {pct(s['specificity_on'])}",
                      f"{pct(s['accuracy_off'])} / {pct(s['accuracy_on'])} ({pct(s['baseline_none'])})", gt_status(data["metrics"])])
     lines += ["39장 자동 ROI (참고: 손으로 정한 ROI 없이 도는지 보는 것이고 채택 판단에는 쓰지 않는다)", ""]
@@ -1309,7 +1446,11 @@ def summary_lines(r):
              "옆 괄호는 우연을 뺀 값(실제 − 우연 대조군)이다. 영상당 오검출은 중심 기준으로 맞지 않은 후보 수다.",
              "- 처리 시간은 최종 단계 값만 보고서에 쓴다(4번 표의 39장 최종 = 끔·켬 각 5번 중앙값). 채택 표의 시간은 한 번 잰 값의 평균이라 참고.",
              f"- 39장 정답 파일: {gt_note}",
-             "- 구현 여부(A·B 시험의 @todo 기준): " + ", ".join(f"{NEEDS[k]} {'구현됨' if ready[k] else '구현 전'}" for k in SIGNALS), ""]
+             "- 구현 여부(A·B 시험의 @todo 기준): " + ", ".join(f"{NEEDS[k]} {'구현됨' if ready[k] else '구현 전'}" for k in SIGNALS)]
+    forced = [sid for sid, state in states.items() if state["forced"] and state["done"]]
+    if forced:
+        lines += [f"- {FORCED_MARK}: {', '.join(forced)} (A·B 시험의 @todo가 남은 기능을 --force로 썼다. 표의 상태·판정에 표시)"]
+    lines += [""]
 
     lines += ["## 결과 폴더", ""] + md_table(
         ["단계", "실험", "폴더", "상태", "커밋"],
@@ -1402,7 +1543,7 @@ def condition_lines(table, runs):
              f"{pct(c['specificity_off'])} / {pct(c['specificity_on'])}",
              f"{pct(c['accuracy_off'])} / {pct(c['accuracy_on'])} ({pct(c['baseline_none'])})",
              c["steps_chosen"], f"{c['judge_expect']} {c['judge_hit']}".strip() or "-", c["gt_status"]]
-            for _, c in table.iterrows() if c["method"] == "최종(roi.csv)"]
+            for _, c in table.iterrows() if str(c["method"]).startswith("최종(roi.csv)")]
     if not rows:
         return lines + ["아직 결과 없음 (최종 단계 뒤)", ""]
     lines += md_table(["조건", "장수", "정답 있는", "민감도 끔/켬", "특이도 끔/켬", "정답률 끔/켬 (기준선)", "고른 전처리",
@@ -1432,17 +1573,29 @@ def image_lines(table, gt_note):
 
 
 def print_report(report, stage):
-    """표를 만든 뒤 화면에 핵심만: 표 위치, (비교·표만) 잠정 판정과 바꿀 config 값·E0 재현, 경고, (시험) 전·후, (재현) 같은지."""
-    print(f"\n표: {report['out'].as_posix()}/ (summary.md, table1~8, adoption.csv)")
+    """표를 만든 뒤 화면에 핵심만: 표 위치, (비교·표만) 네 칸 표·판정·사람이 정한 것·바꿀 config 값·E0 재현, 경고, (시험) 전·후,
+    (재현) 같은지."""
+    print(f"\n표: {report['out'].as_posix()}/ (summary.md, table1~8, adoption.csv, adoption_grid.csv)")
     has39, n39 = report["gt"]
     if has39 < n39:
         print(f"39장 정답 파일 {has39}/{n39}장: 39장 표는 '미완'")
     if stage in ("compare", "tables"):
-        print("채택 비교 (개발셋, 전처리 끔):")
+        print("검출기 × 노면 마스크 (개발셋, 전처리 끔. 처리 시간은 단일 실행 참고값):")
+        for _, g in report["grid"].iterrows():
+            head = f"  {g['detector']:<11} {g['mask']:<12} 띠 {g['band']} {g['stage_id']:<4}"
+            if pd.isna(g["fp_per_image"]):
+                print(f"{head} {g['status']}")
+            else:
+                print(f"{head} 민감도 {pct(g['sensitivity'])} 특이도 {pct(g['specificity'])} 균형 {pct(g['balanced'])} "
+                      f"오검출 {num(g['fp_per_image'])} 균열(우연 뺌) {pp(g['crack_ctr_recall_net'])} 시간 {num(g['time'], 1)}ms"
+                      + (f"  [{FORCED_MARK}]" if FORCED_MARK in g["status"] else ""))
+        print("단계별 판정 (자동 판정은 길잡이, 사람이 정한 것이 앞섬):")
         for _, a in report["adopt"].iterrows():
             print(f"  {a['stage_id']:<4} 비교 기준 {a['base']:<4} {a['verdict']}")
+        if human_text(report["human"]):
+            print(f"사람이 정한 것: {human_text(report['human'])}")
         last = EXP[report["last"]]
-        print(f"잠정 채택 방법: {last['id']} {last['label']} ({settings_text(report['method'])})")
+        print(f"채택 방법: {last['id']} {last['label']} ({settings_text(report['method'])})")
         print("바꿀 config 값 (config는 고치지 않음):" if report["changes"] else "바꿀 config 값: 없음")
         for name, value, owner in report["changes"]:
             print(f"  {name} = {value!r}  ({owner})")
@@ -1462,15 +1615,18 @@ def main(argv=None, paths=None, ask=input):
     paths·ask는 시험에서 임시 폴더와 가짜 입력을 쓰려고 둔 인자이고, 명령행 실행은 기본값을 쓴다."""
     args = parse_args(argv)
     paths = paths or default_paths()
-    reject = args.reject if args.reject is not None else saved_reject(paths)
+    human = {kind: getattr(args, kind) if getattr(args, kind) is not None else saved_ids(paths, kind) for kind in DECISION_FILES}
+    for kind, other in (("accept", "reject"), ("reject", "accept")):   # 이번에 준 결정이 지난번에 저장한 반대 결정보다 앞선다
+        if getattr(args, kind) is not None:
+            human[other] = [s for s in human[other] if s not in human[kind]]
     command_line = "python tools/run_all.py " + " ".join(argv if argv is not None else sys.argv[1:])
     if args.stage == "tables":
         if args.dry_run:
             print(f"dry-run: {Path(paths['results']).as_posix()}/{REPORT_DIR}/에 표를 다시 만든다(실험은 돌리지 않음)")
             return 0
-        print_report(build_report(paths, reject, command_line), "tables")
+        print_report(build_report(paths, human, command_line), "tables")
         return 0
-    return run_stage(args.stage, args, paths, reject, command_line, ask)
+    return run_stage(args.stage, args, paths, human, command_line, ask)
 
 
 if __name__ == "__main__":
