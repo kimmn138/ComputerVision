@@ -61,8 +61,9 @@ def _mean_gradient(gray):
     return float(magnitude.mean())
 
 def measure_quality(gray):
-    """전처리를 고르는 근거로 노면 영상의 밝기(mean)·대비(std)·흐림(lap_var)·잡티(noise)를 잰다.
-    blur_ratio(재흐림 비율, Plan.md 3.6)는 키 자리만 있다. TODO(A): WP4에서 계산하기 전까지 NaN이고, choose_steps는 아직 쓰지 않는다."""
+    """전처리를 고르는 근거로 밝기·대비·흐림·잡티를 측정한다.
+    blur_ratio는 원본과 재흐림 영상의 Sobel 기울기 평균 비율로 계산하며,
+    기존 라플라시안 분산과 함께 흐림 판정에 사용한다."""
 
     mean_val = float(gray.mean())
     std_val = float(gray.std())
