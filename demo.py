@@ -261,10 +261,10 @@ def make_footer(quality, top, bottom, roi_source, unicode_ok):
 
 
 def road_extra():
-    """설정 줄에 덧붙일 노면 마스크 보완 [(한글, 영문)]: 남기기 규칙이 'center'가 아니거나 차선 스위치(A 구역 (가)·(나))가 켜졌을 때만.
-    기본 설정이면 빈 list라 예전 화면과 같다. 고치기 전·후 시연 그림을 화면만 보고 가르려고 둔다."""
+    """설정 줄에 덧붙일 노면 마스크 보완 [(한글, 영문)]: 노면 마스크를 켰으면 남기기 규칙(center·ratio)을 늘 적고,
+    차선 스위치(A 구역 (가)·(나))는 켰을 때만 적는다. 고치기 전·후 시연 그림을 화면만 보고 가르려고 둔다."""
     extra = []
-    if C.ROAD_KEEP_RULE != "center":
+    if C.USE_ROAD_MASK:
         extra.append((f"남기기 {C.ROAD_KEEP_RULE}", f"keep {C.ROAD_KEEP_RULE}"))
     lanes = [name for name, on in (("가", C.ROAD_LANE_BRIDGE), ("나", C.ROAD_CLOSE_BEFORE_SEED)) if on]
     if lanes:

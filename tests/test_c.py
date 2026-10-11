@@ -1076,7 +1076,7 @@ def test_keep_on_road():
 def test_keep_on_road_ratio():
     """keep_on_road('ratio'): 후보 영역(윤곽 안쪽까지 채운 픽셀)의 ROAD_KEEP_RATIO_MIN 이상이 노면이면 남긴다.
     노면 경계가 비스듬하면 바깥 후보의 상자 중심이 노면에 떨어져 'center'로는 남는다(Japan_000107 켬). 그런 후보를 'ratio'는 지우고,
-    상자 중심만 노면 밖인 L자 후보는 남긴다. 받은 list는 바꾸지 않고, 기본 규칙(config 'center') 결과는 그대로다."""
+    상자 중심만 노면 밖인 L자 후보는 남긴다. 받은 list는 바꾸지 않고, 기본 규칙은 'ratio'(10/12 채택)다."""
     road = np.zeros((100, 200), np.uint8)
     cv.fillPoly(road, [np.array([[0, 99], [0, 0], [100, 0], [199, 99]], np.int32)], 255)  # 왼쪽 위가 노면, 경계는 오른쪽 아래로 비스듬
 
@@ -1095,13 +1095,13 @@ def test_keep_on_road_ratio():
           f"road_ratio: 노면 안 비율이 틀림 ({pipeline.road_ratio(outside, road):.2f}, {pipeline.road_ratio(inside, road):.2f})")
     check(ratio == [inside, corner], f"keep_on_road('ratio'): 남은 후보가 틀림 ({[r['bbox'] for r in ratio]})")
     check(len(regions) == 3, "keep_on_road('ratio')가 받은 list를 바꿈")
-    with_ratio = {"ROAD_KEEP_RULE": "ratio"}
-    backup = rx.apply_overrides(with_ratio)
+    backup = rx.apply_overrides({"ROAD_KEEP_RULE": "center"})
     try:
-        check(pipeline.keep_on_road(regions, road) == [inside, corner], "keep_on_road: config ROAD_KEEP_RULE='ratio'를 읽지 않음")
+        check(pipeline.keep_on_road(regions, road) == center, "keep_on_road: config ROAD_KEEP_RULE='center'를 읽지 않음")
     finally:
         rx.restore_overrides(backup)
-    check(C.ROAD_KEEP_RULE == "center" and pipeline.keep_on_road(regions, road) == center, "keep_on_road: 기본 규칙이 'center'가 아님")
+    check(C.ROAD_KEEP_RULE == "ratio" and pipeline.keep_on_road(regions, road) == ratio,
+          "keep_on_road: 기본 규칙이 'ratio'(10/12 채택)가 아님")
 
 
 def test_set_option():
@@ -1118,8 +1118,8 @@ def test_set_option():
         check(parse_quietly(demo.parse_args, ["a.jpg"] + bad) is None, f"demo: 잘못된 --set을 받아들임 ({' '.join(bad)})")
     d = parse_quietly(demo.parse_args, ["a.jpg", "--set", "ROAD_CLOSE_BEFORE_SEED=True"])
     check(d is not None and rx.runtime_overrides(d) == {"ROAD_CLOSE_BEFORE_SEED": True}, f"demo: --set을 못 읽음 ({d})")
-    check(parse_quietly(rx.parse_args, []).set == [] and demo.road_extra() == [],
-          "--set이 없는데 바꾸는 값이 있거나, 기본 설정인데 시연 설정 줄에 보완 표시가 붙음")
+    check(parse_quietly(rx.parse_args, []).set == [] and demo.road_extra() == [("남기기 ratio", "keep ratio")],
+          f"--set이 없는데 바꾸는 값이 있거나, 기본 설정의 시연 설정 줄이 남기기 규칙만이 아님 ({demo.road_extra()})")
     backup = rx.apply_overrides({"ROAD_KEEP_RULE": "ratio", "ROAD_LANE_BRIDGE": True})
     try:
         line = demo.make_footer({"mean": 100.0}, 0.5, 1.0, "roi.csv", True)[1]
