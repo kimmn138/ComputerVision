@@ -428,6 +428,32 @@ def test_group_verdict_tables():
           "table_by_condition: 영상 단위 지표가 틀림")
 
 
+def test_image_table_verdicts():
+    """table_by_image: 영상마다 정답 유무·손상 유무와 판정(correct·hit_same·hit_any)의 끔·켬을 머리 열 바로 뒤에 둔다.
+    정답 파일이 없는 영상은 판정 칸이 빈칸(CSV에서도 빈칸)이고, 있던 열(지표 끔·켬·차이)은 그대로다."""
+    def row(file, pre, verdict):
+        r = metric_row(file, "own", "blur", pre, 10, 5, 100, None if verdict is None else (1, 0, 1, 0))
+        r.update({"edges_road": 10, "t_road_ms": 0.5, "n_pred": 2, "has_gt": verdict is not None})
+        r.update({k: (math.nan if verdict is None else verdict[i]) for i, k in enumerate(("has_damage", "correct", "hit_same", "hit_any"))})
+        return r
+
+    rows = [row("a.jpg", "off", (True, True, True, True)), row("a.jpg", "on", (True, False, False, True)),
+            row("b.jpg", "off", None), row("b.jpg", "on", None)]
+    img = rx.table_by_image(rx.metrics_frame(rows), fake_pr)
+    cols = list(img.columns)
+    pairs = ["has_gt", "has_damage", "correct_off", "correct_on", "hit_same_off", "hit_same_on", "hit_any_off", "hit_any_on"]
+    start = cols.index("roi_pixels") + 1
+    check(cols[start:start + len(pairs)] == pairs and "edges_diff" in cols and "crack_recall_on" in cols,
+          f"table_by_image: 판정 끔·켬 열이 머리 열 바로 뒤에 없거나 있던 열이 빠짐 ({cols[start:start + len(pairs)]})")
+    a = img.iloc[0]
+    check((bool(a["has_gt"]), bool(a["correct_off"]), bool(a["correct_on"]), bool(a["hit_same_on"]), bool(a["hit_any_on"]))
+          == (True, True, False, False, True), "table_by_image: 정답 있는 영상의 끔·켬 판정이 틀림")
+    b = img.iloc[1]
+    check(not bool(b["has_gt"]) and all(pd.isna(b[c]) for c in pairs[1:]), "table_by_image: 정답 없는 영상의 판정이 빈칸이 아님")
+    line = img.to_csv(index=False).splitlines()[2].split(",")
+    check(line[cols.index("correct_on")] == "", "table_by_image: 정답 없는 영상의 판정이 CSV에서 빈칸이 아님")
+
+
 def test_run_main_options():
     """run_experiment.main을 임시 폴더의 합성 사진 2장(roi.csv에 있는 직접 촬영 1장, 없는 제공 1장)으로 끝까지 돌린다(TIME_REPEAT 1).
     옵션 없음과 기본값을 직접 준 실행은 시간 열 말고 같고, 실행 옵션·바꾼 값이 config_used.txt 끝에 남으며, 끝나면 config가 되돌아온다.
@@ -873,7 +899,7 @@ def main():
     for fn in (test_harris, test_count_edges, test_draw_candidates, test_match_blank, test_match_few,
                test_match_boundary, test_match_texture, test_match_self, test_no_inplace, test_save_comparison, test_get_roi, test_median_times, test_gt_counts, test_ratios_and_pr,
                test_summary_tables, test_run_options, test_get_roi_auto, test_median_road_time, test_edges_on_road,
-               test_verdict_columns, test_group_verdict_tables, test_run_main_options, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
+               test_verdict_columns, test_group_verdict_tables, test_image_table_verdicts, test_run_main_options, test_demo_args_roi, test_demo_pick_image, test_demo_view, test_demo_report,
                test_match_group, test_match_row_and_figure, test_match_main,
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,

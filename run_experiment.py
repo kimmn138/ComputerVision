@@ -7,7 +7,8 @@
   정답 파일이 없는 사진은 판정 칸(has_damage·hit_same·hit_any·correct)과 정답 비교 칸이 빈칸)
 - figures/<영상 이름>.png: 위 줄 끔·아래 줄 켬 비교 그림
 - table_by_image.csv, table_by_source.csv, table_by_condition.csv: 지표_off·지표_on·지표_diff(on − off) 요약 표.
-  source·condition 표에는 정답 있는 영상의 민감도·특이도·영상 단위 정답률과, 정답률 바로 옆에 기준선('검출 없음'의 정답률)을 둔다
+  source·condition 표에는 정답 있는 영상의 민감도·특이도·영상 단위 정답률과, 정답률 바로 옆에 기준선('검출 없음'의 정답률)을 둔다.
+  table_by_image에는 영상마다 판정(correct·hit_same·hit_any)의 끔·켬을 둔다(포트홀처럼 개수가 적은 것은 영상별 사례로 보고)
 - config_used.txt: 이번 실행에 쓴 config.py의 대문자 값과, 맨 끝에 실행 옵션·옵션으로 바꾼 값
 실행 옵션은 config.py 파일을 고치지 않고 실행 중에만 값을 바꾼 뒤 끝나면 되돌린다. 옵션을 주지 않으면 1차와 같은 조건이다.
 - --roi csv(기본): roi.csv에 사진마다 정한 띠. auto: roi.csv의 범위를 쓰지 않고 모든 사진에 기본 띠(ROI_TOP_DEFAULT~ROI_BOTTOM_DEFAULT)
@@ -47,6 +48,8 @@ EXTRA_COLUMNS = ["edges_road", "t_road_ms"]
 # 영상 단위 판정(evaluate.image_verdict, 중심 기준 = evaluate_train과 같음). has_gt·n_pred는 정답과 상관없이 채운다
 VERDICT_COLUMNS = ["has_gt", "has_damage", "n_pred", "hit_same", "hit_any", "correct"]
 VERDICT_BOOL = ["has_damage", "hit_same", "hit_any", "correct"]     # 정답 파일이 없으면 빈칸이 되는 판정 칸
+# table_by_image에 끔·켬으로 나란히 두는 판정(영상별 사례 보고용. 포트홀은 개수가 적어 비율보다 사례로 본다)
+VERDICT_PAIRS = ["correct", "hit_same", "hit_any"]
 # 요약 표에서 끔·켬을 비교하는 지표. 면적 %는 add_ratios가 더한다
 SUMMARY_METRICS = ["edges", "edges_road", "harris", "n_crack", "area_crack", "area_crack_pct",
                    "n_pothole", "area_pothole", "area_pothole_pct", "t_pre_ms", "t_detect_ms", "t_road_ms"]
@@ -316,20 +319,24 @@ def pr_columns(off, on, pr_fn):
 
 
 def table_by_image(df, pr_fn):
-    """영상 1장 = 1행: 켬의 steps와 상태 지표, 지표마다 끔·켬·차이, 그 영상 하나의 정밀도·재현율."""
+    """영상 1장 = 1행: 켬의 steps와 상태 지표, 정답 유무·손상 유무와 영상 단위 판정(correct·hit_same·hit_any)의 끔·켬,
+    지표마다 끔·켬·차이, 그 영상 하나의 정밀도·재현율. 판정은 영상별 사례 보고용이고 정답 파일이 없으면 빈칸이다."""
     df = add_ratios(df)
     known = set(INFO_COLUMNS + ROW_COLUMNS + GT_COLUMNS + VERDICT_COLUMNS + SUMMARY_METRICS)
     head = ["file", "source", "condition", "steps"] + [c for c in df.columns if c not in known] + ["roi_pixels"]
+    verdict = ["has_gt", "has_damage"] + [f"{v}_{s}" for v in VERDICT_PAIRS for s in ("off", "on")]
     off_all, on_all = df[df["preprocess"] == "off"], df[df["preprocess"] == "on"]
     rows = []
     for file_name in on_all["file"]:
         off, on = off_all[off_all["file"] == file_name], on_all[on_all["file"] == file_name]
-        row = {c: on[c].iloc[0] for c in head}
+        row = {c: on[c].iloc[0] for c in head + ["has_gt", "has_damage"]}
+        for v in VERDICT_PAIRS:
+            row[f"{v}_off"], row[f"{v}_on"] = off[v].iloc[0], on[v].iloc[0]
         for m in SUMMARY_METRICS:
             row.update(off_on_diff(m, off[m].iloc[0], on[m].iloc[0]))
         row.update(pr_columns(off, on, pr_fn))
         rows.append(row)
-    return pd.DataFrame(rows, columns=head + triple_names(SUMMARY_METRICS + PR_METRICS))
+    return pd.DataFrame(rows, columns=head + verdict + triple_names(SUMMARY_METRICS + PR_METRICS))
 
 
 def verdict_summary(sub):
