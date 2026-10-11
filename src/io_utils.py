@@ -54,17 +54,171 @@ def crop_roi(img, top=C.ROI_TOP_DEFAULT, bottom=C.ROI_BOTTOM_DEFAULT):
     
     return img[y0:y1].copy(), y0
 
+def _fill_holes(mask):
+    """노면 내부의 포트홀·차선처럼 완전히 둘러싸인 빈 영역만 채운다."""
+
+    h, w = mask.shape
+
+    # 영상 가장자리의 모든 배경을 서로 연결하기 위해 바깥쪽에 1px짜리 0 테두리를 추가한다.
+    padded = cv.copyMakeBorder(
+        mask,
+        1,
+        1,
+        1,
+        1,
+        cv.BORDER_CONSTANT,
+        value=0,
+    )
+    flood = padded.copy()
+    # floodFill용 마스크는 대상 영상보다 가로·세로가 각각 2픽셀 더 커야 한다.
+    flood_mask = np.zeros(
+        (h + 4, w + 4),
+        dtype=np.uint8,
+    )
+    # 바깥 배경을 모두 채운다.
+    cv.floodFill(
+        flood,
+        flood_mask,
+        (0, 0),
+        255,
+    )
+    # flood 후에도 0인 영역만 노면에 완전히 둘러싸인 내부 구멍이다.
+    holes = cv.bitwise_not(flood)
+
+    filled = cv.bitwise_or(
+        padded,
+        holes,
+    )
+    # 처음 추가했던 1px 테두리를 제거한다.
+    return filled[1:-1, 1:-1]
 
 def road_mask(bgr_roi):
-    """노면 띠(컬러)에서 노면인 픽셀만 255로 표시해, 노면 밖(건물·차·풀숲·보닛)에서 나온 후보를 지울 수 있게 한다.
-    입력: crop_roi가 돌려준 컬러 노면 띠 BGR uint8 (H, W, 3). 출력: 같은 크기 uint8 (H, W), 값은 0(노면 아님)·255(노면).
-    약속: 입력을 바꾸지 않는다. 빈 영상(모든 픽셀이 같은 값)에서도 오류 없이 같은 형식을 돌려준다. 같은 입력이면 같은 출력.
-    모든 영상에 같은 규칙을 쓰고 파일 이름으로 나누지 않는다. 숫자는 config A 구역의 ROAD_* 값을 쓴다.
-    v1 (Plan.md 3.3 (2), 참고 코드는 부록 C): 흐림(ROAD_BLUR_SIGMA) → Lab → 아래 가운데 씨앗(ROAD_SEED_BOX)과 색(ROAD_CHROMA_MAX)·
-    밝기(ROAD_L_K)가 비슷한 픽셀 → 열림(ROAD_OPEN_KSIZE) → 씨앗과 이어진 연결 요소 → 닫힘(ROAD_CLOSE_KSIZE) → 구멍 메우기.
-    TODO(A): 지금은 형식만 맞춘 임시 버전이라 띠 전체를 노면(전부 255)으로 돌려준다. 그래서 결과는 1차와 같다."""
-    return np.full(bgr_roi.shape[:2], 255, np.uint8)
+    """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다."""
 
+    # 입력 영상을 직접 수정하지 않도록 복사한다.
+    img = bgr_roi.copy()
+
+    h, w = img.shape[:2]
+
+    # 혹시 크기가 0인 잘못된 입력이 들어오면 빈 마스크 반환
+    if h == 0 or w == 0:
+        return np.zeros((h, w), np.uint8)
+    # 작은 잡음의 영향을 줄이기 위해 흐림
+    blurred = cv.GaussianBlur(
+        img,
+        (0, 0),
+        C.ROAD_BLUR_SIGMA
+    )
+    lab = cv.cvtColor(blurred, cv.COLOR_BGR2LAB)
+
+    L = lab[:, :, 0].astype(np.float32)
+    a = lab[:, :, 1].astype(np.float32)
+    b = lab[:, :, 2].astype(np.float32)
+
+    # 아래 가운데 seed 영역 지정
+    x0_ratio, y0_ratio, x1_ratio, y1_ratio = C.ROAD_SEED_BOX
+
+    x0 = int(w * x0_ratio)
+    y0 = int(h * y0_ratio)
+    x1 = int(w * x1_ratio)
+    y1 = int(h * y1_ratio)
+
+    # 인덱스 안전 처리
+    x0 = max(0, min(x0, w - 1))
+    x1 = max(x0 + 1, min(x1, w))
+    y0 = max(0, min(y0, h - 1))
+    y1 = max(y0 + 1, min(y1, h))
+
+    seed = lab[y0:y1, x0:x1]
+
+    seed_L = seed[:, :, 0].astype(np.float32)
+    seed_a = seed[:, :, 1].astype(np.float32)
+    seed_b = seed[:, :, 2].astype(np.float32)
+    
+    # seed 영역의 대표값
+    L_med = float(np.median(seed_L))
+    a_med = float(np.median(seed_a))
+    b_med = float(np.median(seed_b))
+
+    # 색 거리: a-b 평면에서 seed 색과 얼마나 다른가
+    chroma_dist = np.sqrt(
+        (a - a_med) ** 2 +
+        (b - b_med) ** 2
+    )
+
+    # 밝기 범위 계산
+    # MAD는 극단적인 픽셀의 영향을 덜 받는 편
+    mad = float(
+        np.median(
+            np.abs(seed_L - L_med)
+        )
+    )
+
+    l_threshold = (
+        C.ROAD_L_K *
+        (1.4826 * mad + 2.0)
+    )
+
+    # 색과 밝기가 모두 노면과 비슷한 픽셀
+    candidate = (
+        (chroma_dist < C.ROAD_CHROMA_MAX) &
+        (np.abs(L - L_med) < l_threshold)
+    )
+
+    mask = candidate.astype(np.uint8) * 255
+
+    # 작은 점 제거
+    open_kernel = cv.getStructuringElement(
+        cv.MORPH_ELLIPSE,
+        (C.ROAD_OPEN_KSIZE, C.ROAD_OPEN_KSIZE)
+    )
+
+    mask = cv.morphologyEx(
+        mask,
+        cv.MORPH_OPEN,
+        open_kernel
+    )
+
+    # seed 영역과 연결된 노면 덩어리만 유지
+    num_labels, labels, stats, _ = cv.connectedComponentsWithStats(
+        mask,
+        connectivity=8
+    )
+
+    keep_labels = set()
+
+    seed_labels = labels[y0:y1, x0:x1]
+
+    for label in np.unique(seed_labels):
+        if label != 0:
+            keep_labels.add(int(label))
+
+    connected = np.zeros_like(mask)
+
+    for label in keep_labels:
+        connected[labels == label] = 255
+
+    # seed와 연결된 것이 하나도 없다면
+    # 너무 공격적으로 전부 없애지 않고 기존 후보를 사용
+    if not keep_labels:
+        connected = mask.copy()
+
+    # 균열·차선 등에 의해 끊긴 작은 틈 연결
+    close_kernel = cv.getStructuringElement(
+        cv.MORPH_ELLIPSE,
+        (C.ROAD_CLOSE_KSIZE, C.ROAD_CLOSE_KSIZE)
+    )
+
+    connected = cv.morphologyEx(
+        connected,
+        cv.MORPH_CLOSE,
+        close_kernel
+    )
+
+    # 노면 내부의 포트홀·차선 등의 구멍 채우기
+    connected = _fill_holes(connected)
+
+    return connected.astype(np.uint8)
 
 def load_roi_table(path):
     """사진마다 다른 노면 범위(top·bottom 비율)와 촬영 조건을 roi.csv에서 읽는다.

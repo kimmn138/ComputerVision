@@ -134,8 +134,6 @@ def test_road_mask_format():
     assert np.array_equal(bgr, before), "road_mask가 입력 영상을 바꿈"
     assert np.array_equal(io_utils.road_mask(bgr), io_utils.road_mask(bgr)), "같은 입력인데 road_mask 결과가 다름"
 
-
-@todo("A WP1: road_mask v1 구현 뒤 (Plan.md 3.3 (2), 부록 C)")
 def test_road_mask_v1_synthetic():
     """v1: 씨앗(아래 가운데)과 색·밝기가 비슷하고 이어진 노면은 남기고 풀·건물은 뺀다.
     노면 안의 포트홀과 테두리에 닿지 않는 짧은 차선 조각은 구멍 메우기·닫힘으로 마스크에 넣는다.
@@ -255,7 +253,6 @@ def test_blur_ratio_key():
     assert "blur_ratio" in q and isinstance(q["blur_ratio"], float), q
 
 
-@todo("A WP4 흐림 판정 (Must, v1 바로 뒤): blur_ratio 계산 뒤 (Plan.md 3.6 1번)")
 def test_blur_ratio_synthetic():
     """재흐림 비율 = Sobel 기울기 크기 평균 ÷ 가우시안(σ 1.5)을 건 뒤의 같은 값. 흐린 영상은 1에 가깝고 선명한 영상은 크다.
     비율이라 결의 세기(대비)와 상관없다. 인위 저하 E6의 blur(가우시안 σ 2)는 흐림으로 잡혀야 한다.
@@ -271,7 +268,6 @@ def test_blur_ratio_synthetic():
     assert isinstance(flat, float), "평평한 영상에서 blur_ratio가 float가 아님 (NaN은 허용)"
 
 
-@todo("A WP4 흐림 판정 (Must, v1 바로 뒤): choose_steps가 blur_ratio를 쓰게 한 뒤 (Plan.md 3.6 1번)")
 def test_choose_steps_blur_ratio():
     """lap_var < BLUR_VAR_MAX 또는 blur_ratio < BLUR_RATIO_MAX이면 샤프닝. blur_ratio가 NaN이거나 키가 없으면 지금처럼 lap_var만 본다."""
     assert analyze.choose_steps(good_quality(blur_ratio=C.BLUR_RATIO_MAX / 2))["sharpen"] is True
@@ -281,7 +277,6 @@ def test_choose_steps_blur_ratio():
     assert analyze.choose_steps(good_quality(lap_var=C.BLUR_VAR_MAX / 2, blur_ratio=C.BLUR_RATIO_MAX * 2))["sharpen"] is True
 
 
-@todo("A WP4 흐림 판정 (Must, v1 바로 뒤): blur_ratio 계산 뒤 제공 13장 확인 (Plan.md 3.6 검증 2·3)")
 def test_blur_ratio_provided():
     """사람이 흐리다고 판정한 제공 3장만 blur_ratio < BLUR_RATIO_MAX이고, 나머지 10장은 흐림으로 잡히지 않는다(roi.csv 띠).
     사진이 없으면 건너뛴다. 같은 장소 5쌍(blur vs normal)은 시험이 아니라 E5의 상태 판정 검증으로 C가 보고한다."""
