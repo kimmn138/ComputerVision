@@ -873,7 +873,6 @@ def test_chance_control():
           f"chance_found: 찾은 정답·비교한 정답·뺀 사진 수가 틀림 ({found}, {truth}, {skipped})")
 
 
-@todo("C E6: tools/evaluate_train.py에 인위 저하(degrade)를 넣은 뒤 (Plan.md 3.2 (6))")
 def test_degrade():
     """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 57), bright는 입력^0.5(128 → 181),
     noise는 seed가 고정이라 두 번 해도 같다. 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다. 값은 config C 구역 DEGRADE_*."""
@@ -893,6 +892,69 @@ def test_degrade():
           "degrade: noise가 seed 고정이 아니거나 잡음이 들어가지 않음")
 
 
+def test_degrade_option_and_judge():
+    """--degrade는 기본 none이고 다섯 가지만 받는다. 상태 판정 적중의 기준(blur → 샤프닝, dark → 감마 < 1, bright → 감마 > 1,
+    noise → 잡티 제거)이 맞고, 끔 행(상태 판정을 하지 않음)과 저하 없음은 적중 칸이 빈칸이다. 모르는 저하는 오류."""
+    from tools import evaluate_train as et
+    check(parse_quietly(et.parse_args, []).degrade == "none" and parse_quietly(et.parse_args, ["--degrade", "dark"]).degrade == "dark",
+          "evaluate_train: --degrade 기본값이 none이 아니거나 dark를 받지 못함")
+    check(parse_quietly(et.parse_args, ["--degrade", "fog"]) is None, "evaluate_train: 모르는 저하(fog)를 받아들임")
+    none = {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}
+    picks = {"blur": {**none, "sharpen": True}, "dark": {**none, "tone": "gamma", "gamma": 0.5},
+             "bright": {**none, "tone": "gamma", "gamma": 2.0}, "noise": {**none, "denoise": True}}
+    table = {kind: {other: et.EXPECTED_STEPS[kind][1](steps) for other, steps in picks.items()} for kind in picks}
+    check(all(table[kind][other] == (kind == other) for kind in picks for other in picks)
+          and not any(rule(none) for _, rule in et.EXPECTED_STEPS.values()),
+          f"EXPECTED_STEPS: 저하마다 골라야 할 전처리 판정이 틀림 ({table})")
+    check(et.judge_columns("dark", picks["dark"], none, True) == {"judge_hit": True, "judge_base": False}
+          and et.judge_columns("dark", picks["dark"], none, False) == {"judge_hit": None, "judge_base": None}
+          and et.judge_columns("none", picks["dark"], none, True) == {"judge_hit": None, "judge_base": None},
+          "judge_columns: 켬 행만 적고 끔 행·저하 없음은 빈칸이어야 함")
+    try:
+        et.degrade(np.zeros((4, 4, 3), np.uint8), "fog")
+        check(False, "degrade: 모르는 저하(fog)에 ValueError가 나지 않음")
+    except ValueError:
+        pass
+
+
+def test_degrade_main():
+    """evaluate_train.main을 임시 폴더의 합성 사진 4장으로 끝까지 돌린다(평균 밝기 약 125 → 원래는 감마를 고르지 않음).
+    옵션 없음과 --degrade none은 처리 시간 열 말고 같고, --degrade dark는 켬에서 밝게 하는 감마를 고른 비율 1·원본 기준 0을 내며
+    끔 행은 적중 칸이 빈칸이다. 저하 종류는 config_used_train.txt에 남고, 영상별 측정값 열(steps·에지·해리스·시간)이 있다."""
+    from tools import evaluate_train as et
+    rng = np.random.default_rng(3)
+    with tempfile.TemporaryDirectory() as tmp:
+        img_dir, gt_dir = os.path.join(tmp, "img"), os.path.join(tmp, "gt")
+        os.makedirs(img_dir)
+        os.makedirs(gt_dir)
+        for i in range(4):
+            gray = cv.GaussianBlur(np.clip(rng.normal(125, 20, (240, 640)), 0, 255).astype(np.uint8), (0, 0), 1.0)
+            cv.imwrite(os.path.join(img_dir, f"Japan_90000{i}.jpg"), cv.cvtColor(gray, cv.COLOR_GRAY2BGR))
+            with open(os.path.join(gt_dir, f"Japan_90000{i}.csv"), "w", encoding="utf-8", newline="") as f:
+                f.write("x,y,w,h,kind\n" + ("60,180,520,40,crack\n" if i % 2 == 0 else ""))
+        results = Path(tmp) / "results"
+
+        def read(name, file):
+            return pd.read_csv(results / name / file, encoding="utf-8-sig", keep_default_na=False)
+
+        with patched(C, "TRAIN_IMAGE_DIR", img_dir), patched(C, "TRAIN_GT_DIR", gt_dir), patched(et, "RESULTS_ROOT", results):
+            for name, argv in (("plain", []), ("none", ["--degrade", "none"]), ("dark", ["--degrade", "dark"])):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    et.main(["--split", "all", "--name", name] + argv)
+        times = ["t_pre_ms", "t_detect_ms", "t_road_ms"]
+        plain, none = read("plain", et.DETAIL_NAME), read("none", et.DETAIL_NAME)
+        check(plain.drop(columns=times).equals(none.drop(columns=times)), "evaluate_train: 옵션 없음과 --degrade none의 결과가 다름")
+        check(all(c in plain.columns for c in ["degrade", "steps"] + et.MEASURE_COLUMNS + ["judge_hit", "judge_base"]),
+              "evaluate_train: 영상별 측정값·적중 열이 없음")
+        dark = read("dark", et.SUMMARY_NAME).set_index("preprocess")
+        on, off = dark.loc["on"], dark.loc["off"]
+        check((on["degrade"], on["judge_expect"], float(on["judge_hit_rate"]), float(on["judge_base_rate"])) == ("dark", "밝게 하는 감마(< 1)", 1.0, 0.0)
+              and off["judge_hit_rate"] == "NaN" and float(on["edges_mean"]) >= 0 and float(on["t_pre_ms_mean"]) >= 0,
+              f"evaluate_train --degrade dark: 적중률·원본 기준 비율·끔 행이 틀림 ({on['judge_hit_rate']}, {on['judge_base_rate']}, {off['judge_hit_rate']})")
+        config = (results / "dark" / et.CONFIG_NAME).read_text(encoding="utf-8").splitlines()
+        check(config[-1].startswith("# 인위 저하: dark"), f"config_used_train: 저하 종류가 남지 않음 ({config[-1]})")
+
+
 def main():
     """시험 함수를 차례로 돌려 실패를 모아 보여 준다. @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
     skips = []
@@ -904,7 +966,7 @@ def main():
                test_pipeline_road, test_road_mask_switch_off, test_road_mask_switch_on, test_keep_on_road, test_draw_road_copy,
                test_result_folder_safety,
                test_draw_road_paint, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
-               test_train_options, test_chance_control, test_degrade):
+               test_train_options, test_chance_control, test_degrade, test_degrade_option_and_judge, test_degrade_main):
         try:
             fn()
         except unittest.SkipTest as e:
