@@ -28,6 +28,8 @@
   예전 최종 폴더(final·final_auto·e0·e5_dev·e6_*_final_dev, 남기기 center)는 그대로 둔다.
 - retest_ratio: (10/12, ratio 채택 뒤) 시험셋을 최종 설정(자동 띠 + 결 + ratio)으로 한 번만 잰다(test_ratio). 거부 조건은 retest와 같다.
 - retest_ratio_repro: 같은 코드로 시험셋을 다시 돌려(final_test_ratio) test_ratio와 같은지 본다.
+- (10/12 밤) 위 시험·재현 단계 여섯 개(test·repro·retest·retest_repro·retest_ratio·retest_ratio_repro)는 10/12에 이미 잰 단계라
+  결과 폴더와 상관없이 거부한다(DONE_TEST_STAGES). results/가 지워져 폴더 검사만으로는 다시 도는 것을 막을 수 없었다.
 남기기 규칙(config ROAD_KEEP_RULE): ratio 채택 전에 돈 실험(비교·자동 띠·시험 단계)은 실행 중에만 'center'로 고정해, 다시 돌려도 처음과 같은 조건이다.
 - tables: 실험은 돌리지 않고 있는 결과 폴더로 표만 다시 만든다.
 자동 띠 높이(config AUTO_BAND_TOP): 띠 위쪽 비율을 옵션으로 정한 실험(E0~E3, 39장 1차 설정, 시험셋 1차)과 띠 고정 시절의 시험셋 실행
@@ -73,6 +75,11 @@ SET_TEST_STAGES = ("test", "repro", "retest", "retest_repro", "retest_ratio", "r
 RETESTS = {"retest": "TA", "retest_ratio": "TR"}    # 다시 재는 시험 단계 → 한 번만 재는 실험(최종 단계 config와 같아야 돈다)
 RETEST_REPROS = {"retest_repro": "retest", "retest_ratio_repro": "retest_ratio"}    # 재현 단계 → 그 앞 시험 단계
 RATIO_STAGES = ("final", "retest_ratio", "retest_ratio_repro", "mask2")   # 남기기 규칙을 config(또는 opts sets)대로 쓰는 단계. 나머지는 'center' 고정
+# 10/12에 이미 잰 시험셋 단계(재현 포함). results/가 지워져(10/12 밤) 폴더 유무로는 막을 수 없으므로 단계 이름으로 거부한다.
+# 다음 시험셋은 보완 뒤 retest_supp 한 번뿐이다(docs/tasks/supplement.md 0-1)
+DONE_TEST_STAGES = {"test": "test_once, 10/12 00:49", "repro": "final_test",
+                    "retest": "test_autoband, 10/12 03:00", "retest_repro": "final_test_autoband",
+                    "retest_ratio": "test_ratio, 10/12 06:38", "retest_ratio_repro": "final_test_ratio"}
 KEEP_BEFORE_RATIO = "center"        # ratio 채택(10/12) 전의 남기기 규칙
 FINAL_CONFIG_EXP = "E5"                 # retest 전에 지금 config를 대조할 최종 단계 실험(config 그대로 돈 개발셋)
 REPORT_DIR = "report"               # 표는 results/report/
@@ -705,7 +712,11 @@ def final_config_diff(results):
 def stage_refusal(stage, results):
     """단계를 거부할 이유(없으면 None): 시험은 test_once가 이미 있으면(한 번만), 재현은 test_once 결과가 없으면.
     retest(test_autoband)·retest_ratio(test_ratio)는 그 폴더가 이미 있거나, 최종 단계 결과가 없거나, 지금 config가 최종 단계를 돌린
-    config와 다르면. retest_repro·retest_ratio_repro는 앞 시험 단계의 결과가 없으면."""
+    config와 다르면. retest_repro·retest_ratio_repro는 앞 시험 단계의 결과가 없으면.
+    (10/12 밤) 이미 잰 시험셋 단계(DONE_TEST_STAGES)는 결과 폴더가 있든 없든 먼저 거부한다. 아래 폴더 검사는 다음 시험 단계도 같이 쓴다."""
+    if stage in DONE_TEST_STAGES:
+        return (f"{stage} 단계의 시험셋은 10/12에 이미 쟀습니다({DONE_TEST_STAGES[stage]}). results/가 지워져 폴더로는 막을 수 없어 "
+                "단계 이름으로 거부합니다. 다음 시험셋 평가는 보완을 마친 뒤 한 번뿐입니다(docs/tasks/supplement.md 0-1).")
     if stage in RETESTS:
         again = results / EXP[RETESTS[stage]]["name"]
         if again.exists():

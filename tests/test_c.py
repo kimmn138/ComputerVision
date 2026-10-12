@@ -1623,7 +1623,8 @@ def test_run_all_ready():
 def test_run_all_refuse():
     """dry-run은 실험·명령·폴더·예상 시간만 보여 주고 결과 폴더를 만들지 않는다. 재현은 test_once 결과가 없으면, 시험은 test_once가
     이미 있으면(끝나지 않은 폴더라도) 아무것도 돌리지 않고 거부한다(끝 코드 2). 건너뛸 실험이 있으면 목록을 보여 주고 Enter를 받아야
-    시작하며, 입력을 못 받으면 아무것도 돌리지 않고 멈춘다."""
+    시작하며, 입력을 못 받으면 아무것도 돌리지 않고 멈춘다.
+    (10/12 밤) 폴더 검사는 다음 시험 단계도 쓰는 장치라, 이미 잰 단계 목록(DONE_TEST_STAGES)을 비우고 그 장치만 본다."""
     from tools import run_all as ra
 
     def must_not_run(*args):
@@ -1632,7 +1633,7 @@ def test_run_all_refuse():
     def eof(prompt):
         raise EOFError
 
-    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run), patched(ra, "DONE_TEST_STAGES", {}):
         paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
         with contextlib.redirect_stdout(io.StringIO()) as printed:
             dry, repro = ra.main(["compare", "--dry-run"], paths), ra.main(["repro"], paths)
@@ -1658,13 +1659,14 @@ def test_run_all_refuse():
 def test_run_all_retest_refuse():
     """retest(시험셋 자동 띠, 한 번만): 최종 단계(e5_dev) 결과가 없거나, 지금 config가 최종 단계를 돌린 config와 다르거나,
     test_autoband가 이미 있으면 아무것도 돌리지 않고 거부한다(끝 코드 2). 같으면 거부하지 않는다. retest_repro는 test_autoband가 없으면 거부.
-    처리 시간 합은 t_band 열이 없는 예전 결과에서 0으로 읽는다."""
+    처리 시간 합은 t_band 열이 없는 예전 결과에서 0으로 읽는다.
+    (10/12 밤) 폴더·config 검사는 다음 시험 단계도 쓰는 장치라, 이미 잰 단계 목록(DONE_TEST_STAGES)을 비우고 그 장치만 본다."""
     from tools import run_all as ra
 
     def must_not_run(*args):
         raise AssertionError("거부에서 멈춰야 하는데 더 감")
 
-    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run), patched(ra, "DONE_TEST_STAGES", {}):
         results = Path(tmp) / "results"
         paths = {**ra.default_paths(), "results": str(results)}
         check(ra.stage_refusal("retest", results) is not None and "final을 먼저" in ra.stage_refusal("retest", results),
@@ -1694,6 +1696,36 @@ def test_run_all_retest_refuse():
     old = {"t_pre_ms_mean": 1.0, "t_detect_ms_mean": 2.0, "t_road_ms_mean": 3.0}
     check(ra.time_per_image(old) == 6.0 and ra.time_per_image({**old, "t_band_ms_mean": 4.0}) == 10.0,
           "run_all: 처리 시간 합에 t_band가 빠지거나 예전 결과(t_band 없음)를 0으로 읽지 않음")
+
+
+def test_run_all_done_tests_blocked():
+    """(10/12 밤) 10/12에 이미 잰 시험·재현 단계 여섯 개는 결과 폴더가 하나도 없어도(results/를 지운 상태), 그리고 예전 거부 조건을
+    모두 비켜 가도(최종 단계 config가 지금과 같음) 아무것도 돌리지 않고 거부한다(끝 코드 2). dry-run도 거부 이유를 보여 준다.
+    폴더 유무만 보던 예전 장치로는 test가 그대로 돌았다(docs/tasks/supplement.md 0-1)."""
+    from tools import run_all as ra
+
+    def must_not_run(*args):
+        raise AssertionError("이미 잰 시험 단계인데 실행 전 확인까지 감")    # 거부가 깨져도 시험셋을 실제로 돌리지 않게
+
+    stages = ("test", "repro", "retest", "retest_repro", "retest_ratio", "retest_ratio_repro")
+    check(set(ra.DONE_TEST_STAGES) == set(stages), f"run_all: 이미 잰 시험 단계 목록이 다름 ({sorted(ra.DONE_TEST_STAGES)})")
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run), patched(ra, "run_one", must_not_run):
+        results = Path(tmp) / "results"
+        paths = {**ra.default_paths(), "results": str(results)}
+        for stage in stages:
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                code = ra.main([stage, "--yes"], paths)
+            check(code == 2 and "이미 쟀습니다" in printed.getvalue() and not results.exists(),
+                  f"run_all {stage}: results/가 없는데 시험셋 단계를 거부하지 않음 ({code})")
+        e5 = results / "e5_ratio_dev"              # 예전 retest 조건(최종 단계 결과가 있고 config가 같음)을 만족시켜도
+        e5.mkdir(parents=True)
+        rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
+        for stage in ("retest", "retest_ratio"):
+            text = ra.stage_refusal(stage, results) or ""
+            check("이미 쟀습니다" in text, f"run_all {stage}: 최종 단계 config가 같으면 거부하지 않음 ({text})")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["test", "--dry-run"], paths)
+        check(code == 0 and "이미 쟀습니다" in printed.getvalue(), "run_all test --dry-run: 거부 이유를 보여 주지 않음")
 
 
 def test_run_all_report_empty():
@@ -1763,7 +1795,8 @@ def main():
                test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
                test_degrade_option_and_judge, test_degrade_main,
                test_run_all_plan, test_run_all_resolve, test_run_all_adoption, test_run_all_grid, test_run_all_ready,
-               test_run_all_refuse, test_run_all_retest_refuse, test_run_all_report_empty, test_run_all_judgement):
+               test_run_all_refuse, test_run_all_retest_refuse, test_run_all_done_tests_blocked, test_run_all_report_empty,
+               test_run_all_judgement):
         try:
             fn()
         except unittest.SkipTest as e:
