@@ -156,10 +156,12 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("E4s", "e4s_score_dev", "E4 점수 문턱: margin, fp2 점 τ(config)", {}, "S0", "off", "tau"),
              ("E5s", "e5s_score_dev", "E5 E4 설정의 전처리 끔·켬(참고)", {}, "E4s", "on", "curve"),
              ("S12", "s12_localsigma_dev", "2-1(12번) 국소 σ", {"DARK_SIGMA_LOCAL": True}, "E4s", "off", "rules"),
-             ("S13", "s13_halo_dev", "2-2(13번) 밝은 줄 옆 테두리 메움(팽창 6px)", {"DARK_BRIGHT_DILATE": 6}, "S12", "off", "rules"))
+             ("S13", "s13_halo_dev", "2-2(13번) 밝은 줄 옆 테두리 메움(팽창 6px)", {"DARK_BRIGHT_DILATE": 6}, "S12", "off", "rules"),
+             ("S9a", "s09a_stripe_dev", "2-2(9a) 밝은 표시 기준을 노면 중앙값으로", {"DARK_BRIGHT_REF": "road_median"}, "S13", "off", "rules"))
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
-               ("S13_39", "s13_halo39", "2-2(13번) 테두리 메움 39장 자동 ROI(참고)", {"DARK_BRIGHT_DILATE": 6}))   # 39장 참고 실행(채택 판단에 쓰지 않음)
+               ("S13_39", "s13_halo39", "2-2(13번) 테두리 메움 39장 자동 ROI(참고)", {"DARK_BRIGHT_DILATE": 6}),
+               ("S9a_39", "s09a_stripe39", "2-2(9a) 노면 중앙값 기준 39장 자동 ROI(참고)", {"DARK_BRIGHT_REF": "road_median"}))   # 39장 참고 실행(채택 판단에 쓰지 않음)
 SUPP_IDS = tuple(r[0] for r in SUPP_RUNS)
 SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동작점(fp1·fp2) 민감도가 셋 중 가장 높음",
                   "S1b": "곡선 비교(고르지 않음)", "S1c": "곡선 비교(고르지 않음)",
@@ -167,7 +169,8 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                          "E4는 같은 후보에서 동작점을 고르는 일이고 Plan.md 3.5 (3)이 E4의 목적을 '오검출 2개 이하 τ'로 정함. "
                          "손실(우연 뺀 균열 재현율 감소)은 보고서에 그대로 적음",
                   "E5s": "참고(전처리 끔·켬, 판정 행 켬)",
-                  "S12": "채택(규칙 1~3 통과, 밝은 쪽 잔차 판 안 A, 10/13. 양쪽 잔차 판은 큰 포트홀 시험 실패로 되돌림)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+                  "S12": "채택(규칙 1~3 통과, 밝은 쪽 잔차 판 안 A, 10/13. 양쪽 잔차 판은 큰 포트홀 시험 실패로 되돌림)",
+                  "S13": "채택(규칙 1~3 통과. 끔 행 차이는 작고 켬 행에서 뚜렷함)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
