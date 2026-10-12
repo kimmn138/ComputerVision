@@ -1637,13 +1637,14 @@ def supp_table(paths, states):
         if points is None:
             rows.append(head)
             continue
-        get = lambda pts, name, col: pts[(mode, name)][col] if (mode, name) in pts else math.nan  # noqa: E731
+        get = lambda pts, name, col: pts[(mode, name)].get(col, math.nan) if (mode, name) in pts else math.nan  # noqa: E731
         row = {**head, "none_sens": get(points, "none", "sensitivity"), "none_spec": get(points, "none", "specificity"),
                "none_balanced": get(points, "none", "balanced"), "none_fp": get(points, "none", "fp_per_image"),
                "fp1_sens": get(points, "fp1", "sensitivity"), "fp1_spec": get(points, "fp1", "specificity"),
                "fp2_sens": get(points, "fp2", "sensitivity"), "fp2_spec": get(points, "fp2", "specificity"),
                **{f"rule1_{c}": get(points, "rule1", c) for c in ("tau_crack", "tau_pothole", "sensitivity", "specificity",
                                                                    "balanced", "fp_per_image", "crack_ctr_recall_net")},
+               "rule1_accuracy": get(points, "rule1", "accuracy"),
                "decision": SUPP_DECISIONS.get(sid, "비교 기준" if judge == "base" else "")}
         base_exp = EXP.get(exp["supp_base"]) if exp["supp_base"] else None
         base_pts = tau_points_of(paths, base_exp, states[base_exp["id"]]) if base_exp else None
@@ -1658,8 +1659,7 @@ def supp_table(paths, states):
             if mine and theirs and (mode, "rule1") in mine and (mode, ref) in theirs:
                 a, b = theirs[(mode, ref)], mine[(mode, "rule1")]
                 changed = sorted(n for n in a if n in b and a[n] != b[n])
-                row.update({"changed_images": len(changed), "changed_list": ", ".join(changed[:8]) + (" …" if len(changed) > 8 else ""),
-                            "rule1_accuracy": get(points, "rule1", "accuracy")})
+                row.update({"changed_images": len(changed), "changed_list": ", ".join(changed[:8]) + (" …" if len(changed) > 8 else "")})
             row.update({"rule1": "해당 없음(같은 후보에서 τ만 고름)" if judge == "tau" else rule_text(r1),
                         "rule2": rule_text(r2), "rule3": rule_text(r3), "balanced_diff": d_bal, "crack_net_diff": d_net,
                         "auto": "규칙 통과" if r2 and r3 and (judge == "tau" or r1) else "되돌림"})
