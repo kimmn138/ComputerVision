@@ -818,6 +818,36 @@ def test_dark_local_sigma_existing():
     with config_values(DETECT_MODE="dark", DARK_SIGMA_LOCAL=True):
         for fn in (test_dark_big_pothole_one_piece, test_pothole_not_crack, test_synthetic_pothole, test_existing_tests_in_dark_mode):
             fn()
+def test_dark_bright_halo():
+    """(보완 2-2, 13번) 흰 차선이 있는 노면을 실제 샤프닝(preprocess, 언샤프 σ 3px)하면 차선 옆에 어두운 테두리가 생겨 균열 후보가 된다.
+    DARK_BRIGHT_DILATE를 테두리 폭(6px, 배경보다 8 이상 어두운 폭)만큼 켜면 차선 근처 후보가 사라지고, 떨어진 진짜 균열은 남는다."""
+    from src import analyze, preprocess
+    gray = asphalt(2)
+    cv.rectangle(gray, (100, 40), (107, 200), 230, -1)                 # 흰 차선(폭 8px)
+    cv.line(gray, (300, 60), (560, 180), 70, 3)                        # 떨어진 진짜 균열
+    gray = preprocess.preprocess(gray, {**analyze.NO_STEPS, "sharpen": True})
+
+    def near_lane(regions):
+        return [r for r in regions if r["bbox"][0] < 125 and r["bbox"][0] + r["bbox"][2] > 82]
+
+    def run(dilate):
+        with config_values(DETECT_MODE="dark", DARK_BRIGHT_DILATE=dilate, SCORE_FORMULA="none", USE_SCORE_TAU=False):
+            return detect_cracks(gray)[0]
+
+    off, on = run(0), run(6)
+    assert near_lane(off), "시험 영상이 테두리 후보를 만들지 못함(끔)"
+    assert not near_lane(on), ("켬인데 밝은 선 근처 후보가 남음", [r["bbox"] for r in near_lane(on)])
+    assert any(r["bbox"][0] >= 290 and r["bbox"][2] >= 200 for r in on), ("켬에서 떨어진 균열이 사라짐", [r["bbox"] for r in on])
+
+
+def test_dark_bright_ref_invalid():
+    """DARK_BRIGHT_REF가 모르는 값이면 ValueError로 바로 알린다."""
+    with config_values(DETECT_MODE="dark", DARK_BRIGHT_REF="bogus"):
+        try:
+            extract_dark_regions(asphalt(0))
+        except ValueError:
+            return
+    raise AssertionError("모르는 DARK_BRIGHT_REF에 ValueError가 나지 않음")
 
 
 def test_existing_tests_in_dark_mode():
