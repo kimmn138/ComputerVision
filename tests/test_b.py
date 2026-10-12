@@ -3,6 +3,7 @@
 import contextlib
 import functools
 import inspect
+import math
 import sys
 import tempfile
 import traceback
@@ -848,6 +849,31 @@ def test_dark_bright_ref_invalid():
         except ValueError:
             return
     raise AssertionError("모르는 DARK_BRIGHT_REF에 ValueError가 나지 않음")
+
+
+def test_score_edge_term():
+    """(보완 2-4, 9b) SCORE_USE_EDGE를 켜면 영역마다 경계 날카로움 edge(경계 고리 평균 기울기 ÷ 안쪽 평균 어둡기)를 재고, 두 점수에
+    min(1, edge / SCORE_EDGE_REF)를 곱한다. 경계가 날카로운 포트홀은 점수가 그대로다. 끄면 점수는 지금과 같고 edge 키도 없다.
+    10/13 측정: 아스팔트 결 위에서는 가장자리 흐림 σ 1px 이상이면 edge가 0.06~0.10으로 비슷해, 이 항은 흐린 그림자와 조금 흐린
+    손상을 가르지 못한다(한계). 그래서 이 시험은 '가른다'가 아니라 계산이 맞는지만 본다."""
+    gray = asphalt(4).astype(np.float32)
+    shade = np.zeros(gray.shape, np.float32)
+    cv.circle(shade, (460, 120), 40, 1.0, -1)
+    gray = gray * (1 - 0.5 * cv.GaussianBlur(shade, (0, 0), 12))        # 흐린 그림자(오른쪽)
+    cv.circle(gray, (160, 120), 30, 50, -1)                            # 날카로운 포트홀(왼쪽)
+    gray = gray.clip(0, 255).astype(np.uint8)
+
+    def regions(edge):
+        with config_values(DETECT_MODE="dark", SCORE_FORMULA="snr", USE_SCORE_TAU=False, SCORE_USE_EDGE=edge):
+            found = extract_dark_regions(gray)[0]
+        return [r for r in found if centered_in([r], (160, 120), 30)], [r for r in found if centered_in([r], (460, 120), 45)]
+
+    (sharp_off, soft_off), (sharp_on, soft_on) = regions(False), regions(True)
+    assert len(sharp_on) == 1 and len(soft_on) == 1, ("시험 영상의 두 덩어리가 영역 하나씩이 아님", len(sharp_on), len(soft_on))
+    assert "edge" not in sharp_off[0] and sharp_off[0]["bbox"] == sharp_on[0]["bbox"], "끔인데 edge 키가 생기거나 영역이 바뀜"
+    assert sharp_on[0]["edge"] > 0.3 and sharp_on[0]["score_pothole"] == sharp_off[0]["score_pothole"],         ("날카로운 포트홀 점수가 바뀜", sharp_on[0]["edge"], sharp_on[0]["score_pothole"], sharp_off[0]["score_pothole"])
+    term = min(1.0, soft_on[0]["edge"] / C.SCORE_EDGE_REF)
+    assert math.isclose(soft_on[0]["score_pothole"], soft_off[0]["score_pothole"] * term), "점수에 경계 항이 곱해지지 않음"
 
 
 def test_existing_tests_in_dark_mode():
