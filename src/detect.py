@@ -139,6 +139,49 @@ def describe_regions(mask, min_pixels=30, gray=None):
     return regions
 
 
+def region_scores(region, perimeter):
+    """후보 하나의 균열용·포트홀용 점수를 config B 구역의 SCORE_FORMULA로 계산해, 점수 문턱 τ로 오검출을 줄일 동작점을 고를 수 있게 한다
+    (보완 1번, docs/tasks/supplement.md 2.3). 종류는 아직 정해지지 않았으므로 두 값을 다 돌려준다 → (균열 점수, 포트홀 점수).
+    c = contrast(영역 안 어둡기 평균 ÷ 잡음 σ), A = 픽셀 수, ci = 비원형도, s = solidity, L = 둘레 ÷ 2(가는 선이면 길이).
+    "none": 둘 다 NaN(점수 없음, 지금과 같음).
+    "margin": 대비 × 분류 문턱에서의 여유. 균열 c·(1 − e^(−(ci − CRACK_MIN_CIRC_INV)/k)),
+              포트홀 c·(1 − e^(−(POT_MAX_CIRC_INV − ci)/k))·min(1, (s − POT_MIN_SOLIDITY)/(1 − POT_MIN_SOLIDITY)), k = SCORE_MARGIN_SCALE.
+    "snr": c·√A(영역 평균 어둡기가 잡음 평균의 표준오차 σ/√A의 몇 배인지). 두 종류 같음.
+    "shape": 균열 min(c, SCORE_C_CAP)·min(1, L / SCORE_LEN_REF), 포트홀 min(c, SCORE_C_CAP)·s·min(1, A / SCORE_AREA_REF).
+    여유가 음수(그 종류의 문턱 밖)면 0으로 둔다. 그 밖의 식 이름은 ValueError."""
+    formula = C.SCORE_FORMULA
+    if formula == "none":
+        return float("nan"), float("nan")
+    c, area, ci, solidity = region["contrast"], region["area"], region["circ_inv"], region["solidity"]
+    if formula == "margin":
+        k = C.SCORE_MARGIN_SCALE
+        solid = min(1.0, (solidity - C.POT_MIN_SOLIDITY) / (1.0 - C.POT_MIN_SOLIDITY))
+        crack = c * (1.0 - np.exp(-(ci - C.CRACK_MIN_CIRC_INV) / k))
+        pothole = c * (1.0 - np.exp(-(C.POT_MAX_CIRC_INV - ci) / k)) * solid
+    elif formula == "snr":
+        crack = pothole = c * np.sqrt(area)
+    elif formula == "shape":
+        capped = min(c, C.SCORE_C_CAP)
+        crack = capped * min(1.0, (perimeter / 2.0) / C.SCORE_LEN_REF)
+        pothole = capped * solidity * min(1.0, area / C.SCORE_AREA_REF)
+    else:
+        raise ValueError(f"SCORE_FORMULA는 'none'·'margin'·'snr'·'shape' 중 하나여야 함 ({formula!r})")
+    return float(max(crack, 0.0)), float(max(pothole, 0.0))
+
+
+def _keep_by_score(candidates, kind):
+    """종류(crack·pothole)의 점수를 후보의 score에 넣고, USE_SCORE_TAU가 켜져 있으면 score ≥ SCORE_TAU_<종류>인 후보만 남긴다.
+    dark 방식에서만 부른다. 점수식이 none인데 τ를 켜면 점수가 NaN이라 후보가 모두 지워지므로 ValueError로 알린다."""
+    for r in candidates:
+        r["score"] = r[f"score_{kind}"]
+    if not C.USE_SCORE_TAU:
+        return candidates
+    if C.SCORE_FORMULA == "none":
+        raise ValueError("USE_SCORE_TAU를 켜려면 SCORE_FORMULA가 'none'이 아니어야 함")
+    tau = C.SCORE_TAU_CRACK if kind == "crack" else C.SCORE_TAU_POTHOLE
+    return [r for r in candidates if r["score"] >= tau]
+
+
 def _detect_mode():
     """config B 구역의 DETECT_MODE를 읽는다. "legacy" = 1차 방식(Canny 균열 + DoG 포트홀, road를 쓰지 않음),
     "dark" = 어두운 영역 한 번 추출 + 형태 분류(WP2·WP3). 다른 값이면 ValueError로 바로 알린다."""
@@ -164,6 +207,7 @@ def extract_dark_regions(gray, road=None):
     5. 닫힘(타원 DARK_CLOSE_KSIZE) 뒤 넓이 DARK_MIN_AREA 미만을 지운다(골재 무늬).
     6. 영역마다 area(픽셀 수), P(바깥 + 구멍 윤곽 길이, cv.RETR_CCOMP), thickness = 2A/P, dt_width, circ_inv = P²/(4πA),
        elong·fill·solidity(describe_regions), contrast = 영역 안 D의 평균 / σ, darkness(region_darkness)를 잰다.
+       (보완 1-1) 균열용·포트홀용 점수 score_crack·score_pothole(region_scores, SCORE_FORMULA가 none이면 NaN)도 붙인다.
     TODO(B): WP2에서 구현한다. 지금은 자리만 있다."""
     if not isinstance(gray, np.ndarray) or gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("gray는 2차원 uint8 배열이어야 합니다.")
@@ -241,7 +285,8 @@ def extract_dark_regions(gray, road=None):
             region["thickness"] = float(2.0 * area / perimeter)
             region["circ_inv"] = float(perimeter ** 2 / (4.0 * np.pi * area))
         region["contrast"] = float(darkness[y:y + rh, x:x + rw][component].mean() / sigma)
-        # score는 선택 과제 S1: 점수식을 합의하기 전까지 기존 NaN을 유지한다.
+        # 점수는 종류가 정해진 뒤 detect_cracks·detect_potholes가 score에 넣는다(보완 1-1)
+        region["score_crack"], region["score_pothole"] = region_scores(region, perimeter)
     return regions, mask
 
 def detect_cracks(gray, road=None):
@@ -255,7 +300,7 @@ def detect_cracks(gray, road=None):
     if _detect_mode() == "dark":
         regions, _ = extract_dark_regions(gray, road)
         
-        candidates = [r for r in regions if r["circ_inv"] >= C.CRACK_MIN_CIRC_INV]
+        candidates = _keep_by_score([r for r in regions if r["circ_inv"] >= C.CRACK_MIN_CIRC_INV], "crack")
         edges = cv.Canny(gray, C.CANNY_LOW, C.CANNY_HIGH)
         return candidates, edges
     
@@ -302,11 +347,11 @@ def detect_potholes(gray, road=None):
 
         regions, mask = extract_dark_regions(gray, road)
         
-        candidates = [
+        candidates = _keep_by_score([
             r for r in regions
             if r["circ_inv"] <= C.POT_MAX_CIRC_INV
             and r["solidity"] >= C.POT_MIN_SOLIDITY
-        ]
+        ], "pothole")
         return candidates, mask
     
     sigma_small, sigma_large = C.DOG_SIGMAS
