@@ -111,11 +111,12 @@ TAU_METRICS = ["sensitivity", "specificity", "accuracy", "baseline_none", "balan
                "pothole_ctr_recall", "pothole_ctr_recall_chance", "pothole_ctr_recall_net"]
 TAU_COUNTS = ["n_images", "n_damage", "n_none"]
 TAU_FP_POINTS = {"fp1": 1.0, "fp2": 2.0}   # 영상당 오검출 1개·2개 동작점(채택 규칙 1, Plan.md 3.10)
-TAU_RULE1_FP = 2.0                         # 규칙 ①: 영상당 오검출 2개 이하인 점 가운데 균형 정확도 최대(rule1 점, 채택 규칙 2·3을 재는 곳)
+TAU_RULE1_FP = 2.0                         # rule1 점(채택 규칙 2·3을 재는 곳) = fp2 점: 영상당 오검출 2개 이하에서 민감도 최대(10/13 사용자 결정)
 TAU_POINT_NAMES = ("none", "fp1", "fp2", "rule1", "config")
 TAU_CURVE_NAME = "tau_curve.csv"
 TAU_POINTS_NAME = "tau_points.csv"
 TAU_FIGURE_NAME = "tau_curve.png"
+TAU_IMAGES_NAME = "tau_images.csv"         # τ 없음·rule1 점에서 영상마다 맞혔는지(판정이 바뀐 사진 수를 세려고)
 
 
 # ---------------------------------------------------------
@@ -790,7 +791,9 @@ def tau_curve(names, heights, scored, gts):
 def tau_points(curve, config_row=None):
     """τ 곡선에서 동작점을 고른다 → {이름: 행 dict(note 포함)}. none = τ 없음(−∞, −∞).
     fp1·fp2 = 영상당 오검출 ≤ 1·2인 점 가운데 민감도 최대(같으면 특이도 → 균형 정확도 → 분위 합이 작은 쪽, 후보를 덜 지움).
-    rule1 = 오검출 ≤ TAU_RULE1_FP인 점 가운데 균형 정확도 최대(같으면 민감도 → 분위 합이 작은 쪽). config = 실행에 쓴 τ(주면).
+    rule1 = 채택 규칙 2·3을 재는 점. (10/13 사용자 결정) fp2와 같은 방법(오검출 ≤ TAU_RULE1_FP에서 민감도 최대)으로 고른다.
+    처음의 '오검출 ≤ 2 중 균형 정확도 최대'는 곡선 전체가 균형 정확도 50% 아래이면 후보를 모두 지우는 점으로 미끄러져 쓰지 않는다.
+    config = 실행에 쓴 τ(주면).
     고를 점이 없으면 지표를 NaN으로 두고 note에 이유를 적는다."""
     def empty(note):
         return {**{column: np.nan for column in curve.columns}, "note": note}
@@ -806,11 +809,24 @@ def tau_points(curve, config_row=None):
     for name, limit in TAU_FP_POINTS.items():
         points[name] = first(curve[curve["fp_per_image"] <= limit], ["sensitivity", "specificity", "balanced", "q_sum"],
                              [False, False, False, True], f"영상당 오검출 {limit:g}개 이하 불가")
-    points["rule1"] = first(curve[curve["fp_per_image"] <= TAU_RULE1_FP], ["balanced", "sensitivity", "q_sum"],
-                            [False, False, True], f"영상당 오검출 {TAU_RULE1_FP:g}개 이하 불가")
+    points["rule1"] = first(curve[curve["fp_per_image"] <= TAU_RULE1_FP], ["sensitivity", "specificity", "balanced", "q_sum"],
+                            [False, False, False, True], f"영상당 오검출 {TAU_RULE1_FP:g}개 이하 불가")
     if config_row is not None:
         points["config"] = {**config_row, "note": ""}
     return points
+
+
+def tau_image_rows(names, scored, gts, tau_crack, tau_pothole):
+    """한 τ 점(균열 τ, 포트홀 τ)에서 영상마다 판정(evaluate.image_verdict, 중심 기준)을 다시 낸다 → [{image, has_damage, correct}].
+    점수 ≥ τ인 후보만 남기고(NaN 점수는 τ = −∞에서만 남음), 판정이 바뀐 사진을 두 실행 사이에서 세려고 쓴다."""
+    taus = {"crack": tau_crack, "pothole": tau_pothole}
+    rows = []
+    for name in sorted(names):
+        kept = {kind: [b for b, s in scored[name][kind]
+                       if taus[kind] == -np.inf or (s is not None and not np.isnan(s) and s >= taus[kind])] for kind in KINDS}
+        verdict = image_verdict(kept, gts[name])
+        rows.append({"image": name, "has_damage": verdict["has_damage"], "correct": verdict["correct"]})
+    return rows
 
 
 def is_missing(value):
@@ -1292,7 +1308,7 @@ def write_tau_outputs(out_dir, param_sets, degrade_kind, detail_rows, summary_ro
     """τ 곡선 산출물(tau_curve.csv·tau_points.csv·tau_curve.png)을 쓰고, τ를 끈 실행이면 τ 없음 점이 요약 표와 글자 하나까지
     같은지 확인해 알린다. 실행에 τ를 썼으면 config 점은 그 τ, 아니면 τ 없음과 같다."""
     use_tau, tau_c, tau_p = tau_config
-    curve_rows, point_rows = [], []
+    curve_rows, point_rows, image_rows = [], [], []
 
     for params in param_sets:
         curves, points = {}, {}
@@ -1306,6 +1322,10 @@ def write_tau_outputs(out_dir, param_sets, degrade_kind, detail_rows, summary_ro
                 found["config"] = {**found["none"], "note": "USE_SCORE_TAU 끔(τ 없음과 같음)"}
             curves[mode], points[mode] = curve, found
             keys = {"params": params["name"], "preprocess": mode, "degrade": degrade_kind}
+            for point in ("none", "rule1"):
+                if not is_missing(found[point]["tau_crack"]):
+                    image_rows += [{**keys, "point": point, **r} for r in
+                                   tau_image_rows(names, scored[key], gts, found[point]["tau_crack"], found[point]["tau_pothole"])]
             curve_rows += tau_rows(keys, curve.to_dict("records"),
                                    ["tau_crack", "tau_pothole", "q_crack", "q_pothole"] + TAU_COUNTS + TAU_METRICS + ["pareto"])
             point_rows += tau_rows(keys, [{**found[p], "point": p} for p in TAU_POINT_NAMES],
@@ -1324,6 +1344,7 @@ def write_tau_outputs(out_dir, param_sets, degrade_kind, detail_rows, summary_ro
 
     save_csv(out_dir / TAU_CURVE_NAME, curve_rows, list(curve_rows[0]))
     save_csv(out_dir / TAU_POINTS_NAME, point_rows, list(point_rows[0]))
+    save_csv(out_dir / TAU_IMAGES_NAME, image_rows, ["params", "preprocess", "degrade", "point", "image", "has_damage", "correct"])
     print("τ 곡선:", out_dir / TAU_CURVE_NAME, "/", out_dir / TAU_POINTS_NAME, "/", out_dir / TAU_FIGURE_NAME)
 
 
