@@ -154,8 +154,10 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("S1c", "score_da_dev", "점수식 shape(대비 상한 × 길이·넓이)", {"SCORE_FORMULA": "shape", "USE_SCORE_TAU": False},
               "S0", "off", "curve"),
              ("E4s", "e4s_score_dev", "E4 점수 문턱: margin, fp2 점 τ(config)", {}, "S0", "off", "tau"),
-             ("E5s", "e5s_score_dev", "E5 E4 설정의 전처리 끔·켬(참고)", {}, "E4s", "on", "curve"))
-SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),)   # 39장 참고 실행(채택 판단에 쓰지 않음)
+             ("E5s", "e5s_score_dev", "E5 E4 설정의 전처리 끔·켬(참고)", {}, "E4s", "on", "curve"),
+             ("S12", "s12_localsigma_dev", "2-1(12번) 국소 σ", {"DARK_SIGMA_LOCAL": True}, "E4s", "off", "rules"))
+SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
+               ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}))   # 39장 참고 실행(채택 판단에 쓰지 않음)
 SUPP_IDS = tuple(r[0] for r in SUPP_RUNS)
 SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동작점(fp1·fp2) 민감도가 셋 중 가장 높음",
                   "S1b": "곡선 비교(고르지 않음)", "S1c": "곡선 비교(고르지 않음)",
