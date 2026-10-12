@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import config as C  # noqa: E402
-from src.detect import describe_regions, detect_cracks, detect_potholes, extract_dark_regions  # noqa: E402
+from src.detect import describe_regions, detect_cracks, detect_potholes, extract_dark_regions, region_scores  # noqa: E402
 from src.evaluate import load_gt, iou, count_matches, count_center_hits, precision_recall  # noqa: E402
 
 REGION_KEYS = {"area", "elong", "fill", "solidity", "bbox", "contour"}
@@ -650,6 +650,112 @@ def test_dark_alligator_net():
         potholes = centered_in(detect_potholes(gray)[0], (320, 120), 100)
 
     assert len(cracks) >= 1 and not potholes, (len(cracks), [p["bbox"] for p in potholes])
+
+
+# ---------------------------------------------------------
+# 보완 1-1 점수식과 점수 문턱 τ (docs/tasks/supplement.md 1-1)
+# ---------------------------------------------------------
+
+def score_scene():
+    """점수 시험용 띠: 긴 균열 선 2개, 짧은 조각 3개, 포트홀 2개를 그린 아스팔트."""
+    gray = asphalt(3)
+    cv.line(gray, (40, 60), (600, 90), 60, 3)
+    cv.line(gray, (60, 200), (420, 170), 70, 2)
+    for x in (480, 530, 580):
+        cv.line(gray, (x, 140), (x + 12, 146), 60, 3)
+    cv.circle(gray, (200, 130), 25, 50, -1)
+    cv.circle(gray, (330, 120), 12, 60, -1)
+    return gray
+
+
+def test_score_formulas():
+    """세 점수식이 뜻대로 순서를 매긴다(손으로 만든 후보 값). 대비가 같을 때
+    shape: 긴 균열(L 200) > 짧은 조각(L 30), 큰 포트홀(A 400) > 작은 포트홀(A 40), 대비는 SCORE_C_CAP에서 잘림.
+    snr: 넓은 영역 > 좁은 영역. margin: 문턱에서 먼 모양 > 가까운 모양(균열 ci 10 > 4.5, 포트홀 ci 1.2 > 2.3), 문턱 밖은 0.
+    none은 NaN, 모르는 이름은 ValueError."""
+    def region(area, ci, solidity=0.9, contrast=3.0):
+        return {"area": area, "circ_inv": ci, "solidity": solidity, "contrast": contrast}
+
+    with config_values(SCORE_FORMULA="shape"):
+        long_crack = region_scores(region(400, 30), 400)[0]
+        short_crack = region_scores(region(60, 5), 60)[0]
+        assert long_crack > short_crack, ("shape 균열: 긴 선이 짧은 조각보다 높아야 함", long_crack, short_crack)
+        big_pot = region_scores(region(400, 1.2), 75)[1]
+        small_pot = region_scores(region(40, 1.2), 24)[1]
+        assert big_pot > small_pot, ("shape 포트홀: 큰 덩어리가 작은 것보다 높아야 함", big_pot, small_pot)
+        dark = region_scores(region(400, 30, contrast=20.0), 400)[0]
+        assert dark == region_scores(region(400, 30, contrast=C.SCORE_C_CAP), 400)[0], "shape: 대비가 SCORE_C_CAP에서 잘리지 않음"
+
+    with config_values(SCORE_FORMULA="snr"):
+        assert region_scores(region(900, 1.2), 110)[1] > region_scores(region(100, 1.2), 36)[1], "snr: 넓은 영역이 더 높아야 함"
+
+    with config_values(SCORE_FORMULA="margin"):
+        far, near = region_scores(region(400, 10), 400)[0], region_scores(region(400, 4.5), 150)[0]
+        assert far > near > 0, ("margin 균열: 문턱에서 먼 모양이 더 높아야 함", far, near)
+        far, near = region_scores(region(400, 1.2), 75)[1], region_scores(region(400, 2.3), 100)[1]
+        assert far > near > 0, ("margin 포트홀: 문턱에서 먼 모양이 더 높아야 함", far, near)
+        assert region_scores(region(400, 3.0), 120)[0] == 0.0, "margin: 균열 문턱 밖(ci < 4)인데 0이 아님"
+
+    with config_values(SCORE_FORMULA="none"):
+        assert all(np.isnan(v) for v in region_scores(region(400, 30), 400)), "none인데 점수가 NaN이 아님"
+    with config_values(SCORE_FORMULA="bogus"):
+        try:
+            region_scores(region(400, 30), 400)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("모르는 점수식 이름에 ValueError가 나지 않음")
+
+
+def test_score_none_is_nan():
+    """기본(SCORE_FORMULA none)이면 dark 후보의 score가 NaN이고(v9와 같음), legacy 방식은 점수식을 켜도 늘 NaN이다."""
+    gray = score_scene()
+    with config_values(DETECT_MODE="dark", SCORE_FORMULA="none", USE_SCORE_TAU=False):
+        regions = detect_cracks(gray)[0] + detect_potholes(gray)[0]
+    assert regions and all(np.isnan(r["score"]) for r in regions), [r["score"] for r in regions]
+    with config_values(DETECT_MODE="legacy", SCORE_FORMULA="shape", USE_SCORE_TAU=True):
+        regions = detect_cracks(gray)[0] + detect_potholes(gray)[0]
+    assert regions and all(np.isnan(r["score"]) for r in regions), "legacy인데 score가 NaN이 아님"
+
+
+def test_score_tau_off_same():
+    """τ를 끄면 점수식을 바꿔도 후보(종류·상자·윤곽)가 none일 때와 같다. 점수는 유한한 0 이상 실수."""
+    gray = score_scene()
+
+    def boxes(formula):
+        with config_values(DETECT_MODE="dark", SCORE_FORMULA=formula, USE_SCORE_TAU=False):
+            cracks, potholes = detect_cracks(gray)[0], detect_potholes(gray)[0]
+        return cracks, potholes
+
+    base = boxes("none")
+    for formula in ("margin", "snr", "shape"):
+        cracks, potholes = boxes(formula)
+        assert [r["bbox"] for r in cracks] == [r["bbox"] for r in base[0]], f"{formula}: 균열 후보가 바뀜"
+        assert [r["bbox"] for r in potholes] == [r["bbox"] for r in base[1]], f"{formula}: 포트홀 후보가 바뀜"
+        assert all(np.isfinite(r["score"]) and r["score"] >= 0 for r in cracks + potholes), (formula, [r["score"] for r in cracks + potholes])
+
+
+def test_score_tau_filters():
+    """τ를 켜면 score ≥ τ인 후보만 남는다(종류마다 자기 τ). 점수식이 none인데 τ를 켜면 ValueError."""
+    gray = score_scene()
+    with config_values(DETECT_MODE="dark", SCORE_FORMULA="shape", USE_SCORE_TAU=False):
+        cracks, potholes = detect_cracks(gray)[0], detect_potholes(gray)[0]
+    assert len(cracks) >= 2 and potholes, ("시험 영상의 후보가 모자람", len(cracks), len(potholes))
+    tau_c = float(np.median([r["score"] for r in cracks]))
+    tau_p = max(r["score"] for r in potholes) + 1.0                      # 포트홀은 모두 지워지는 문턱
+    with config_values(DETECT_MODE="dark", SCORE_FORMULA="shape", USE_SCORE_TAU=True,
+                       SCORE_TAU_CRACK=tau_c, SCORE_TAU_POTHOLE=tau_p):
+        kept_c, kept_p = detect_cracks(gray)[0], detect_potholes(gray)[0]
+    expect = [r["bbox"] for r in cracks if r["score"] >= tau_c]
+    assert [r["bbox"] for r in kept_c] == expect, ("균열 τ 거르기가 다름", len(kept_c), len(expect))
+    assert kept_p == [], f"포트홀 τ가 모든 점수보다 큰데 {len(kept_p)}개가 남음"
+    with config_values(DETECT_MODE="dark", SCORE_FORMULA="none", USE_SCORE_TAU=True):
+        try:
+            detect_cracks(gray)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("점수식 none에서 τ를 켰는데 ValueError가 나지 않음(후보가 모두 지워짐)")
 
 
 def test_existing_tests_in_dark_mode():
