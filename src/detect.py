@@ -1,4 +1,6 @@
 """(파트 B) 전처리한 노면 영상에서 균열·포트홀 후보 영역을 찾는다."""
+import warnings
+
 import cv2 as cv
 import numpy as np
 
@@ -190,6 +192,28 @@ def _detect_mode():
     return C.DETECT_MODE
 
 
+def local_sigma_map(residual, median, sigma_global, step):
+    """(보완 2-1, 12번) 국소 σ 지도: 위치마다 주변 창에서 잰 잡음 크기. 골재 결이 거친 곳은 σ가 커져 문턱이 저절로 오른다.
+    배경보다 밝은 쪽 잔차(잔차 < 전역 중앙값)만 쓴다. 어두운 손상(큰 포트홀)이 창을 채워도 σ가 부풀지 않게 하려고다(안 A, 10/13).
+    노면 잔차는 중앙값 둘레에서 대칭이라(개발셋 51장: 밝은 쪽 σ ÷ 양쪽 σ 중앙값 1.000) 양쪽과 같은 배율 1.4826을 쓴다.
+    잔차를 step 간격으로 뽑아(평균하지 않음) 창(띠 높이 × DARK_SIGMA_LOCAL_FRAC)을 창 절반 간격으로 옮기며 밝은 쪽 편차 (중앙값 − 잔차)의
+    중앙값 × 1.4826을 잰다. 창 안 밝은 쪽 표본이 DARK_SIGMA_LOCAL_MIN_N개보다 적으면 전역 σ를 쓴다. 원래 크기로 늘려 돌려준다(하한은 부르는 쪽)."""
+    h, w = residual.shape
+    sub = residual[::step, ::step]
+    bright = np.where(sub < median, median - sub, np.nan).astype(np.float32)
+    k = max(3, int(round(h * C.DARK_SIGMA_LOCAL_FRAC / step))) | 1
+    stride = max(1, k // 2)
+    padded = np.pad(bright, k // 2, constant_values=np.nan)
+    windows = np.lib.stride_tricks.sliding_window_view(padded, (k, k))[::stride, ::stride]
+    flat = windows.reshape(windows.shape[0], windows.shape[1], -1)
+    count = np.count_nonzero(~np.isnan(flat), axis=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)     # 표본이 하나도 없는 창(모두 NaN)은 아래에서 전역 σ로 바꾼다
+        local = 1.4826 * np.nanmedian(flat, axis=2)
+    local = np.where(count >= C.DARK_SIGMA_LOCAL_MIN_N, local, sigma_global).astype(np.float32)
+    return cv.resize(local, (w, h), interpolation=cv.INTER_LINEAR)
+
+
 def extract_dark_regions(gray, road=None):
     """배경보다 어두운 영역을 한 번에 뽑아, 균열·포트홀 후보를 같은 기준(배경 대비 / 잡음 σ)으로 만든다(Plan.md 3.4, B 전용 · 약속 표 밖).
     입력: 흑백 노면 띠 uint8 (H, W), road = 노면 마스크(같은 크기 0/255) 또는 None. 입력은 바꾸지 않는다.
@@ -204,7 +228,8 @@ def extract_dark_regions(gray, road=None):
        (노면 픽셀이 하나도 없으면 띠 전체). σ = max(1.4826 × median(|rr − median(rr)|), DARK_SIGMA_MIN), D = max(r, 0).
        max(r, 0)의 MAD를 쓰면 D = 0이 절반을 넘어 σ = 0이 된다.
     4. 이중 문턱: 강 D ≥ max(DARK_K_HI × σ, DARK_ABS_MIN), 약 D ≥ DARK_K_LO × σ. 약 마스크의 연결 요소 중 강 픽셀을 품은 것만 남긴다.
-       (보완 2-1) DARK_SIGMA_LOCAL이면 σ는 위치마다의 국소 σ 지도(하한 = 전역 σ)이고 contrast도 픽셀마다 국소 σ로 나눈 평균이다.
+       (보완 2-1) DARK_SIGMA_LOCAL이면 σ는 위치마다의 국소 σ 지도(local_sigma_map, 밝은 쪽 잔차, 하한 = 전역 σ)이고
+       contrast도 픽셀마다 국소 σ로 나눈 평균이다.
     5. 닫힘(타원 DARK_CLOSE_KSIZE) 뒤 넓이 DARK_MIN_AREA 미만을 지운다(골재 무늬).
     6. 영역마다 area(픽셀 수), P(바깥 + 구멍 윤곽 길이, cv.RETR_CCOMP), thickness = 2A/P, dt_width, circ_inv = P²/(4πA),
        elong·fill·solidity(describe_regions), contrast = 영역 안 D의 평균 / σ, darkness(region_darkness)를 잰다.
@@ -255,10 +280,7 @@ def extract_dark_regions(gray, road=None):
     median = np.median(samples)
     sigma = max(1.4826 * float(np.median(np.abs(samples - median))), C.DARK_SIGMA_MIN)
     if C.DARK_SIGMA_LOCAL:
-        # (보완 2-1, 12번) 국소 σ: 위치마다 주변 창에서 잰 잡음 크기. 골재 결이 거친 곳은 σ가 커져 문턱이 저절로 오른다.
-        # |잔차 − 중앙값|을 1/DARK_BG_DOWNSCALE로 줄여 창(띠 높이 × DARK_SIGMA_LOCAL_FRAC)의 중앙값을 잰 뒤 1.4826배, 하한은 전역 σ.
-        spread = np.clip(np.rint(np.abs(residual - median)), 0, 255).astype(np.uint8)
-        sigma = np.maximum(1.4826 * median_background(spread, max(3.0, h * C.DARK_SIGMA_LOCAL_FRAC / scale)), sigma)
+        sigma = np.maximum(local_sigma_map(residual, median, sigma, scale), sigma)
     darkness = np.maximum(residual, 0)
     strong = darkness >= (np.maximum(C.DARK_K_HI * sigma, C.DARK_ABS_MIN) if np.ndim(sigma) else max(C.DARK_K_HI * sigma, C.DARK_ABS_MIN))
     weak = (darkness >= C.DARK_K_LO * sigma).astype(np.uint8)
