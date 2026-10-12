@@ -237,6 +237,7 @@ def extract_dark_regions(gray, road=None):
     6. 영역마다 area(픽셀 수), P(바깥 + 구멍 윤곽 길이, cv.RETR_CCOMP), thickness = 2A/P, dt_width, circ_inv = P²/(4πA),
        elong·fill·solidity(describe_regions), contrast = 영역 안 D의 평균 / σ, darkness(region_darkness)를 잰다.
        (보완 1-1) 균열용·포트홀용 점수 score_crack·score_pothole(region_scores, SCORE_FORMULA가 none이면 NaN)도 붙인다.
+       (보완 2-4) SCORE_USE_EDGE면 경계 날카로움 edge를 재 두 점수에 min(1, edge / SCORE_EDGE_REF)를 곱한다(흐린 그림자를 깎음).
     TODO(B): WP2에서 구현한다. 지금은 자리만 있다."""
     if not isinstance(gray, np.ndarray) or gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("gray는 2차원 uint8 배열이어야 합니다.")
@@ -326,6 +327,9 @@ def extract_dark_regions(gray, road=None):
     keep[0] = False
     mask = keep[labels].astype(np.uint8) * 255
     regions = describe_regions(mask, C.DARK_MIN_AREA, gray)
+    if C.SCORE_USE_EDGE:                                # (보완 2-4, 9b) 경계 날카로움을 잴 기울기 크기(밝은 표시를 메운 g2 기준)
+        g2f = g2.astype(np.float32)
+        gradient = np.hypot(cv.Sobel(g2f, cv.CV_32F, 1, 0, ksize=3), cv.Sobel(g2f, cv.CV_32F, 0, 1, ksize=3)) / 8.0
 
     for region in regions:
         x, y, rw, rh = region["bbox"]
@@ -345,6 +349,16 @@ def extract_dark_regions(gray, road=None):
             region["contrast"] = float(darkness[y:y + rh, x:x + rw][component].mean() / sigma)
         # 점수는 종류가 정해진 뒤 detect_cracks·detect_potholes가 score에 넣는다(보완 1-1)
         region["score_crack"], region["score_pothole"] = region_scores(region, perimeter)
+        if C.SCORE_USE_EDGE:
+            # (보완 2-4, 9b) 경계 날카로움 = 영역 바로 바깥 1px 고리의 평균 기울기 ÷ 영역 안 평균 어둡기. 그림자는 가장자리가 흐려 작다.
+            # 점수에 min(1, 날카로움 / SCORE_EDGE_REF)를 곱한다(가장자리 흐림 σ 2px까지는 깎지 않음)
+            x0, y0, x1, y1 = max(x - 1, 0), max(y - 1, 0), min(x + rw + 1, w), min(y + rh + 1, h)
+            inside = labels[y0:y1, x0:x1] == label
+            ring = cv.dilate(inside.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool) & ~inside
+            depth = float(darkness[y:y + rh, x:x + rw][component].mean())
+            region["edge"] = float(gradient[y0:y1, x0:x1][ring].mean() / depth) if ring.any() and depth > 0 else 0.0
+            term = min(1.0, region["edge"] / C.SCORE_EDGE_REF)
+            region["score_crack"], region["score_pothole"] = region["score_crack"] * term, region["score_pothole"] * term
     return regions, mask
 
 def detect_cracks(gray, road=None):
