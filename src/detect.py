@@ -221,6 +221,8 @@ def extract_dark_regions(gray, road=None):
     + thickness·dt_width·circ_inv(구멍 둘레 포함)·contrast·darkness. 숫자는 config B 구역의 DARK_* 값을 쓴다.
     1. 밝은 표시 억제: 1/DARK_BG_DOWNSCALE로 줄여 중앙값(DARK_BG_KSIZE_SMALL)으로 거친 배경 Bc를 만들고,
        gray > Bc + DARK_BRIGHT_DELTA인 픽셀(흰 차선·횡단보도)을 Bc 값으로 바꾼 복사본 g2를 만든다.
+       (보완 2-2) DARK_BRIGHT_REF "road_median"이면 Bc 대신 노면 밝기 중앙값 하나를 기준·메움 값으로 쓰고(9a 넓은 줄무늬),
+       DARK_BRIGHT_DILATE > 0이면 밝은 픽셀 마스크를 그만큼 팽창해 밝은 선 옆 어두운 테두리도 메운다(13번).
        한계: 억제 창보다 넓은 밝은 영역 옆은 '어두운 선'이 된다(Japan_000107 자갈 경계).
     2. 배경 B = 두 크기 창 중앙값의 큰 값: max(bg(g2, 띠 높이 × DARK_BG_FRAC), bg(g2, 띠 높이 × DARK_BG_FRAC_LARGE)).
        bg(영상, 창) = 1/DARK_BG_DOWNSCALE로 줄여 중앙값(창 / DARK_BG_DOWNSCALE을 홀수로) → 원래 크기. 한 창이면 큰 포트홀 가운데가 빈다.
@@ -265,9 +267,25 @@ def extract_dark_regions(gray, road=None):
     #비교와 잔차 계산은 float32로 한다.
     coarse = median_background(gray, C.DARK_BG_KSIZE_SMALL)
     gray_float = gray.astype(np.float32)
-    bright = gray_float > coarse + C.DARK_BRIGHT_DELTA
+    if C.DARK_BRIGHT_REF == "coarse":
+        reference = coarse
+    elif C.DARK_BRIGHT_REF == "road_median":
+        # (보완 2-2, 9a) 기준 밝기를 노면(없으면 띠 전체) 밝기 중앙값 하나로: 억제 창보다 넓은 흰 줄무늬는 거친 배경 자체가 밝아져 못 거름
+        road_pixels = np.asarray(road) > 0 if road is not None else None
+        pixels = gray_float[road_pixels] if road_pixels is not None and np.any(road_pixels) else gray_float
+        reference = np.full_like(gray_float, float(np.median(pixels)))
+    else:
+        raise ValueError(f"DARK_BRIGHT_REF는 'coarse' 또는 'road_median'이어야 함 ({C.DARK_BRIGHT_REF!r})")
+    bright = gray_float > reference + C.DARK_BRIGHT_DELTA
+    if C.DARK_BRIGHT_DILATE > 0:
+        # (보완 2-2, 13번) 아주 밝은 픽셀(기준 + DARK_BRIGHT_DILATE_DELTA, 차선·횡단보도)만 팽창해 샤프닝이 그 옆에 만든 어두운 테두리까지
+        # 기준 밝기로 메움. 샤프닝은 균열 양옆에도 밝은 오버슈트를 만들므로, 덜 밝은 픽셀까지 팽창하면 균열 자체를 덮어 지운다
+        smooth = cv.medianBlur(gray, C.DARK_BRIGHT_SEED_KSIZE).astype(np.float32)   # 샤프닝이 키운 잡무늬 점은 씨앗이 되지 않게
+        seed = (smooth > reference + C.DARK_BRIGHT_DILATE_DELTA).astype(np.uint8)
+        size = 2 * C.DARK_BRIGHT_DILATE + 1
+        bright = bright | (cv.dilate(seed, cv.getStructuringElement(cv.MORPH_ELLIPSE, (size, size))) > 0)
     g2 = gray.copy()
-    g2[bright] = coarse[bright].astype(np.uint8)
+    g2[bright] = reference[bright].astype(np.uint8)
     bg_small = median_background(g2, h * C.DARK_BG_FRAC / scale)
     bg_large = median_background(g2, h * C.DARK_BG_FRAC_LARGE / scale)
     residual = np.maximum(bg_small, bg_large) - g2.astype(np.float32)
