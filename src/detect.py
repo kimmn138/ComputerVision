@@ -233,6 +233,7 @@ def extract_dark_regions(gray, road=None):
        (보완 2-1) DARK_SIGMA_LOCAL이면 σ는 위치마다의 국소 σ 지도(local_sigma_map, 밝은 쪽 잔차, 하한 = 전역 σ)이고
        contrast도 픽셀마다 국소 σ로 나눈 평균이다.
     5. 닫힘(타원 DARK_CLOSE_KSIZE) 뒤 넓이 DARK_MIN_AREA 미만을 지운다(골재 무늬).
+       (보완 2-3) DARK_SPLIT_BLOB이면 그 전에 원판 열림으로 덩어리와 선을 나눈다(균열이 붙은 포트홀).
     6. 영역마다 area(픽셀 수), P(바깥 + 구멍 윤곽 길이, cv.RETR_CCOMP), thickness = 2A/P, dt_width, circ_inv = P²/(4πA),
        elong·fill·solidity(describe_regions), contrast = 영역 안 D의 평균 / σ, darkness(region_darkness)를 잰다.
        (보완 1-1) 균열용·포트홀용 점수 score_crack·score_pothole(region_scores, SCORE_FORMULA가 none이면 NaN)도 붙인다.
@@ -312,6 +313,14 @@ def extract_dark_regions(gray, road=None):
         cv.MORPH_ELLIPSE, (C.DARK_CLOSE_KSIZE, C.DARK_CLOSE_KSIZE)
     )
     mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+    if C.DARK_SPLIT_BLOB:
+        # (보완 2-3, 9c) 덩어리와 선 나누기: 원판(DARK_SPLIT_KSIZE) 열림으로 원판보다 굵은 덩어리(포트홀)만 남기고,
+        # 나머지(원래 영역 − 1px 넓힌 덩어리)를 따로 둬 균열이 붙은 포트홀을 두 영역으로 가른다. 가는 선만 있는 영역은 그대로다
+        disc = cv.getStructuringElement(cv.MORPH_ELLIPSE, (C.DARK_SPLIT_KSIZE, C.DARK_SPLIT_KSIZE))
+        blob = cv.morphologyEx(mask, cv.MORPH_OPEN, disc)
+        if blob.any():
+            rest = cv.bitwise_and(mask, cv.bitwise_not(cv.dilate(blob, cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)))))
+            mask = cv.bitwise_or(blob, rest)
     count, labels, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
     keep = stats[:, cv.CC_STAT_AREA] >= C.DARK_MIN_AREA
     keep[0] = False
