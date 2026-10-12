@@ -78,6 +78,15 @@ DARK_CLOSE_KSIZE = 5        # px, 끊긴 조각을 잇는 닫힘 타원 커널 (
 DARK_MIN_AREA = 40          # 픽셀 수, 이보다 작은 영역(골재 무늬)은 버림 (5단계)
 CRACK_MIN_CIRC_INV = 4      # 비원형도 P²/(4πA), 이 값 이상이면 균열. 폭의 약 12.6배보다 긴 선 (Plan.md 3.5 (2) 출발값, 산점도를 보고 B가 확정)
 POT_MAX_CIRC_INV = 2.5      # 비원형도, 이 값 이하이고 solidity ≥ POT_MIN_SOLIDITY면 포트홀. 경계가 거친 원(c 약 3)도 들어가게 여유 (3.5 (2) 출발값)
+# 아래는 10/12 밤 보완 1번 점수(C가 B 동의로 넣음, docs/tasks/supplement.md 1-1). SCORE_FORMULA "none"·USE_SCORE_TAU False면 v9와 같다
+SCORE_FORMULA = "none"      # 후보 점수식: "none"(NaN), "margin"(대비 × 분류 문턱 여유), "snr"(대비 × √넓이), "shape"(대비 상한 × 길이·넓이). S1a~c τ 곡선을 보고 사용자가 고름
+SCORE_MARGIN_SCALE = 1.0    # 비원형도 단위, margin 식 여유 1 − e^(−거리/k)의 k. 문턱에서 1만큼 떨어지면 0.63
+SCORE_C_CAP = 4.0           # contrast(σ의 배수), shape 식에서 대비를 이 값에서 자름. 개발셋 균열 후보 contrast 90백분위 4.0(10/12 밤 측정). 진한 그림자·얼룩이 대비만으로 높은 점수를 받지 않게 (Plan.md 1.5)
+SCORE_LEN_REF = 90          # px, shape 식 균열 길이(둘레 ÷ 2)가 이 값 이상이면 길이 항 1. 개발셋 균열 후보 길이 중앙값 91.1px
+SCORE_AREA_REF = 80         # 픽셀 수, shape 식 포트홀 넓이가 이 값 이상이면 넓이 항 1. 개발셋 포트홀 후보 넓이 중앙값 79
+USE_SCORE_TAU = False       # 점수 문턱 켬·끔. True면 dark 방식에서 score ≥ SCORE_TAU_<종류>인 후보만 남김(SCORE_FORMULA가 none이면 ValueError)
+SCORE_TAU_CRACK = 0.0       # 균열 점수 문턱. E4에서 τ 곡선의 rule1 점(영상당 오검출 ≤ 2 중 균형 정확도 최대)으로 정하고, 6단계 ET에서 한 번 다시 씀
+SCORE_TAU_POTHOLE = 0.0     # 포트홀 점수 문턱. 정하는 법은 위와 같음
 
 # ===== C: 정량 측정 =====
 HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
