@@ -204,6 +204,7 @@ def extract_dark_regions(gray, road=None):
        (노면 픽셀이 하나도 없으면 띠 전체). σ = max(1.4826 × median(|rr − median(rr)|), DARK_SIGMA_MIN), D = max(r, 0).
        max(r, 0)의 MAD를 쓰면 D = 0이 절반을 넘어 σ = 0이 된다.
     4. 이중 문턱: 강 D ≥ max(DARK_K_HI × σ, DARK_ABS_MIN), 약 D ≥ DARK_K_LO × σ. 약 마스크의 연결 요소 중 강 픽셀을 품은 것만 남긴다.
+       (보완 2-1) DARK_SIGMA_LOCAL이면 σ는 위치마다의 국소 σ 지도(하한 = 전역 σ)이고 contrast도 픽셀마다 국소 σ로 나눈 평균이다.
     5. 닫힘(타원 DARK_CLOSE_KSIZE) 뒤 넓이 DARK_MIN_AREA 미만을 지운다(골재 무늬).
     6. 영역마다 area(픽셀 수), P(바깥 + 구멍 윤곽 길이, cv.RETR_CCOMP), thickness = 2A/P, dt_width, circ_inv = P²/(4πA),
        elong·fill·solidity(describe_regions), contrast = 영역 안 D의 평균 / σ, darkness(region_darkness)를 잰다.
@@ -253,8 +254,13 @@ def extract_dark_regions(gray, road=None):
             samples = residual[road_pixels]
     median = np.median(samples)
     sigma = max(1.4826 * float(np.median(np.abs(samples - median))), C.DARK_SIGMA_MIN)
+    if C.DARK_SIGMA_LOCAL:
+        # (보완 2-1, 12번) 국소 σ: 위치마다 주변 창에서 잰 잡음 크기. 골재 결이 거친 곳은 σ가 커져 문턱이 저절로 오른다.
+        # |잔차 − 중앙값|을 1/DARK_BG_DOWNSCALE로 줄여 창(띠 높이 × DARK_SIGMA_LOCAL_FRAC)의 중앙값을 잰 뒤 1.4826배, 하한은 전역 σ.
+        spread = np.clip(np.rint(np.abs(residual - median)), 0, 255).astype(np.uint8)
+        sigma = np.maximum(1.4826 * median_background(spread, max(3.0, h * C.DARK_SIGMA_LOCAL_FRAC / scale)), sigma)
     darkness = np.maximum(residual, 0)
-    strong = darkness >= max(C.DARK_K_HI * sigma, C.DARK_ABS_MIN)
+    strong = darkness >= (np.maximum(C.DARK_K_HI * sigma, C.DARK_ABS_MIN) if np.ndim(sigma) else max(C.DARK_K_HI * sigma, C.DARK_ABS_MIN))
     weak = (darkness >= C.DARK_K_LO * sigma).astype(np.uint8)
     count, weak_labels = cv.connectedComponents(weak, connectivity=8)
     keep = np.zeros(count, dtype=bool)
@@ -284,7 +290,10 @@ def extract_dark_regions(gray, road=None):
         if perimeter > 0:
             region["thickness"] = float(2.0 * area / perimeter)
             region["circ_inv"] = float(perimeter ** 2 / (4.0 * np.pi * area))
-        region["contrast"] = float(darkness[y:y + rh, x:x + rw][component].mean() / sigma)
+        if np.ndim(sigma):                              # 국소 σ: 픽셀마다 나눈 평균
+            region["contrast"] = float((darkness[y:y + rh, x:x + rw][component] / sigma[y:y + rh, x:x + rw][component]).mean())
+        else:
+            region["contrast"] = float(darkness[y:y + rh, x:x + rw][component].mean() / sigma)
         # 점수는 종류가 정해진 뒤 detect_cracks·detect_potholes가 score에 넣는다(보완 1-1)
         region["score_crack"], region["score_pothole"] = region_scores(region, perimeter)
     return regions, mask
