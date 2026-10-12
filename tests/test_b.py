@@ -758,6 +758,41 @@ def test_score_tau_filters():
             raise AssertionError("점수식 none에서 τ를 켰는데 ValueError가 나지 않음(후보가 모두 지워짐)")
 
 
+def local_sigma_scene():
+    """국소 σ 시험 띠(240×640): 왼쪽 절반은 거친 골재 결(가우시안 잡음 σ 14를 3px로 흐림), 오른쪽 절반은 매끈한 노면(σ 3).
+    양쪽에 같은 진하기(배경 − 45)의 가로 균열 선을 하나씩 그린다."""
+    rng = np.random.default_rng(5)
+    gray = np.full((240, 640), 130.0)
+    rough = cv.GaussianBlur(rng.normal(0, 14, (240, 320)), (0, 0), 1.2) * 2.2
+    gray[:, :320] += rough
+    gray[:, 320:] += rng.normal(0, 3, (240, 320))
+    gray = gray.clip(0, 255).astype(np.uint8)
+    cv.line(gray, (40, 120), (280, 132), 85, 3)
+    cv.line(gray, (360, 120), (600, 132), 85, 3)
+    return gray
+
+
+def test_dark_local_sigma_texture():
+    """(보완 2-1) DARK_SIGMA_LOCAL을 켜면 결이 거친 쪽의 잡티 후보가 줄고, 두 균열 선은 그대로 남는다. 끄면 지금과 같다(전역 σ 하나)."""
+    gray = local_sigma_scene()
+
+    def run(local):
+        with config_values(DETECT_MODE="dark", DARK_SIGMA_LOCAL=local, SCORE_FORMULA="none", USE_SCORE_TAU=False):
+            return extract_dark_regions(gray)[0]
+
+    def side(regions, left):
+        return [r for r in regions if (r["bbox"][0] + r["bbox"][2] / 2 < 320) == left]
+
+    def has_line(regions, x0, x1):
+        return any(r["bbox"][0] <= x0 + 20 and r["bbox"][0] + r["bbox"][2] >= x1 - 20 and r["bbox"][2] >= 150 for r in regions)
+
+    off, on = run(False), run(True)
+    rough_off, rough_on = side(off, True), side(on, True)
+    assert len(rough_on) < len(rough_off), ("거친 쪽 후보가 줄지 않음", len(rough_off), len(rough_on))
+    assert has_line(on, 40, 280) and has_line(on, 360, 600), ("국소 σ에서 균열 선이 사라짐", [r["bbox"] for r in on])
+    assert len(side(on, False)) == len(side(off, False)), ("매끈한 쪽 후보 수가 바뀜", len(side(off, False)), len(side(on, False)))
+
+
 def test_existing_tests_in_dark_mode():
     """기존 합성 시험(균열 모양·밝은 선·포트홀·빈 영상)을 DETECT_MODE='dark'에서도 모두 통과한다. C 메모리 확인: 통과."""
     with config_values(DETECT_MODE="dark"):
