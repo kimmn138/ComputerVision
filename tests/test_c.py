@@ -1510,20 +1510,22 @@ def test_run_all_plan():
     e3s = parse_quietly(et.parse_args, first("E3s")[0])
     check(e3s.param_set is None and e3s.overrides == {"USE_ROAD_MASK": True, "ROI_TOP_DEFAULT": 0.5, "DETECT_MODE": "dark",
                                                       "DARK_SIGMA_IN_ROAD": False}, f"run_all: E3σ의 옵션이 틀림 ({e3s.overrides})")
+    # (10/13) 점수 문턱(E4) 채택 전에 돈 단계는 실행 중에만 점수를 끈다(SCORE_BEFORE_E4). final은 늘 config 그대로
+    score_off = {"SCORE_FORMULA": "none", "USE_SCORE_TAU": False}
     argv, pins = first("F39e0")
     base = {k: v for k, v in et.PARAM_SETS[0].items() if k != "name"}
     check(pins == {**base, "ROI_TOP_DEFAULT": 0.5, "AUTO_BAND_TOP": False} and "--roi-top" not in argv
           and argv[-2:] == ["--name", "e0_final_ratio"],
           f"run_all: 39장 1차 설정이 1차 값을 실행 중에만 덮지 않음 ({argv}, {sorted(pins)})")
     check(first("E3_39") == (["--roi", "auto", "--detect", "dark", "--mask", "on", "--roi-top", "0.5", "--name", "e3_dark_mask_auto"],
-                             {"DARK_SIGMA_IN_ROAD": True, "AUTO_BAND_TOP": False, "ROAD_KEEP_RULE": "center"}),
+                             {"DARK_SIGMA_IN_ROAD": True, "AUTO_BAND_TOP": False, "ROAD_KEEP_RULE": "center", **score_off}),
           f"run_all: 39장 E3 자동 ROI의 명령·고정 값이 틀림 ({first('E3_39')})")
-    check(first("TR") == (["--split", "test", "--name", "test_ratio"], {}) and first("F39") == (["--roi", "csv", "--name", "final_ratio"], {})
-          and first("E5") == (["--split", "dev", "--name", "e5_ratio_dev"], {}) and first("RR")[1] == {},
+    check(first("TR") == (["--split", "test", "--name", "test_ratio"], score_off) and first("F39") == (["--roi", "csv", "--name", "final_ratio"], {})
+          and first("E5") == (["--split", "dev", "--name", "e5_ratio_dev"], {}) and first("RR")[1] == score_off,
           "run_all: 최종 설정 실행에 config를 바꾸는 옵션이 붙음")
     # 띠 고정 시절 시험셋(test_once·final_test)과 띠를 비율로 정한 실험은 자동 띠를 켠 뒤에도 띠 고정으로 돈다.
     # ratio 채택(10/12) 전에 돈 실험(비교·자동 띠·test_once·test_autoband)은 남기기 규칙도 처음처럼 center로 돈다
-    center = {"ROAD_KEEP_RULE": "center"}
+    center = {"ROAD_KEEP_RULE": "center", **score_off}
     check(first("T") == (["--split", "test", "--name", "test_once"], {"AUTO_BAND_TOP": False, **center})
           and first("R")[1] == {"AUTO_BAND_TOP": False, **center} and first("E3")[1] == {"AUTO_BAND_TOP": False, **center},
           f"run_all: 띠 고정 실험에 AUTO_BAND_TOP=False·center를 고정하지 않음 ({first('T')}, {first('R')}, {first('E3')})")
@@ -1532,13 +1534,13 @@ def test_run_all_plan():
           f"run_all: ratio 채택 전 실험에 남기기 center를 고정하지 않음 ({first('TA')})")
     m2 = parse_quietly(et.parse_args, first("M2")[0])
     m2_39 = parse_quietly(rx.parse_args, first("M2_39")[0])
-    check(m2 is not None and m2.overrides == {"ROAD_KEEP_RULE": "center", "ROAD_LANE_BRIDGE": True} and first("M2")[1] == {}
+    check(m2 is not None and m2.overrides == {"ROAD_KEEP_RULE": "center", "ROAD_LANE_BRIDGE": True} and first("M2")[1] == score_off
           and m2_39 is not None and rx.runtime_overrides(m2_39) == {"ROAD_KEEP_RULE": "center", "ROAD_LANE_BRIDGE": True}
           and m2_39.roi == "auto" and parse_quietly(et.parse_args, first("M1")[0]).overrides == {"ROAD_KEEP_RULE": "ratio"},
           f"run_all: 노면 마스크 보완 비교(M1·M2)의 --set이 틀림 ({first('M2')}, {first('M2_39')})")
     b1 = parse_quietly(et.parse_args, first("B1")[0])
     check(b1 is not None and b1.overrides.get("AUTO_BAND_TOP") is True and b1.overrides.get("AUTO_BAND_USE_TEXTURE") is False
-          and first("B1")[1] == {"ROAD_KEEP_RULE": "center"}, f"run_all: B1(자동 띠, 결 없음)의 옵션이 틀림 ({first('B1')})")
+          and first("B1")[1] == {"ROAD_KEEP_RULE": "center", **score_off}, f"run_all: B1(자동 띠, 결 없음)의 옵션이 틀림 ({first('B1')})")
     b39 = parse_quietly(rx.parse_args, first("B1_39")[0])
     check(b39 is not None and rx.runtime_overrides(b39).get("AUTO_BAND_TOP") is True
           and rx.runtime_overrides(b39).get("AUTO_BAND_USE_TEXTURE") is False and b39.roi == "auto",
@@ -1835,6 +1837,13 @@ def test_run_all_supp_plan():
         check(args is not None and args.split == "dev" and args.tau_curve and args.overrides.get("SCORE_FORMULA") == formulas[e["id"]],
               f"run_all supp {e['id']}: 명령이 개발셋·--tau-curve·점수식이 아님 ({' '.join(argv)})")
         check("ROAD_KEEP_RULE" not in pins, f"run_all supp {e['id']}: 남기기 규칙을 center로 고정함 ({pins})")
+        check("USE_SCORE_TAU" not in pins and args.overrides.get("USE_SCORE_TAU") is False,
+              f"run_all supp {e['id']}: 점수식 비교 행이 τ를 끄지 않음 ({pins}, {args.overrides})")
+    for sid in ("E3", "B1", "M1", "E3_39"):          # E4 전에 돈 단계는 config에 τ가 켜져도 실행 중에만 점수를 끔(처음과 같은 조건)
+        _, pins = ra.command(ra.EXP[sid], ra.resolve(ra.EXP[sid], {"E0"}))
+        check(pins.get("USE_SCORE_TAU") is False and pins.get("SCORE_FORMULA") == "none", f"run_all {sid}: 점수를 끄지 않음 ({pins})")
+    e4 = ra.command(ra.EXP["E4s"], ra.resolve(ra.EXP["E4s"], {"E0"}))
+    check("USE_SCORE_TAU" not in e4[1] and "--tau-curve" in e4[0], f"run_all E4s: config τ 그대로가 아님 ({e4})")
     with tempfile.TemporaryDirectory() as tmp:
         paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
         with contextlib.redirect_stdout(io.StringIO()) as printed:

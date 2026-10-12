@@ -86,6 +86,8 @@ DONE_TEST_STAGES = {"test": "test_once, 10/12 00:49", "repro": "final_test",
                     "retest": "test_autoband, 10/12 03:00", "retest_repro": "final_test_autoband",
                     "retest_ratio": "test_ratio, 10/12 06:38", "retest_ratio_repro": "final_test_ratio"}
 KEEP_BEFORE_RATIO = "center"        # ratio 채택(10/12) 전의 남기기 규칙
+SCORE_STAGES = ("supp", "final")   # 점수 문턱(E4, 10/13 채택)을 config대로 쓰는 단계(final은 늘 config 그대로). 나머지(E4 전에 돈 단계)는 실행 중에만 점수를 끔
+SCORE_BEFORE_E4 = {"SCORE_FORMULA": "none", "USE_SCORE_TAU": False}
 FINAL_CONFIG_EXP = "E5"                 # retest 전에 지금 config를 대조할 최종 단계 실험(config 그대로 돈 개발셋)
 REPORT_DIR = "report"               # 표는 results/report/
 DECISION_FILES = {"accept": "accept.txt", "reject": "reject.txt"}   # 사람이 정한 채택·되돌림(다음 단계에서 표를 다시 만들어도 유지되게)
@@ -144,10 +146,13 @@ MASK2_DECISIONS = {"M1": "규칙 2 미달, 예외 채택: 판정이 바뀐 사�
 MASK_GT_IDS = ("E3", "M0", "M2", "M3")
 # 보완 비교(supp, 10/12 밤~, docs/tasks/supplement.md 4.1): (id, 개발셋 폴더, 이름, 실행 중에만 바꿀 config 값, 비교 기준 id, 판정 행, 판정 방식)
 # 판정 방식: "base" = 비교 기준 없음, "curve" = 곡선만 비교(채택 판정 없음), "tau" = τ 없음 점 대비 rule1 점(E4), "rules" = 규칙 1~3
-SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없음)", {"SCORE_FORMULA": "none"}, None, "off", "base"),
-             ("S1a", "score_ga_dev", "점수식 margin(대비 × 분류 문턱 여유)", {"SCORE_FORMULA": "margin"}, "S0", "off", "curve"),
-             ("S1b", "score_na_dev", "점수식 snr(대비 × √넓이)", {"SCORE_FORMULA": "snr"}, "S0", "off", "curve"),
-             ("S1c", "score_da_dev", "점수식 shape(대비 상한 × 길이·넓이)", {"SCORE_FORMULA": "shape"}, "S0", "off", "curve"),
+SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없음)", {"SCORE_FORMULA": "none", "USE_SCORE_TAU": False},
+              None, "off", "base"),
+             ("S1a", "score_ga_dev", "점수식 margin(대비 × 분류 문턱 여유)", {"SCORE_FORMULA": "margin", "USE_SCORE_TAU": False},
+              "S0", "off", "curve"),
+             ("S1b", "score_na_dev", "점수식 snr(대비 × √넓이)", {"SCORE_FORMULA": "snr", "USE_SCORE_TAU": False}, "S0", "off", "curve"),
+             ("S1c", "score_da_dev", "점수식 shape(대비 상한 × 길이·넓이)", {"SCORE_FORMULA": "shape", "USE_SCORE_TAU": False},
+              "S0", "off", "curve"),
              ("E4s", "e4s_score_dev", "E4 점수 문턱: margin, fp2 점 τ(config)", {}, "S0", "off", "tau"),
              ("E5s", "e5s_score_dev", "E5 E4 설정의 전처리 끔·켬(참고)", {}, "E4s", "on", "curve"))
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),)   # 39장 참고 실행(채택 판단에 쓰지 않음)
@@ -408,6 +413,8 @@ def command(exp, opts):
         argv += ["--set", f"{name}={value}"]
     if exp["stage"] not in RATIO_STAGES and "ROAD_KEEP_RULE" not in sets and exp["tool"] != "match":
         pins["ROAD_KEEP_RULE"] = KEEP_BEFORE_RATIO
+    if exp["stage"] not in SCORE_STAGES and exp["tool"] != "match":
+        pins.update({k: v for k, v in SCORE_BEFORE_E4.items() if k not in sets})   # E4 전에 돈 단계는 다시 돌려도 처음과 같은 조건
     return argv + ["--name", exp["name"]], pins
 
 
