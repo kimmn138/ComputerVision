@@ -1339,7 +1339,8 @@ def test_tau_grid_small():
 
 def test_tau_points_pick():
     """동작점 고르기: fp1·fp2는 영상당 오검출이 1·2 이하인 점 가운데 민감도 최대(같으면 특이도 → 균형 정확도 → 분위 합이 작은 쪽),
-    rule1은 오검출 2 이하에서 균형 정확도 최대(같으면 민감도 → 분위 합이 작은 쪽), none은 τ 없음. 없으면 NaN과 note."""
+    rule1(규칙 2·3을 재는 점)은 10/13 사용자 결정으로 fp2와 같은 방법으로 고른다(처음의 '균형 정확도 최대'는 곡선이 50% 아래면
+    모두 지우는 점으로 미끄러짐). none은 τ 없음. 없으면 NaN과 note."""
     from tools import evaluate_train as et
     inf = math.inf
     curve = pd.DataFrame([
@@ -1351,10 +1352,20 @@ def test_tau_points_pick():
         {"tau_crack": 4.0, "tau_pothole": 3.0, "q_crack": 0.9, "q_pothole": 0.8, "sensitivity": 0.3, "specificity": 0.6, "balanced": 0.45, "fp_per_image": 0.7}])
     points = et.tau_points(curve)
     pick = {p: (r["tau_crack"], r["tau_pothole"]) for p, r in points.items()}
-    check(pick["none"] == (-inf, -inf) and pick["fp2"] == (1.0, 2.0) and pick["fp1"] == (3.0, 3.0) and pick["rule1"] == (2.0, 1.0),
+    check(pick["none"] == (-inf, -inf) and pick["fp2"] == (1.0, 2.0) and pick["fp1"] == (3.0, 3.0) and pick["rule1"] == (1.0, 2.0),
           f"tau_points: 고른 점이 틀림 ({pick})")
     empty = et.tau_points(curve[curve["fp_per_image"] > 1.0])
     check(math.isnan(empty["fp1"]["sensitivity"]) and "불가" in empty["fp1"]["note"], "tau_points: 오검출 1 이하 점이 없는데 NaN·note가 아님")
+
+
+def test_tau_image_rows():
+    """τ 점 하나에서 영상별 판정(판정이 바뀐 사진을 세는 데 씀): tau_scene에서 τ 균열 4.5·포트홀 −∞이면
+    a(균열 5.0 남음)·b(포트홀 3.0 남음) 맞힘, c(균열 1.0 지워져 후보 0개) 맞힘, d(포트홀 6.0 남음) 틀림, e(균열 2.5 지워짐) 놓침."""
+    from tools import evaluate_train as et
+    heights, gts, scored = tau_scene()
+    rows = {r["image"]: (r["has_damage"], r["correct"]) for r in et.tau_image_rows(list(heights), scored, gts, 4.5, -math.inf)}
+    check(rows == {"a.jpg": (True, True), "b.jpg": (True, True), "c.jpg": (False, True), "d.jpg": (False, False), "e.jpg": (True, False)},
+          f"tau_image_rows: 영상별 판정이 틀림 ({rows})")
 
 
 def test_tau_none_matches_summary():
@@ -1881,6 +1892,25 @@ def test_run_all_rule1_tau():
           "supp_table curve: 곡선 비교 행을 판정함 또는 값이 빠짐")
 
 
+def test_run_all_only():
+    """--only: 단계 안에서 고른 실험만 계획·실행한다. 단계에 없는 이름은 거부한다(끝 코드 2, argparse)."""
+    from tools import run_all as ra
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["supp", "--dry-run", "--only", "E4s"], paths)
+        text = printed.getvalue()
+        check(code == 0 and "실험 1개" in text and "e4s_score_dev" in text and "score_ga_dev" not in text,
+              "run_all --only E4s: 고른 실험만 보여 주지 않음")
+        with contextlib.redirect_stderr(io.StringIO()):
+            try:
+                ra.main(["supp", "--dry-run", "--only", "E1"], paths)
+                bad = False
+            except SystemExit as e:
+                bad = e.code == 2
+        check(bad, "run_all --only: 단계에 없는 실험(E1)을 거부하지 않음")
+
+
 def test_run_all_report_empty():
     """결과 폴더가 하나도 없어도 표 만들기(1~8번, 채택 표, summary.md)가 끝까지 돌고, 실험마다 상태만 적으며 잠정 채택은 E0다."""
     from tools import run_all as ra
@@ -1946,11 +1976,11 @@ def main():
                test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_cloudy_sky, test_auto_band_csv_rule, test_auto_band_options,
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
-               test_train_options, test_chance_control, test_tau_grid_small, test_tau_points_pick, test_tau_none_matches_summary, test_degrade, test_degrade_noise_per_photo,
+               test_train_options, test_chance_control, test_tau_grid_small, test_tau_points_pick, test_tau_image_rows, test_tau_none_matches_summary, test_degrade, test_degrade_noise_per_photo,
                test_degrade_option_and_judge, test_degrade_main,
                test_run_all_plan, test_run_all_resolve, test_run_all_adoption, test_run_all_grid, test_run_all_ready,
                test_run_all_refuse, test_run_all_retest_refuse, test_run_all_done_tests_blocked, test_run_all_supp_plan,
-               test_run_all_rule1_tau, test_run_all_report_empty,
+               test_run_all_rule1_tau, test_run_all_only, test_run_all_report_empty,
                test_run_all_judgement):
         try:
             fn()

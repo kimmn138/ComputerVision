@@ -33,7 +33,8 @@
 남기기 규칙(config ROAD_KEEP_RULE): ratio 채택 전에 돈 실험(비교·자동 띠·시험 단계)은 실행 중에만 'center'로 고정해, 다시 돌려도 처음과 같은 조건이다.
 - supp: (10/12 밤, 보완) 개발셋에서 보완 항목을 하나씩 더하며 --tau-curve로 돌리고, 채택 규칙을 τ 곡선의 동작점으로 판정한다
   (docs/tasks/supplement.md 4.1). 규칙 1 = fp1·fp2 민감도가 둘 다 안 떨어지고 하나 이상 오름, 규칙 2·3 = 각 실행 자신의 rule1 점
-  (영상당 오검출 2개 이하 중 균형 정확도 최대)의 균형 정확도·우연 뺀 균열 재현율. 표 14(table14_supp)·15(table15_tau_points).
+  (10/13부터 fp2 점: 영상당 오검출 2개 이하 중 민감도 최대)의 균형 정확도·우연 뺀 균열 재현율. 표 14(table14_supp)·15(table15_tau_points).
+  --only S12,E5s처럼 단계 안의 실험만 골라 돌릴 수 있다(앞 행을 다시 돌리지 않으려고).
 - tables: 실험은 돌리지 않고 있는 결과 폴더로 표만 다시 만든다.
 자동 띠 높이(config AUTO_BAND_TOP): 띠 위쪽 비율을 옵션으로 정한 실험(E0~E3, 39장 1차 설정, 시험셋 1차)과 띠 고정 시절의 시험셋 실행
 (test_once·final_test)은 실행 중에만 AUTO_BAND_TOP=False로 고정해, 자동 띠를 켠 뒤에 다시 돌려도 처음과 같은 조건이다.
@@ -146,10 +147,17 @@ MASK_GT_IDS = ("E3", "M0", "M2", "M3")
 SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없음)", {"SCORE_FORMULA": "none"}, None, "off", "base"),
              ("S1a", "score_ga_dev", "점수식 margin(대비 × 분류 문턱 여유)", {"SCORE_FORMULA": "margin"}, "S0", "off", "curve"),
              ("S1b", "score_na_dev", "점수식 snr(대비 × √넓이)", {"SCORE_FORMULA": "snr"}, "S0", "off", "curve"),
-             ("S1c", "score_da_dev", "점수식 shape(대비 상한 × 길이·넓이)", {"SCORE_FORMULA": "shape"}, "S0", "off", "curve"))
+             ("S1c", "score_da_dev", "점수식 shape(대비 상한 × 길이·넓이)", {"SCORE_FORMULA": "shape"}, "S0", "off", "curve"),
+             ("E4s", "e4s_score_dev", "E4 점수 문턱: margin, fp2 점 τ(config)", {}, "S0", "off", "tau"),
+             ("E5s", "e5s_score_dev", "E5 E4 설정의 전처리 끔·켬(참고)", {}, "E4s", "on", "curve"))
+SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),)   # 39장 참고 실행(채택 판단에 쓰지 않음)
 SUPP_IDS = tuple(r[0] for r in SUPP_RUNS)
-SUPP_DECISIONS = {"S1a": "곡선 비교(점수식은 사용자가 고름)", "S1b": "곡선 비교(점수식은 사용자가 고름)",
-                  "S1c": "곡선 비교(점수식은 사용자가 고름)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동작점(fp1·fp2) 민감도가 셋 중 가장 높음",
+                  "S1b": "곡선 비교(고르지 않음)", "S1c": "곡선 비교(고르지 않음)",
+                  "E4s": "예외 채택(사용자, 10/13): 규칙 3은 후보를 만드는 방법을 바꿀 때 균열 맞힘을 잃지 않게 하려는 규칙인데, "
+                         "E4는 같은 후보에서 동작점을 고르는 일이고 Plan.md 3.5 (3)이 E4의 목적을 '오검출 2개 이하 τ'로 정함. "
+                         "손실(우연 뺀 균열 재현율 감소)은 보고서에 그대로 적음",
+                  "E5s": "참고(전처리 끔·켬, 판정 행 켬)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
@@ -167,7 +175,7 @@ EXPERIMENTS = [
     # E4 자리 (Should, Plan.md 3.2 (3)·3.10): B가 후보 score를 채우고 evaluate_train에 τ 곡선(영상당 오검출 1·2개의 민감도)이 생기면
     # todo를 지우고 tool·opts(E3 설정 + τ 옵션)를 주며, rule1()을 같은 동작점의 민감도 비교로 바꾼다
     _exp("E4", "compare", None, "e4_score_dev", "E4 점수 문턱 τ (Should)", split="dev", adopt=True,
-         todo="점수 τ(Should: B의 score와 evaluate_train τ 곡선이 생긴 뒤)"),
+         todo="점수 τ: 보완 비교(supp) 단계의 E4s에서 돔(docs/tasks/supplement.md 1-3)"),
     # 39장 자동 ROI (참고): 손으로 정한 ROI 없이 도는지(확정본 6장 E1, 교수님 질문 'ROI 자동 설정'). 채택 판단에는 쓰지 않는다
     _exp("E1_39", "compare", "run39", "e1_mask_auto", "E1 39장 자동 ROI (참고)", {**FIRST, "mask": "on"}, roi="auto", reference=True),
     _exp("E3_39", "compare", "run39", "e3_dark_mask_auto", "E3 39장 자동 ROI (참고)", {**DARK, "mask": "on", "sigma_in_road": True},
@@ -203,6 +211,8 @@ EXPERIMENTS = [
     # 보완 비교 (10/12 밤~, 개발셋): 모든 실행에 τ 곡선. 판정은 τ 곡선의 동작점(supp_table)
     *[_exp(sid, "supp", "train", folder, label, {"sets": sets, "tau_curve": True}, split="dev", reference=True,
            supp_base=base, judge_row=row, judge=judge) for sid, folder, label, sets, base, row, judge in SUPP_RUNS],
+    *[_exp(sid, "supp", "run39", folder, label, {"sets": sets}, roi="auto", reference=True)
+      for sid, folder, label, sets in SUPP39_RUNS],
     # 시험셋 세 번째 재기 (10/12, ratio 채택 뒤): 최종 설정(config 그대로)으로 한 번만, 그다음 같은 코드로 재현 확인
     _exp("TR", "retest_ratio", "train", "test_ratio", "시험셋 최종 설정(자동 띠 + 결 + ratio, 한 번만)", split="test"),
     _exp("RR", "retest_ratio_repro", "train", "final_test_ratio", "시험셋 재현 확인(자동 띠 + 결 + ratio)", split="test"),
@@ -295,6 +305,7 @@ def parse_args(argv=None):
                                          "주지 않으면 지난번 값(results/report/accept.txt)")
     parser.add_argument("--reject", help="사람이 되돌리기로 정한 단계(예: 규칙 1에서 뺀 것)를 쉼표로(예: E1,E3). 빈 값('')이면 지움. "
                                          "주지 않으면 지난번 값(results/report/reject.txt)")
+    parser.add_argument("--only", help="단계 안에서 이 실험만 쉼표로(예: S12,E5s). 앞 행을 다시 돌리지 않으려고 쓴다")
     parser.add_argument("--force", help="A·B 시험의 @todo가 남아 있어도 쓸 기능을 쉼표로: dark, mask. "
                                         f"그 기능을 쓴 실험은 표에 '{FORCED_MARK}'으로 남는다")
     args = parser.parse_args(argv)
@@ -302,9 +313,10 @@ def parse_args(argv=None):
         value = getattr(args, flag)
         if value is not None:
             ids = [s.strip() for s in value.split(",") if s.strip()]
-            bad = [s for s in ids if s not in ADOPT_ORDER]
+            choices = ADOPT_ORDER + list(SUPP_IDS)
+            bad = [s for s in ids if s not in choices]
             if bad:
-                parser.error(f"--{flag}는 {', '.join(ADOPT_ORDER)} 가운데서만 고른다: {', '.join(bad)}")
+                parser.error(f"--{flag}는 {', '.join(choices)} 가운데서만 고른다: {', '.join(bad)}")
             setattr(args, flag, ids)
     both = set(args.accept or []) & set(args.reject or [])
     if both:
@@ -314,6 +326,12 @@ def parse_args(argv=None):
     if bad:
         parser.error(f"--force는 {', '.join(SIGNALS)} 가운데서만 고른다: {', '.join(bad)}")
     args.force = set(force)
+    args.only = [s.strip() for s in (args.only or "").split(",") if s.strip()] or None
+    if args.only:
+        known = {e["id"] for e in EXPERIMENTS if e["stage"] == args.stage}
+        bad = [s for s in args.only if s not in known]
+        if bad:
+            parser.error(f"--only는 {args.stage} 단계의 실험({', '.join(sorted(known))}) 가운데서만 고른다: {', '.join(bad)}")
     return args
 
 
@@ -884,7 +902,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
     """한 단계를 돈다: 거부 조건 → 실행 전 확인 → 건너뛸 실험·시작 확인 → 실험을 차례로 → 표 만들기. 끝 코드는 main과 같다.
     비교 단계는 E0와 채택 단계가 끝날 때마다 잠정 판정(adoption, 사람이 정한 --accept·--reject가 앞섬)을 다시 내어
     뒤 실험의 설정(resolve)에 반영한다. human = {"accept": [...], "reject": [...]}"""
-    exps = [e for e in EXPERIMENTS if e["stage"] == stage]
+    exps = [e for e in EXPERIMENTS if e["stage"] == stage and (not getattr(args, "only", None) or e["id"] in args.only)]
     ready = readiness(args.force)
     results_dir = Path(paths["results"])
     refusal = stage_refusal(stage, results_dir)
@@ -1580,6 +1598,14 @@ def tau_points_of(paths, exp, state):
     return None if df is None else {(row["preprocess"], row["point"]): row for _, row in df.iterrows()}
 
 
+def tau_images_of(paths, exp, state):
+    """evaluate_train --tau-curve의 영상별 판정(tau_images.csv)을 {(전처리, 점): {사진: 맞힘}}으로. 없으면 None."""
+    df = read_csv(Path(paths["results"]) / exp["name"] / et.TAU_IMAGES_NAME) if state["done"] else None
+    if df is None:
+        return None
+    return {key: dict(zip(part["image"], part["correct"].astype(str) == "True")) for key, part in df.groupby(["preprocess", "point"])}
+
+
 def rule1_tau(base, cur):
     """채택 규칙 1(같은 동작점, 결정 10/12 밤): 영상당 오검출 1·2개 동작점(fp1·fp2)의 민감도가 둘 다 떨어지지 않고 하나 이상 오르면 통과.
     소수 여섯째 자리에서 반올림해 견준다(passes와 같음). 한쪽이라도 값이 없으면(그 동작점이 없음) None. base·cur는 {"fp1": 민감도, "fp2": 민감도}."""
@@ -1621,6 +1647,12 @@ def supp_table(paths, states):
             r1 = None if judge == "tau" else rule1_tau({p: get(base_pts, p, "sensitivity") for p in ("fp1", "fp2")},
                                                        {p: get(points, p, "sensitivity") for p in ("fp1", "fp2")})
             r2, r3 = passes(d_bal, lambda d: d > 0), passes(d_net, lambda d: d >= -RULE3_DROP)
+            mine, theirs = tau_images_of(paths, exp, state), tau_images_of(paths, base_exp, states[base_exp["id"]])
+            if mine and theirs and (mode, "rule1") in mine and (mode, ref) in theirs:
+                a, b = theirs[(mode, ref)], mine[(mode, "rule1")]
+                changed = sorted(n for n in a if n in b and a[n] != b[n])
+                row.update({"changed_images": len(changed), "changed_list": ", ".join(changed[:8]) + (" …" if len(changed) > 8 else ""),
+                            "rule1_accuracy": get(points, "rule1", "accuracy")})
             row.update({"rule1": "해당 없음(같은 후보에서 τ만 고름)" if judge == "tau" else rule_text(r1),
                         "rule2": rule_text(r2), "rule3": rule_text(r3), "balanced_diff": d_bal, "crack_net_diff": d_net,
                         "auto": "규칙 통과" if r2 and r3 and (judge == "tau" or r1) else "되돌림"})
@@ -1629,7 +1661,8 @@ def supp_table(paths, states):
                 "fp1_sens", "fp1_spec", "fp2_sens", "fp2_spec"]
                + [f"rule1_{c}" for c in ("tau_crack", "tau_pothole", "sensitivity", "specificity", "balanced", "fp_per_image",
                                           "crack_ctr_recall_net")]
-               + ["balanced_diff", "crack_net_diff", "rule1", "rule2", "rule3", "auto", "decision"])
+               + ["rule1_accuracy", "changed_images", "changed_list", "balanced_diff", "crack_net_diff", "rule1", "rule2", "rule3",
+                  "auto", "decision"])
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -2048,7 +2081,7 @@ def summary_lines(r):
 def supp_lines(table):
     """14번 보완 비교 줄: 실행마다 τ 없음·fp1·fp2 민감도, rule1 점(τ·민감도·특이도·균형 정확도·오검출·우연 뺀 균열), 규칙 판정."""
     lines = ["## 14. 보완 비교 (개발셋, τ 곡선의 동작점, docs/tasks/supplement.md 4.1)", "",
-             "fp1·fp2 = 영상당 오검출 1·2개 이하에서 민감도 최대인 점(규칙 1), rule1 = 오검출 2개 이하에서 균형 정확도 최대인 점(규칙 2·3을 재는 점). "
+             "fp1·fp2 = 영상당 오검출 1·2개 이하에서 민감도 최대인 점(규칙 1), rule1 = 규칙 2·3을 재는 점(10/13부터 fp2 점과 같음). "
              "동작점마다의 모든 지표는 table15_tau_points.csv에 있다.", ""]
     done = table[table["none_sens"].notna()] if len(table) and "none_sens" in table else table.iloc[0:0]
     if not len(done):
