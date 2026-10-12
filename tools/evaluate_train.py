@@ -44,6 +44,7 @@ from pathlib import Path
 
 import cv2 as cv
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import run_experiment as rx  # noqa: E402
@@ -103,6 +104,18 @@ MEAN_COLUMNS = [f"{name}_mean" for name in MEAN_SOURCES]
 
 # 상태 판정 적중(인위 저하일 때 켬 행): 고를 전처리 이름, 저하 사진에서 고른 비율, 같은 사진의 저하 없는 원본에서 고른 비율
 JUDGE_COLUMNS = ["judge_expect", "judge_hit_rate", "judge_base_rate"]
+
+# 점수 문턱 τ 곡선(--tau-curve, 보완 1-2, docs/tasks/supplement.md 3장). 지표 이름은 summarize의 요약 열과 같다
+TAU_METRICS = ["sensitivity", "specificity", "accuracy", "baseline_none", "balanced", "fp_per_image", "pred_per_image",
+               "crack_ctr_recall", "crack_ctr_recall_chance", "crack_ctr_recall_net",
+               "pothole_ctr_recall", "pothole_ctr_recall_chance", "pothole_ctr_recall_net"]
+TAU_COUNTS = ["n_images", "n_damage", "n_none"]
+TAU_FP_POINTS = {"fp1": 1.0, "fp2": 2.0}   # 영상당 오검출 1개·2개 동작점(채택 규칙 1, Plan.md 3.10)
+TAU_RULE1_FP = 2.0                         # 규칙 ①: 영상당 오검출 2개 이하인 점 가운데 균형 정확도 최대(rule1 점, 채택 규칙 2·3을 재는 곳)
+TAU_POINT_NAMES = ("none", "fp1", "fp2", "rule1", "config")
+TAU_CURVE_NAME = "tau_curve.csv"
+TAU_POINTS_NAME = "tau_points.csv"
+TAU_FIGURE_NAME = "tau_curve.png"
 
 
 # ---------------------------------------------------------
@@ -313,6 +326,13 @@ def parse_args(argv=None):
         choices=DEGRADE_KINDS,
         default="none",
         help="인위 저하(E6): 640px 컬러에 띠를 자르기 전 화질을 떨어뜨림. none(기본)·blur·dark·bright·noise, 값은 config C 구역 DEGRADE_*",
+    )
+
+    parser.add_argument(
+        "--tau-curve",
+        action="store_true",
+        help="점수 문턱 τ 곡선(보완 1-2): 모든 후보의 점수로 τ 격자마다 지표를 다시 세어 tau_curve.csv·tau_points.csv·tau_curve.png를 씀. "
+             "USE_SCORE_TAU가 켜져 있으면 τ를 끈 검출을 한 번 더 함",
     )
 
     args = parser.parse_args(argv)
@@ -635,6 +655,231 @@ def chance_found(names, heights, preds, gts):
     return found, truth, skipped
 
 
+def scored_boxes(out):
+    """run_pipeline 결과의 후보를 종류별 (640px 전체 좌표 상자, 점수) list로. τ 곡선은 점수로 후보를 걸러 지표를 다시 센다."""
+    regions = {"crack": out["cracks"], "pothole": out["potholes"]}
+    return {kind: list(zip(rx.to_full_boxes(regions[kind], out["y0"]), (r["score"] for r in regions[kind]))) for kind in KINDS}
+
+
+def predict_all_candidates(bgr, roi, use_preprocess):
+    """점수 문턱(USE_SCORE_TAU)만 잠시 끄고 검출해 τ로 거르기 전의 모든 후보를 얻는다. τ 곡선은 τ보다 낮은 후보까지 있어야 그릴 수 있다."""
+    backup = C.USE_SCORE_TAU
+    C.USE_SCORE_TAU = False
+
+    try:
+        return predict_one(bgr, roi, use_preprocess)[1]
+    finally:
+        C.USE_SCORE_TAU = backup
+
+
+def tau_levels(scores):
+    """한 종류 후보 점수의 τ 격자: −∞(모든 후보 = τ 없음), 점수 분위 1%~100%, +∞(모두 지움) 102개와 그 분위(0, 0.01…1.0, 1.01).
+    점수가 없거나 모두 NaN이면 (−∞, +∞) 두 개만."""
+    finite = np.asarray([v for v in scores if v is not None and np.isfinite(v)], float)
+
+    if not finite.size:
+        return np.array([-np.inf, np.inf]), np.array([0.0, 1.01])
+
+    levels = np.concatenate([[-np.inf], np.percentile(finite, np.arange(1, 101)), [np.inf]])
+    return levels, np.concatenate([[0.0], np.arange(1, 101) / 100, [1.01]])
+
+
+def tau_table(names, heights, scored, gts, tau_crack, tau_pothole):
+    """점수 문턱 격자(균열 τ × 포트홀 τ)마다 영상 단위·후보 단위 지표를 다시 센다. 파이프라인은 다시 돌리지 않는다.
+    scored: {사진: {종류: [(상자, 점수)]}}(τ로 거르기 전 모든 후보, 640px 좌표). 점수 ≥ τ인 후보만 남는다(NaN 점수는 τ = −∞에서만 남음).
+    정의는 summarize와 같다: 손상 영상은 같은 종류 후보 중심이 정답 안이면 맞힘, 무손상 영상은 후보가 0개면 맞힘, 영상당 오검출은
+    중심이 같은 종류 정답 밖인 후보, 재현율은 정답 상자 기준, 우연 대조군은 chance_found와 같은 짝(높이 묶음 안 이름순 다음 사진).
+    중심 판정은 evaluate.count_center_hits를 그대로 써서 요약 표와 같은 경계(상자 경계 포함)를 쓴다. → 행 = 균열 τ 바깥 순서의 DataFrame"""
+    names = sorted(names)
+    tc, tp = np.asarray(tau_crack, float), np.asarray(tau_pothole, float)
+    taus = {"crack": tc, "pothole": tp}
+    n = len(names)
+    damaged = np.array([len(gts[name]) > 0 for name in names], bool)
+    max_hit = {kind: np.full(n, np.nan) for kind in KINDS}        # 같은 종류 정답 안에 중심이 든 후보의 최고 점수
+    max_all = {kind: np.full(n, np.nan) for kind in KINDS}        # 모든 후보의 최고 점수
+    fp_scores = {kind: [] for kind in KINDS}
+    all_scores = {kind: [] for kind in KINDS}
+    gt_max = {kind: [] for kind in KINDS}                         # 정답 상자마다 안에 든 후보의 최고 점수
+    chance_max = {kind: [] for kind in KINDS}                     # 우연 대조군: 이웃 사진 정답 상자마다 이 사진 후보의 최고 점수
+
+    def value(score):
+        return -np.inf if score is None or np.isnan(score) else float(score)
+
+    def best(cands, box):
+        inside = [s for b, s in cands if count_center_hits([b], [box])["found"]]
+        return max(inside) if inside else np.nan
+
+    truths = {name: dict(zip(KINDS, split_gt(gts[name]))) for name in names}
+    cands = {name: {kind: [(b, value(s)) for b, s in scored[name][kind]] for kind in KINDS} for name in names}
+
+    for i, name in enumerate(names):
+        for kind in KINDS:
+            truth = truths[name][kind]
+            for box, score in cands[name][kind]:
+                all_scores[kind].append(score)
+                max_all[kind][i] = np.fmax(max_all[kind][i], score)
+                if count_center_hits([box], truth)["tp"]:
+                    max_hit[kind][i] = np.fmax(max_hit[kind][i], score)
+                else:
+                    fp_scores[kind].append(score)
+            gt_max[kind] += [best(cands[name][kind], g) for g in truth]
+
+    groups = {}
+    for name in names:
+        groups.setdefault(heights[name], []).append(name)
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        for index, name in enumerate(members):
+            other = members[(index + 1) % len(members)]
+            for kind in KINDS:
+                chance_max[kind] += [best(cands[name][kind], g) for g in truths[other][kind]]
+
+    def at_least(values, kind):
+        """(값 개수, τ 개수) bool: 값 ≥ τ. NaN(후보 없음)은 늘 거짓."""
+        with np.errstate(invalid="ignore"):
+            return np.asarray(values, float)[:, None] >= taus[kind][None, :]
+
+    def count_at_least(values, kind):
+        ordered = np.sort(np.asarray(values, float))
+        return len(ordered) - np.searchsorted(ordered, taus[kind], side="left")
+
+    def recall(values, kind):
+        values = np.asarray(values, float)
+        return at_least(values, kind).sum(0) / len(values) if len(values) else np.full(len(taus[kind]), np.nan)
+
+    hit = at_least(max_hit["crack"], "crack")[:, :, None] | at_least(max_hit["pothole"], "pothole")[:, None, :]
+    any_pred = at_least(max_all["crack"], "crack")[:, :, None] | at_least(max_all["pothole"], "pothole")[:, None, :]
+    n_damage, n_none = int(damaged.sum()), int((~damaged).sum())
+    good_damage = hit[damaged].sum(0)
+    good_none = (~any_pred[~damaged]).sum(0)
+    shape = (len(tc), len(tp))
+    sens = good_damage / n_damage if n_damage else np.full(shape, np.nan)
+    spec = good_none / n_none if n_none else np.full(shape, np.nan)
+    fp = (count_at_least(fp_scores["crack"], "crack")[:, None] + count_at_least(fp_scores["pothole"], "pothole")[None, :]) / n
+    pred = (count_at_least(all_scores["crack"], "crack")[:, None] + count_at_least(all_scores["pothole"], "pothole")[None, :]) / n
+    columns = {"tau_crack": np.repeat(tc, len(tp)), "tau_pothole": np.tile(tp, len(tc)),
+               "n_images": n, "n_damage": n_damage, "n_none": n_none,
+               "sensitivity": sens.ravel(), "specificity": spec.ravel(), "accuracy": ((good_damage + good_none) / n).ravel(),
+               "baseline_none": n_none / n, "balanced": ((sens + spec) / 2).ravel(),
+               "fp_per_image": fp.ravel(), "pred_per_image": pred.ravel()}
+    for kind in KINDS:
+        found, chance = recall(gt_max[kind], kind), recall(chance_max[kind], kind)
+        spread = (lambda v: np.repeat(v, len(tp))) if kind == "crack" else (lambda v: np.tile(v, len(tc)))
+        columns[f"{kind}_ctr_recall"] = spread(found)
+        columns[f"{kind}_ctr_recall_chance"] = spread(chance)
+        columns[f"{kind}_ctr_recall_net"] = spread(found - chance)
+    return pd.DataFrame(columns)
+
+
+def tau_curve(names, heights, scored, gts):
+    """τ 격자 전체(종류마다 tau_levels 102개 → 102 × 102점)의 지표와 분위(q_crack·q_pothole), 파레토 표시.
+    pareto = 영상당 오검출이 같거나 적은 점들 가운데 민감도가 가장 높은 점(곡선의 바깥 경계)."""
+    levels = {kind: tau_levels([s for name in names for _, s in scored[name][kind]]) for kind in KINDS}
+    table = tau_table(names, heights, scored, gts, levels["crack"][0], levels["pothole"][0])
+    table.insert(2, "q_crack", np.repeat(levels["crack"][1], len(levels["pothole"][1])))
+    table.insert(3, "q_pothole", np.tile(levels["pothole"][1], len(levels["crack"][1])))
+    sens = np.nan_to_num(table["sensitivity"].to_numpy(), nan=-1.0)
+    order = np.lexsort((-sens, table["fp_per_image"].to_numpy()))
+    pareto = np.zeros(len(table), bool)
+    pareto[order] = sens[order] >= np.maximum.accumulate(sens[order])
+    table["pareto"] = pareto
+    return table
+
+
+def tau_points(curve, config_row=None):
+    """τ 곡선에서 동작점을 고른다 → {이름: 행 dict(note 포함)}. none = τ 없음(−∞, −∞).
+    fp1·fp2 = 영상당 오검출 ≤ 1·2인 점 가운데 민감도 최대(같으면 특이도 → 균형 정확도 → 분위 합이 작은 쪽, 후보를 덜 지움).
+    rule1 = 오검출 ≤ TAU_RULE1_FP인 점 가운데 균형 정확도 최대(같으면 민감도 → 분위 합이 작은 쪽). config = 실행에 쓴 τ(주면).
+    고를 점이 없으면 지표를 NaN으로 두고 note에 이유를 적는다."""
+    def empty(note):
+        return {**{column: np.nan for column in curve.columns}, "note": note}
+
+    def first(frame, keys, ascending, note):
+        if not len(frame):
+            return empty(note)
+        frame = frame.assign(q_sum=frame["q_crack"] + frame["q_pothole"]).sort_values(keys, ascending=ascending, kind="mergesort")
+        return {**frame.iloc[0].drop("q_sum").to_dict(), "note": ""}
+
+    none = curve[(curve["tau_crack"] == -np.inf) & (curve["tau_pothole"] == -np.inf)]
+    points = {"none": {**none.iloc[0].to_dict(), "note": ""} if len(none) else empty("τ 없음 점이 격자에 없음")}
+    for name, limit in TAU_FP_POINTS.items():
+        points[name] = first(curve[curve["fp_per_image"] <= limit], ["sensitivity", "specificity", "balanced", "q_sum"],
+                             [False, False, False, True], f"영상당 오검출 {limit:g}개 이하 불가")
+    points["rule1"] = first(curve[curve["fp_per_image"] <= TAU_RULE1_FP], ["balanced", "sensitivity", "q_sum"],
+                            [False, False, True], f"영상당 오검출 {TAU_RULE1_FP:g}개 이하 불가")
+    if config_row is not None:
+        points["config"] = {**config_row, "note": ""}
+    return points
+
+
+def is_missing(value):
+    """NaN이거나 None이면 참(그림·CSV에서 고를 점이 없는 동작점을 다루려고)."""
+    return value is None or (isinstance(value, float) and np.isnan(value))
+
+
+def draw_tau_curve(curves, points, path):
+    """τ 곡선 그림 두 칸: 왼쪽 x = 영상당 오검출·y = 민감도(파레토 경계 실선, 두 종류 같은 분위 점선, x = 1·2 세로선, 동작점),
+    오른쪽 x = 1 − 특이도·y = 민감도(같은 점들, '정답률 = 검출 없음' 직선과 균형 정확도 50% 대각선). curves·points는 {전처리: …}."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = {"off": "tab:blue", "on": "tab:orange"}
+    labels = {"off": "전처리 끔", "on": "전처리 켬"}
+    font = C.FONT_BY_PLATFORM.get(sys.platform, C.FONT_DEFAULT)
+
+    with matplotlib.rc_context({"font.family": font, "axes.unicode_minus": False}):
+        fig, (left, right) = plt.subplots(1, 2, figsize=(14, 6), dpi=100)
+        for mode, curve in curves.items():
+            color, label = colors.get(mode, "gray"), labels.get(mode, mode)
+            front = curve[curve["pareto"]].sort_values("fp_per_image")
+            same_q = curve[np.isclose(curve["q_crack"], curve["q_pothole"])].sort_values("fp_per_image")
+            for ax, use_fp in ((left, True), (right, False)):
+                xs = (lambda f: f["fp_per_image"]) if use_fp else (lambda f: 1 - f["specificity"])
+                ax.plot(xs(front), front["sensitivity"], "-", color=color, label=f"{label} 파레토 경계")
+                ax.plot(xs(same_q), same_q["sensitivity"], ":", color=color, alpha=0.7, label=f"{label} 같은 분위")
+                for name, marker in (("none", "s"), ("fp1", "v"), ("fp2", "^"), ("rule1", "*"), ("config", "x")):
+                    point = points[mode].get(name)
+                    if point is None or is_missing(point["sensitivity"]):
+                        continue
+                    px = point["fp_per_image"] if use_fp else 1 - point["specificity"]
+                    ax.plot(px, point["sensitivity"], marker, color=color, markersize=12 if name == "rule1" else 8)
+                    ax.annotate(name, (px, point["sensitivity"]), textcoords="offset points", xytext=(5, 5), fontsize=8, color=color)
+        for limit in TAU_FP_POINTS.values():
+            left.axvline(limit, color="gray", linestyle="--", linewidth=0.8)
+        any_curve = next(iter(curves.values()))
+        n_damage, n_none = any_curve["n_damage"].iloc[0], any_curve["n_none"].iloc[0]
+        grid = np.linspace(0, 1, 50)
+        if n_damage:
+            right.plot(grid, n_none / n_damage * grid, "k--", linewidth=1, label=f"정답률 = 검출 없음 (기울기 {n_none / n_damage:.2f})")
+        right.plot(grid, grid, color="gray", linewidth=0.8, label="균형 정확도 50%")
+        left.set(xlabel="영상당 오검출", ylabel="민감도", title="민감도 - 영상당 오검출", ylim=(0, 1))
+        right.set(xlabel="1 − 특이도", ylabel="민감도", title="민감도 - (1 − 특이도)", xlim=(0, 1), ylim=(0, 1))
+        left.legend(fontsize=8)
+        right.legend(fontsize=8, loc="lower right")
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+
+
+def tau_rows(keys, rows, columns):
+    """τ 곡선·동작점 행을 CSV에 쓸 dict로(지표·τ·분위는 metric_text, 개수는 정수, point·note·pareto는 그대로)."""
+    out_rows = []
+    for row in rows:
+        out = dict(keys)
+        for column in columns:
+            v = row.get(column, np.nan)
+            if column in TAU_COUNTS:
+                out[column] = "" if is_missing(v) else int(v)
+            elif column in ("point", "note", "pareto"):
+                out[column] = v
+            else:
+                out[column] = metric_text(float(v))
+        out_rows.append(out)
+    return out_rows
+
+
 def count_columns():
     """영상별 결과의 개수 열 이름: gt_·pred_ 개수와 종류·기준별 tp·fp·found·fn."""
     columns = []
@@ -763,7 +1008,7 @@ def save_csv(path, rows, fieldnames):
         writer.writerows(rows)
 
 
-def write_config(path, param_sets, overrides, degrade_kind="none"):
+def write_config(path, param_sets, overrides, degrade_kind="none", tau_curve=False):
     """이번 실행의 config 값, 돌린 파라미터 세트 이름, 실행 옵션으로 바꾼 값, 인위 저하 종류를 남긴다(결과가 어떤 설정에서 나왔는지 알 수 있게).
     실행 옵션을 적용한 뒤에 부르므로 위쪽 config 값에도 바꾼 값이 들어 있다."""
     rx.write_config(path)
@@ -774,6 +1019,7 @@ def write_config(path, param_sets, overrides, degrade_kind="none"):
     with path.open("a", encoding="utf-8") as f:
         f.write(f"# 파라미터 세트: {names} (config가 아닌 세트는 PARAM_SETS 값이 위 값을 실행 중에 덮음)\n")
         f.write(f"# 실행 옵션으로 바꾼 값: {changed}\n")
+        f.write(f"# τ 곡선(--tau-curve): {'켬' if tau_curve else '끔'}\n")
         f.write(f"# 인위 저하: {degrade_kind} ({degrade_text(degrade_kind)}, 640px 컬러에 띠를 자르기 전)\n")
 
 
@@ -883,6 +1129,9 @@ def main(argv=None):
     }
     gts = {}
     n_default_roi = 0
+    scored = {key: {} for key in preds}       # τ 곡선용: τ로 거르기 전 모든 후보의 (상자, 점수)
+    heights = {}
+    tau_config = None                         # 실행에 쓴 (USE_SCORE_TAU, 균열 τ, 포트홀 τ). 실행 옵션을 적용한 뒤에 읽는다
 
     try:
         # 실행 옵션은 실행 내내 적용하고, 튜닝 세트는 그 위에 덮는다(같은 값을 둘 다 바꾸는 것은 parse_args가 막음)
@@ -893,7 +1142,9 @@ def main(argv=None):
             param_sets,
             args.overrides,
             args.degrade,
+            args.tau_curve,
         )
+        tau_config = (bool(C.USE_SCORE_TAU), C.SCORE_TAU_CRACK, C.SCORE_TAU_POTHOLE)
 
         print("=" * 72)
         print("훈련 데이터 평가 (run_experiment와 같은 조건)")
@@ -946,6 +1197,11 @@ def main(argv=None):
                     )
 
                     preds[(params["name"], mode)][image_path.name] = pred_by_kind
+                    heights[image_path.name] = out["small"].shape[0]
+
+                    if args.tau_curve:
+                        full = predict_all_candidates(image, roi, use_preprocess) if C.USE_SCORE_TAU else out
+                        scored[(params["name"], mode)][image_path.name] = scored_boxes(full)
 
                     detail_rows.append(
                         {
@@ -1006,6 +1262,9 @@ def main(argv=None):
         summary_fieldnames(extra=("source",)),
     )
 
+    if args.tau_curve:
+        write_tau_outputs(out_dir, param_sets, args.degrade, detail_rows, summary_rows, scored, heights, gts, tau_config)
+
     print_summary(summary_rows)
     print_image_summary(summary_rows)
 
@@ -1027,6 +1286,45 @@ def main(argv=None):
     print("국가별:", source_path)
     print("설정:", config_path)
     print("=" * 72)
+
+
+def write_tau_outputs(out_dir, param_sets, degrade_kind, detail_rows, summary_rows, scored, heights, gts, tau_config):
+    """τ 곡선 산출물(tau_curve.csv·tau_points.csv·tau_curve.png)을 쓰고, τ를 끈 실행이면 τ 없음 점이 요약 표와 글자 하나까지
+    같은지 확인해 알린다. 실행에 τ를 썼으면 config 점은 그 τ, 아니면 τ 없음과 같다."""
+    use_tau, tau_c, tau_p = tau_config
+    curve_rows, point_rows = [], []
+
+    for params in param_sets:
+        curves, points = {}, {}
+        for mode, _ in MODES:
+            key = (params["name"], mode)
+            names = [r["image"] for r in detail_rows if (r["params"], r["preprocess"]) == key]
+            curve = tau_curve(names, heights, scored[key], gts)
+            config = tau_table(names, heights, scored[key], gts, [tau_c], [tau_p]).iloc[0].to_dict() if use_tau else None
+            found = tau_points(curve, config)
+            if config is None:
+                found["config"] = {**found["none"], "note": "USE_SCORE_TAU 끔(τ 없음과 같음)"}
+            curves[mode], points[mode] = curve, found
+            keys = {"params": params["name"], "preprocess": mode, "degrade": degrade_kind}
+            curve_rows += tau_rows(keys, curve.to_dict("records"),
+                                   ["tau_crack", "tau_pothole", "q_crack", "q_pothole"] + TAU_COUNTS + TAU_METRICS + ["pareto"])
+            point_rows += tau_rows(keys, [{**found[p], "point": p} for p in TAU_POINT_NAMES],
+                                   ["point", "tau_crack", "tau_pothole"] + TAU_COUNTS + TAU_METRICS + ["note"])
+            summary = next(r for r in summary_rows if (r["params"], r["preprocess"]) == key)
+            if not use_tau:
+                differ = [m for m in TAU_METRICS if metric_text(float(found["none"][m])) != summary[m]]
+                print(f"τ 곡선 확인 ({params['name']}, {mode}): τ 없음 점이 요약 표와 "
+                      + ("글자 하나까지 같음" if not differ else f"다름 → {differ}"))
+            rule1 = found["rule1"]
+            print(f"τ 곡선 ({params['name']}, {mode}): rule1 τ 균열 {rule1['tau_crack']:.4g}·포트홀 {rule1['tau_pothole']:.4g}, "
+                  f"민감도 {rule1['sensitivity']:.3f}·특이도 {rule1['specificity']:.3f}·균형 {rule1['balanced']:.3f}·"
+                  f"오검출 {rule1['fp_per_image']:.2f} {rule1['note']}")
+        suffix = "" if len(param_sets) == 1 else f"_{params['name']}"
+        draw_tau_curve(curves, points, out_dir / TAU_FIGURE_NAME.replace(".png", f"{suffix}.png"))
+
+    save_csv(out_dir / TAU_CURVE_NAME, curve_rows, list(curve_rows[0]))
+    save_csv(out_dir / TAU_POINTS_NAME, point_rows, list(point_rows[0]))
+    print("τ 곡선:", out_dir / TAU_CURVE_NAME, "/", out_dir / TAU_POINTS_NAME, "/", out_dir / TAU_FIGURE_NAME)
 
 
 if __name__ == "__main__":
