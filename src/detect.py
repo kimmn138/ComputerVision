@@ -145,7 +145,8 @@ def region_scores(region, perimeter):
     c = contrast(영역 안 어둡기 평균 ÷ 잡음 σ), A = 픽셀 수, ci = 비원형도, s = solidity, L = 둘레 ÷ 2(가는 선이면 길이).
     "none": 둘 다 NaN(점수 없음, 지금과 같음).
     "margin": 대비 × 분류 문턱에서의 여유. 균열 c·(1 − e^(−(ci − CRACK_MIN_CIRC_INV)/k)),
-              포트홀 c·(1 − e^(−(POT_MAX_CIRC_INV − ci)/k))·min(1, (s − POT_MIN_SOLIDITY)/(1 − POT_MIN_SOLIDITY)), k = SCORE_MARGIN_SCALE.
+              포트홀 c·(1 − e^(−(POT_MAX_CIRC_INV − ci)/k'))·min(1, (s − POT_MIN_SOLIDITY)/(1 − POT_MIN_SOLIDITY)),
+              k = SCORE_MARGIN_SCALE(균열), k' = SCORE_MARGIN_SCALE_POT(포트홀). 두 종류의 거리 범위가 달라 따로 둔다.
     "snr": c·√A(영역 평균 어둡기가 잡음 평균의 표준오차 σ/√A의 몇 배인지). 두 종류 같음.
     "shape": 균열 min(c, SCORE_C_CAP)·min(1, L / SCORE_LEN_REF), 포트홀 min(c, SCORE_C_CAP)·s·min(1, A / SCORE_AREA_REF).
     여유가 음수(그 종류의 문턱 밖)면 0으로 둔다. 그 밖의 식 이름은 ValueError."""
@@ -154,10 +155,9 @@ def region_scores(region, perimeter):
         return float("nan"), float("nan")
     c, area, ci, solidity = region["contrast"], region["area"], region["circ_inv"], region["solidity"]
     if formula == "margin":
-        k = C.SCORE_MARGIN_SCALE
         solid = min(1.0, (solidity - C.POT_MIN_SOLIDITY) / (1.0 - C.POT_MIN_SOLIDITY))
-        crack = c * (1.0 - np.exp(-(ci - C.CRACK_MIN_CIRC_INV) / k))
-        pothole = c * (1.0 - np.exp(-(C.POT_MAX_CIRC_INV - ci) / k)) * solid
+        crack = c * (1.0 - np.exp(-(ci - C.CRACK_MIN_CIRC_INV) / C.SCORE_MARGIN_SCALE))
+        pothole = c * (1.0 - np.exp(-(C.POT_MAX_CIRC_INV - ci) / C.SCORE_MARGIN_SCALE_POT)) * solid
     elif formula == "snr":
         crack = pothole = c * np.sqrt(area)
     elif formula == "shape":
