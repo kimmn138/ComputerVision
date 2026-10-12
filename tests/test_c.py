@@ -1292,6 +1292,88 @@ def test_chance_control():
           f"chance_found: 찾은 정답·비교한 정답·뺀 사진 수가 틀림 ({found}, {truth}, {skipped})")
 
 
+def tau_scene():
+    """τ 곡선 시험용 사진 다섯 장(손으로 센 값). a·b·c·d는 640px 높이 한 묶음(우연 대조군: a→b, b→c, c→d, d→a), e는 358px 1장이라
+    우연 대조군에서 빠진다. 후보는 (640px 상자, 점수). a 균열 5.0은 정답 안, 2.0은 밖. b 균열 4.0은 포트홀 정답 안이지만 종류가 달라 오검출,
+    b 포트홀 3.0은 정답 안. c 균열 1.0·d 포트홀 6.0은 무손상 사진의 오검출. e 균열 2.5는 정답 안."""
+    heights = {"a.jpg": 640, "b.jpg": 640, "c.jpg": 640, "d.jpg": 640, "e.jpg": 358}
+    gts = {"a.jpg": [(0, 0, 100, 100, "crack")], "b.jpg": [(200, 200, 100, 100, "pothole")], "c.jpg": [], "d.jpg": [],
+           "e.jpg": [(0, 0, 10, 10, "crack")]}
+    scored = {"a.jpg": {"crack": [((40, 40, 10, 10), 5.0), ((500, 500, 10, 10), 2.0)], "pothole": []},
+              "b.jpg": {"crack": [((220, 220, 10, 10), 4.0)], "pothole": [((240, 240, 20, 20), 3.0)]},
+              "c.jpg": {"crack": [((0, 0, 10, 10), 1.0)], "pothole": []},
+              "d.jpg": {"crack": [], "pothole": [((300, 300, 20, 20), 6.0)]},
+              "e.jpg": {"crack": [((0, 0, 4, 4), 2.5)], "pothole": []}}
+    return heights, gts, scored
+
+
+def test_tau_grid_small():
+    """τ 격자 지표를 손으로 센 값과 견준다(사진 다섯 장, tau_scene). 점수 ≥ τ인 후보만 남고(같으면 남음), 종류마다 자기 τ를 쓴다.
+    민감도·특이도·정답률·균형 정확도는 영상 단위, 영상당 오검출·후보와 재현율은 후보 단위다(evaluate_train.summarize와 같은 정의)."""
+    from tools import evaluate_train as et
+    heights, gts, scored = tau_scene()
+    inf = math.inf
+    table = et.tau_table(sorted(heights), heights, scored, gts, [-inf, 4.5, 5.0, inf], [-inf, 3.5, 6.0, inf])
+    check(len(table) == 16 and list(table[["tau_crack", "tau_pothole"]].iloc[1]) == [-inf, 3.5],
+          f"tau_table: 격자 행 수·순서가 틀림 ({len(table)})")
+    row = {(r.tau_crack, r.tau_pothole): r for r in table.itertuples()}
+    expect = {  # (τ균열, τ포트홀): 민감도, 특이도, 정답률, 영상당 오검출, 영상당 후보, 균열 재현율, 포트홀 재현율
+        (-inf, -inf): (1.0, 0.0, 3 / 5, 4 / 5, 7 / 5, 1.0, 1.0),
+        (4.5, -inf): (2 / 3, 0.5, 3 / 5, 1 / 5, 3 / 5, 0.5, 1.0),
+        (4.5, 3.5): (1 / 3, 0.5, 2 / 5, 1 / 5, 2 / 5, 0.5, 0.0),
+        (5.0, 6.0): (1 / 3, 0.5, 2 / 5, 1 / 5, 2 / 5, 0.5, 0.0),       # 점수 = τ인 a 균열 5.0과 d 포트홀 6.0은 남는다
+        (inf, inf): (0.0, 1.0, 2 / 5, 0.0, 0.0, 0.0, 0.0)}
+    for key, (sens, spec, acc, fp, pred, rc, rp) in expect.items():
+        r = row[key]
+        got = (r.sensitivity, r.specificity, r.accuracy, r.fp_per_image, r.pred_per_image, r.crack_ctr_recall, r.pothole_ctr_recall)
+        check(all(math.isclose(g, e) for g, e in zip(got, (sens, spec, acc, fp, pred, rc, rp))),
+              f"tau_table {key}: (민감도, 특이도, 정답률, 오검출, 후보, 균열 재현율, 포트홀 재현율) {got} ≠ {(sens, spec, acc, fp, pred, rc, rp)}")
+    check(math.isclose(row[(-inf, -inf)].balanced, 0.5) and math.isclose(row[(-inf, -inf)].baseline_none, 2 / 5)
+          and row[(-inf, -inf)].crack_ctr_recall_chance == 0.0 and math.isclose(row[(-inf, -inf)].crack_ctr_recall_net, 1.0),
+          "tau_table: 균형 정확도·기준선·우연 대조군(d의 후보는 a의 균열 정답 밖, e는 1장뿐이라 빠짐)이 틀림")
+    levels, q = et.tau_levels([1.0, 2.0, 3.0])
+    check(len(levels) == 102 and levels[0] == -inf and levels[-1] == inf and levels[100] == 3.0 and q[0] == 0 and q[-1] == 1.01,
+          f"tau_levels: 격자가 (−∞, 1~100% 분위, +∞)가 아님 ({levels[:2]}, {levels[-2:]}, {q[-1]})")
+    check(list(et.tau_levels([])[0]) == [-inf, inf], "tau_levels: 점수가 없는데 (−∞, +∞)가 아님")
+
+
+def test_tau_points_pick():
+    """동작점 고르기: fp1·fp2는 영상당 오검출이 1·2 이하인 점 가운데 민감도 최대(같으면 특이도 → 균형 정확도 → 분위 합이 작은 쪽),
+    rule1은 오검출 2 이하에서 균형 정확도 최대(같으면 민감도 → 분위 합이 작은 쪽), none은 τ 없음. 없으면 NaN과 note."""
+    from tools import evaluate_train as et
+    inf = math.inf
+    curve = pd.DataFrame([
+        {"tau_crack": -inf, "tau_pothole": -inf, "q_crack": 0.0, "q_pothole": 0.0, "sensitivity": 0.9, "specificity": 0.1, "balanced": 0.50, "fp_per_image": 5.0},
+        {"tau_crack": 1.0, "tau_pothole": 1.0, "q_crack": 0.3, "q_pothole": 0.3, "sensitivity": 0.6, "specificity": 0.3, "balanced": 0.45, "fp_per_image": 2.0},
+        {"tau_crack": 1.0, "tau_pothole": 2.0, "q_crack": 0.3, "q_pothole": 0.5, "sensitivity": 0.6, "specificity": 0.4, "balanced": 0.50, "fp_per_image": 1.8},
+        {"tau_crack": 2.0, "tau_pothole": 1.0, "q_crack": 0.5, "q_pothole": 0.3, "sensitivity": 0.5, "specificity": 0.6, "balanced": 0.55, "fp_per_image": 1.5},
+        {"tau_crack": 3.0, "tau_pothole": 3.0, "q_crack": 0.8, "q_pothole": 0.8, "sensitivity": 0.3, "specificity": 0.6, "balanced": 0.45, "fp_per_image": 0.9},
+        {"tau_crack": 4.0, "tau_pothole": 3.0, "q_crack": 0.9, "q_pothole": 0.8, "sensitivity": 0.3, "specificity": 0.6, "balanced": 0.45, "fp_per_image": 0.7}])
+    points = et.tau_points(curve)
+    pick = {p: (r["tau_crack"], r["tau_pothole"]) for p, r in points.items()}
+    check(pick["none"] == (-inf, -inf) and pick["fp2"] == (1.0, 2.0) and pick["fp1"] == (3.0, 3.0) and pick["rule1"] == (2.0, 1.0),
+          f"tau_points: 고른 점이 틀림 ({pick})")
+    empty = et.tau_points(curve[curve["fp_per_image"] > 1.0])
+    check(math.isnan(empty["fp1"]["sensitivity"]) and "불가" in empty["fp1"]["note"], "tau_points: 오검출 1 이하 점이 없는데 NaN·note가 아님")
+
+
+def test_tau_none_matches_summary():
+    """τ 없음 점(모든 후보)의 지표가 evaluate_train.summarize(지금 요약 표)와 글자 하나까지 같다(metric_text 형식).
+    같은 사진·후보·정답에서 두 계산이 어긋나면 τ 곡선의 다른 점도 믿을 수 없다."""
+    from tools import evaluate_train as et
+    heights, gts, scored = tau_scene()
+    names = sorted(heights)
+    preds = {n: {k: [box for box, _ in scored[n][k]] for k in et.KINDS} for n in names}
+    filler = {name: 0 for name in et.MEAN_SOURCES if not name.startswith("pred_")}
+    rows = [{"image": n, "height": heights[n], **filler, **et.score_one(preds[n], gts[n]), "judge_hit": None, "judge_base": None}
+            for n in names]
+    summary = et.summarize({"params": "config", "preprocess": "off", "degrade": "none"}, rows, preds, gts)
+    none = et.tau_table(names, heights, scored, gts, [-math.inf], [-math.inf]).iloc[0]
+    differ = [k for k in et.TAU_METRICS if et.metric_text(none[k]) != summary[k]]
+    check(not differ and int(none["n_damage"]) == summary["n_damage"] and int(none["n_none"]) == summary["n_none"],
+          f"τ 없음 점과 summarize가 다른 열: {[(k, et.metric_text(none[k]), summary[k]) for k in differ]}")
+
+
 def test_degrade():
     """인위 저하(640px 컬러, ROI 자르기 전): none은 그대로, blur는 흐려지고, dark는 입력^2.2(128 → 56), bright는 입력^0.5(128 → 181),
     noise는 seed가 고정이라 두 번 해도 같다. 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다. 값은 config C 구역 DEGRADE_*."""
@@ -1728,6 +1810,77 @@ def test_run_all_done_tests_blocked():
         check(code == 0 and "이미 쟀습니다" in printed.getvalue(), "run_all test --dry-run: 거부 이유를 보여 주지 않음")
 
 
+def test_run_all_supp_plan():
+    """보완 비교(supp) 단계: S0·S1a·S1b·S1c가 이 순서로 개발셋에 --tau-curve와 점수식(--set SCORE_FORMULA)을 주어 돌고,
+    남기기 규칙은 config(ratio) 그대로다(실행 중에 center로 고정하지 않음). dry-run은 결과 폴더를 만들지 않는다."""
+    from tools import evaluate_train as et
+    from tools import run_all as ra
+    exps = [e for e in ra.EXPERIMENTS if e["stage"] == "supp"]
+    check([e["id"] for e in exps][:4] == ["S0", "S1a", "S1b", "S1c"], f"run_all supp: 실험 순서가 다름 ({[e['id'] for e in exps]})")
+    formulas = {"S0": "none", "S1a": "margin", "S1b": "snr", "S1c": "shape"}
+    for e in exps[:4]:
+        argv, pins = ra.command(e, ra.resolve(e, {"E0"}))
+        args = parse_quietly(et.parse_args, argv)
+        check(args is not None and args.split == "dev" and args.tau_curve and args.overrides.get("SCORE_FORMULA") == formulas[e["id"]],
+              f"run_all supp {e['id']}: 명령이 개발셋·--tau-curve·점수식이 아님 ({' '.join(argv)})")
+        check("ROAD_KEEP_RULE" not in pins, f"run_all supp {e['id']}: 남기기 규칙을 center로 고정함 ({pins})")
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["supp", "--dry-run"], paths)
+        check(code == 0 and "--tau-curve" in printed.getvalue() and "score_da_dev" in printed.getvalue()
+              and not os.path.exists(paths["results"]), "run_all supp --dry-run: 계획을 보여 주지 않았거나 결과 폴더를 만듦")
+
+
+def test_run_all_rule1_tau():
+    """규칙 1(τ 곡선): fp1·fp2 민감도가 둘 다 안 떨어지고 하나 이상 오르면 통과, 둘 다 같으면 못 넘음, 하나라도 떨어지면 못 넘음,
+    값이 없으면 None. 14번 표(supp_table)는 규칙 2·3을 각 실행 자신의 rule1 점으로 재고(E4처럼 judge가 tau면 기준의 τ 없음 점과),
+    곡선 비교(curve) 행은 판정하지 않는다."""
+    from tools import evaluate_train as et
+    from tools import run_all as ra
+    base = {"fp1": 0.30, "fp2": 0.40}
+    cases = [({"fp1": 0.31, "fp2": 0.40}, True), ({"fp1": 0.30, "fp2": 0.40}, False), ({"fp1": 0.35, "fp2": 0.39}, False),
+             ({"fp1": math.nan, "fp2": 0.50}, None), ({"fp1": 0.30 + 1e-9, "fp2": 0.40}, False)]
+    for cur, expect in cases:
+        check(ra.rule1_tau(base, cur) == expect, f"rule1_tau {cur}: {ra.rule1_tau(base, cur)} ≠ {expect}")
+
+    def write_points(folder, rows):
+        os.makedirs(folder)
+        pd.DataFrame(rows).to_csv(os.path.join(folder, et.TAU_POINTS_NAME), encoding="utf-8-sig", index=False)
+
+    def point(name, sens, spec, bal, fp, net, tau=1.0):
+        return {"params": "config", "preprocess": "off", "degrade": "none", "point": name, "tau_crack": tau, "tau_pothole": tau,
+                "sensitivity": sens, "specificity": spec, "balanced": bal, "fp_per_image": fp, "crack_ctr_recall_net": net}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        results = os.path.join(tmp, "results")
+        write_points(os.path.join(results, "sx_base_dev"), [point("none", 0.5, 0.1, 0.30, 5.0, 0.15, -math.inf),
+                                                           point("fp1", 0.20, 0.5, 0.35, 1.0, 0.10), point("fp2", 0.30, 0.4, 0.35, 2.0, 0.12),
+                                                           point("rule1", 0.30, 0.45, 0.375, 1.9, 0.12)])
+        write_points(os.path.join(results, "sx_new_dev"), [point("none", 0.5, 0.1, 0.30, 5.0, 0.15, -math.inf),
+                                                          point("fp1", 0.25, 0.5, 0.375, 1.0, 0.11), point("fp2", 0.30, 0.4, 0.35, 2.0, 0.12),
+                                                          point("rule1", 0.32, 0.45, 0.385, 1.8, 0.115)])
+        write_points(os.path.join(results, "sx_tau_dev"), [point("none", 0.5, 0.1, 0.30, 5.0, 0.15, -math.inf),
+                                                          point("fp1", 0.2, 0.5, 0.35, 1.0, 0.0), point("fp2", 0.3, 0.4, 0.35, 2.0, 0.0),
+                                                          point("rule1", 0.30, 0.45, 0.375, 1.9, 0.12)])
+        exp = {"tool": "train", "stage": "supp", "judge_row": "off", "label": "시험"}
+        fake = {"SX0": {**exp, "id": "SX0", "name": "sx_base_dev", "supp_base": None, "judge": "base"},
+                "SX1": {**exp, "id": "SX1", "name": "sx_new_dev", "supp_base": "SX0", "judge": "rules"},
+                "SX2": {**exp, "id": "SX2", "name": "sx_tau_dev", "supp_base": "SX0", "judge": "tau"},
+                "SX3": {**exp, "id": "SX3", "name": "sx_new_dev", "supp_base": "SX0", "judge": "curve"}}
+        states = {sid: {"done": True, "status": "완료"} for sid in fake}
+        with patched(ra, "SUPP_IDS", tuple(fake)), patched(ra, "EXP", {**ra.EXP, **fake}):
+            table = ra.supp_table({"results": results}, states).set_index("stage_id")
+    r1, r2, r3 = table.loc["SX1"], table.loc["SX2"], table.loc["SX3"]
+    check(r1["rule1"] == "통과" and r1["rule2"] == "통과" and r1["rule3"] == "통과" and math.isclose(r1["balanced_diff"], 0.01)
+          and r1["auto"] == "규칙 통과", f"supp_table rules: 규칙 1~3 판정이 틀림 ({r1['rule1']}, {r1['rule2']}, {r1['rule3']}, {r1['balanced_diff']})")
+    check(r2["rule1"].startswith("해당 없음") and math.isclose(r2["balanced_diff"], 0.075) and math.isclose(r2["crack_net_diff"], -0.03)
+          and r2["rule3"] == "못 넘음" and r2["auto"] == "되돌림",
+          f"supp_table tau: 기준의 τ 없음 점과 견주지 않음 ({r2['balanced_diff']}, {r2['crack_net_diff']}, {r2['rule3']})")
+    check(pd.isna(r3["rule1"]) and pd.isna(r3["rule2"]) and math.isclose(r3["fp1_sens"], 0.25),
+          "supp_table curve: 곡선 비교 행을 판정함 또는 값이 빠짐")
+
+
 def test_run_all_report_empty():
     """결과 폴더가 하나도 없어도 표 만들기(1~8번, 채택 표, summary.md)가 끝까지 돌고, 실험마다 상태만 적으며 잠정 채택은 E0다."""
     from tools import run_all as ra
@@ -1738,7 +1891,8 @@ def test_run_all_report_empty():
         expect = {f"table{i}_{n}.csv" for i, n in enumerate(["stages", "by_country", "by_condition", "preprocess", "matching",
                                                             "provided_vs_own", "degrade", "39_images"], 1)}
         expect |= {"table9_auto_band.csv", "table9_auto_band_country.csv", "table9_auto_band_39.csv", "table10_mask2.csv",
-                   "table10_mask2_changes.csv", "table10_mask_gt.csv", "table11_tests.csv", "table12_time.csv", "table13_judge.csv"}
+                   "table10_mask2_changes.csv", "table10_mask_gt.csv", "table11_tests.csv", "table12_time.csv", "table13_judge.csv",
+                   "table14_supp.csv", "table15_tau_points.csv"}
         check(expect | {"adoption.csv", "adoption_grid.csv", "summary.md", "accept.txt", "reject.txt"} == set(os.listdir(out)),
               f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
         text = (out / "summary.md").read_text(encoding="utf-8")
@@ -1792,10 +1946,11 @@ def main():
                test_auto_band_switch_off, test_auto_band_road_only, test_auto_band_sky, test_auto_band_cloudy_sky, test_auto_band_csv_rule, test_auto_band_options,
                test_result_folder_safety,
                test_draw_road_paint, test_draw_road_short_band, test_save_figure_road, test_image_verdict, test_summarize_verdicts, test_dev_test_split,
-               test_train_options, test_chance_control, test_degrade, test_degrade_noise_per_photo,
+               test_train_options, test_chance_control, test_tau_grid_small, test_tau_points_pick, test_tau_none_matches_summary, test_degrade, test_degrade_noise_per_photo,
                test_degrade_option_and_judge, test_degrade_main,
                test_run_all_plan, test_run_all_resolve, test_run_all_adoption, test_run_all_grid, test_run_all_ready,
-               test_run_all_refuse, test_run_all_retest_refuse, test_run_all_done_tests_blocked, test_run_all_report_empty,
+               test_run_all_refuse, test_run_all_retest_refuse, test_run_all_done_tests_blocked, test_run_all_supp_plan,
+               test_run_all_rule1_tau, test_run_all_report_empty,
                test_run_all_judgement):
         try:
             fn()

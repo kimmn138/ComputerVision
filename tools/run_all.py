@@ -31,6 +31,9 @@
 - (10/12 밤) 위 시험·재현 단계 여섯 개(test·repro·retest·retest_repro·retest_ratio·retest_ratio_repro)는 10/12에 이미 잰 단계라
   결과 폴더와 상관없이 거부한다(DONE_TEST_STAGES). results/가 지워져 폴더 검사만으로는 다시 도는 것을 막을 수 없었다.
 남기기 규칙(config ROAD_KEEP_RULE): ratio 채택 전에 돈 실험(비교·자동 띠·시험 단계)은 실행 중에만 'center'로 고정해, 다시 돌려도 처음과 같은 조건이다.
+- supp: (10/12 밤, 보완) 개발셋에서 보완 항목을 하나씩 더하며 --tau-curve로 돌리고, 채택 규칙을 τ 곡선의 동작점으로 판정한다
+  (docs/tasks/supplement.md 4.1). 규칙 1 = fp1·fp2 민감도가 둘 다 안 떨어지고 하나 이상 오름, 규칙 2·3 = 각 실행 자신의 rule1 점
+  (영상당 오검출 2개 이하 중 균형 정확도 최대)의 균형 정확도·우연 뺀 균열 재현율. 표 14(table14_supp)·15(table15_tau_points).
 - tables: 실험은 돌리지 않고 있는 결과 폴더로 표만 다시 만든다.
 자동 띠 높이(config AUTO_BAND_TOP): 띠 위쪽 비율을 옵션으로 정한 실험(E0~E3, 39장 1차 설정, 시험셋 1차)과 띠 고정 시절의 시험셋 실행
 (test_once·final_test)은 실행 중에만 AUTO_BAND_TOP=False로 고정해, 자동 띠를 켠 뒤에 다시 돌려도 처음과 같은 조건이다.
@@ -67,14 +70,15 @@ from src import analyze, detect, evaluate, io_utils, pipeline  # noqa: E402
 from src import config as C  # noqa: E402
 from tools import evaluate_train as et  # noqa: E402
 
-STAGES = {"compare": "비교", "band": "자동 띠 비교", "mask2": "노면 마스크 보완 비교", "final": "최종", "test": "시험", "repro": "재현",
+STAGES = {"compare": "비교", "band": "자동 띠 비교", "mask2": "노면 마스크 보완 비교", "supp": "보완 비교", "final": "최종", "test": "시험",
+          "repro": "재현",
           "retest": "시험(자동 띠)", "retest_repro": "재현(자동 띠)", "retest_ratio": "시험(ratio)", "retest_ratio_repro": "재현(ratio)",
           "tables": "표만"}
 TEST_STAGES = ("test", "retest", "retest_ratio")    # 시험셋을 한 번만 재는 단계: 실패하면 다음 실험을 돌리지 않는다
 SET_TEST_STAGES = ("test", "repro", "retest", "retest_repro", "retest_ratio", "retest_ratio_repro")   # 시험셋을 쓰는 단계
 RETESTS = {"retest": "TA", "retest_ratio": "TR"}    # 다시 재는 시험 단계 → 한 번만 재는 실험(최종 단계 config와 같아야 돈다)
 RETEST_REPROS = {"retest_repro": "retest", "retest_ratio_repro": "retest_ratio"}    # 재현 단계 → 그 앞 시험 단계
-RATIO_STAGES = ("final", "retest_ratio", "retest_ratio_repro", "mask2")   # 남기기 규칙을 config(또는 opts sets)대로 쓰는 단계. 나머지는 'center' 고정
+RATIO_STAGES = ("final", "retest_ratio", "retest_ratio_repro", "mask2", "supp")   # 남기기 규칙을 config(또는 opts sets)대로 쓰는 단계. 나머지는 'center' 고정
 # 10/12에 이미 잰 시험셋 단계(재현 포함). results/가 지워져(10/12 밤) 폴더 유무로는 막을 수 없으므로 단계 이름으로 거부한다.
 # 다음 시험셋은 보완 뒤 retest_supp 한 번뿐이다(docs/tasks/supplement.md 0-1)
 DONE_TEST_STAGES = {"test": "test_once, 10/12 00:49", "repro": "final_test",
@@ -137,6 +141,15 @@ MASK2_DECISIONS = {"M1": "규칙 2 미달, 예외 채택: 판정이 바뀐 사�
                          "영역 대부분이 노면 밖인 후보(Japan_000107: 노면 안 8%)를 노면 안으로 세던 한계를 고치는 수정",
                    "M2": "채택 안 함(스위치 끔 유지, 시연 기본값도 끔)", "M3": "채택 안 함(스위치 끔 유지, 시연 기본값도 끔)"}
 MASK_GT_IDS = ("E3", "M0", "M2", "M3")
+# 보완 비교(supp, 10/12 밤~, docs/tasks/supplement.md 4.1): (id, 개발셋 폴더, 이름, 실행 중에만 바꿀 config 값, 비교 기준 id, 판정 행, 판정 방식)
+# 판정 방식: "base" = 비교 기준 없음, "curve" = 곡선만 비교(채택 판정 없음), "tau" = τ 없음 점 대비 rule1 점(E4), "rules" = 규칙 1~3
+SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없음)", {"SCORE_FORMULA": "none"}, None, "off", "base"),
+             ("S1a", "score_ga_dev", "점수식 margin(대비 × 분류 문턱 여유)", {"SCORE_FORMULA": "margin"}, "S0", "off", "curve"),
+             ("S1b", "score_na_dev", "점수식 snr(대비 × √넓이)", {"SCORE_FORMULA": "snr"}, "S0", "off", "curve"),
+             ("S1c", "score_da_dev", "점수식 shape(대비 상한 × 길이·넓이)", {"SCORE_FORMULA": "shape"}, "S0", "off", "curve"))
+SUPP_IDS = tuple(r[0] for r in SUPP_RUNS)
+SUPP_DECISIONS = {"S1a": "곡선 비교(점수식은 사용자가 고름)", "S1b": "곡선 비교(점수식은 사용자가 고름)",
+                  "S1c": "곡선 비교(점수식은 사용자가 고름)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
@@ -187,6 +200,9 @@ EXPERIMENTS = [
     *[e for i, (folder, folder39, label, sets) in enumerate(MASK2_RUNS)
       for e in (_exp(f"M{i}", "mask2", "train", folder, label, {"sets": sets}, split="dev", reference=True),
                 _exp(f"M{i}_39", "mask2", "run39", folder39, f"{label} 39장 자동 ROI", {"sets": sets}, roi="auto", reference=True))],
+    # 보완 비교 (10/12 밤~, 개발셋): 모든 실행에 τ 곡선. 판정은 τ 곡선의 동작점(supp_table)
+    *[_exp(sid, "supp", "train", folder, label, {"sets": sets, "tau_curve": True}, split="dev", reference=True,
+           supp_base=base, judge_row=row, judge=judge) for sid, folder, label, sets, base, row, judge in SUPP_RUNS],
     # 시험셋 세 번째 재기 (10/12, ratio 채택 뒤): 최종 설정(config 그대로)으로 한 번만, 그다음 같은 코드로 재현 확인
     _exp("TR", "retest_ratio", "train", "test_ratio", "시험셋 최종 설정(자동 띠 + 결 + ratio, 한 번만)", split="test"),
     _exp("RR", "retest_ratio_repro", "train", "final_test_ratio", "시험셋 재현 확인(자동 띠 + 결 + ratio)", split="test"),
@@ -367,6 +383,8 @@ def command(exp, opts):
         pins["AUTO_BAND_TOP"] = False           # 띠를 비율로 정한 실험·띠 고정 시절 시험셋: 자동 띠를 켠 뒤에도 처음과 같은 조건
     if opts.get("degrade"):
         argv += ["--degrade", opts["degrade"]]
+    if opts.get("tau_curve") and exp["tool"] == "train":
+        argv += ["--tau-curve"]
     sets = opts.get("sets") or {}
     for name, value in sets.items():
         argv += ["--set", f"{name}={value}"]
@@ -397,6 +415,8 @@ def settings_text(opts):
     if opts.get("auto_band"):
         parts.append(f"자동 띠 {onoff[opts['auto_band']]}" + (f"(결 {onoff[opts['band_texture']]})" if opts.get("band_texture") else ""))
     parts += [f"{name}={value}" for name, value in (opts.get("sets") or {}).items()]
+    if opts.get("tau_curve"):
+        parts.append("τ 곡선")
     return ", ".join(parts)
 
 
@@ -782,6 +802,9 @@ def plan_note(exp, adopted):
     if exp.get("follow_band"):
         note = f"띠 {E1B_ROI_TOP if 'E1b' in adopted else FIRST_ROI_TOP} ({'E1b 잠정 채택' if 'E1b' in adopted else 'E1b 채택 안 됨'})"
         return note + (", 참고: 채택 판단에 쓰지 않음" if exp.get("reference") else "")
+    if exp.get("judge"):                    # 보완 비교: 비교 단계(compare) 채택과 따로, τ 곡선의 동작점으로 판정(14번 표)
+        return {"base": "보완 비교 기준", "curve": f"{exp['supp_base']}와 곡선만 비교(채택 판정 없음)",
+                "tau": f"{exp['supp_base']}의 τ 없음 점 대비 rule1 점", "rules": f"{exp['supp_base']}와 규칙 1~3(τ 곡선)"}[exp["judge"]]
     if exp.get("reference"):
         return "참고: 채택 판단에 쓰지 않음"
     return ""
@@ -1551,6 +1574,79 @@ def mask2_table(summaries, states, mask_gt):
     return pd.DataFrame(rows, columns=columns)
 
 
+def tau_points_of(paths, exp, state):
+    """evaluate_train --tau-curve의 동작점 표(tau_points.csv)를 {(전처리, 점 이름): 행}으로. 없으면 None."""
+    df = read_csv(Path(paths["results"]) / exp["name"] / et.TAU_POINTS_NAME) if state["done"] else None
+    return None if df is None else {(row["preprocess"], row["point"]): row for _, row in df.iterrows()}
+
+
+def rule1_tau(base, cur):
+    """채택 규칙 1(같은 동작점, 결정 10/12 밤): 영상당 오검출 1·2개 동작점(fp1·fp2)의 민감도가 둘 다 떨어지지 않고 하나 이상 오르면 통과.
+    소수 여섯째 자리에서 반올림해 견준다(passes와 같음). 한쪽이라도 값이 없으면(그 동작점이 없음) None. base·cur는 {"fp1": 민감도, "fp2": 민감도}."""
+    diffs = [cur[p] - base[p] for p in ("fp1", "fp2")]
+    if any(pd.isna(d) for d in diffs):
+        return None
+    diffs = [round(float(d), 6) for d in diffs]
+    return all(d >= 0 for d in diffs) and any(d > 0 for d in diffs)
+
+
+def supp_table(paths, states):
+    """14번 보완 비교 채택 표(개발셋): 실행마다 판정 행(끔·켬)의 τ 없음·fp1·fp2·rule1 점 지표와, 비교 기준과 견준 규칙 1~3.
+    규칙 1 = rule1_tau(fp1·fp2 민감도), 규칙 2·3 = 각 실행 자신의 rule1 점(비교 기준도 자기 rule1 점)의 균형 정확도·우연 뺀 균열 재현율.
+    E4처럼 judge가 "tau"면 비교 기준의 τ 없음 점과 이번 rule1 점을 견주고 규칙 1은 해당 없음. "curve"는 값만 적고 판정하지 않는다."""
+    rows = []
+    for sid in SUPP_IDS:
+        exp, state = EXP[sid], states[sid]
+        mode, judge = exp["judge_row"], exp["judge"]
+        head = {"stage_id": sid, "label": exp["label"], "folder": exp["name"], "status": state["status"], "row": mode,
+                "base": exp["supp_base"] or "-"}
+        points = tau_points_of(paths, exp, state)
+        if points is None:
+            rows.append(head)
+            continue
+        get = lambda pts, name, col: pts[(mode, name)][col] if (mode, name) in pts else math.nan  # noqa: E731
+        row = {**head, "none_sens": get(points, "none", "sensitivity"), "none_spec": get(points, "none", "specificity"),
+               "none_balanced": get(points, "none", "balanced"), "none_fp": get(points, "none", "fp_per_image"),
+               "fp1_sens": get(points, "fp1", "sensitivity"), "fp1_spec": get(points, "fp1", "specificity"),
+               "fp2_sens": get(points, "fp2", "sensitivity"), "fp2_spec": get(points, "fp2", "specificity"),
+               **{f"rule1_{c}": get(points, "rule1", c) for c in ("tau_crack", "tau_pothole", "sensitivity", "specificity",
+                                                                   "balanced", "fp_per_image", "crack_ctr_recall_net")},
+               "decision": SUPP_DECISIONS.get(sid, "비교 기준" if judge == "base" else "")}
+        base_exp = EXP.get(exp["supp_base"]) if exp["supp_base"] else None
+        base_pts = tau_points_of(paths, base_exp, states[base_exp["id"]]) if base_exp else None
+        if base_pts is not None and judge in ("tau", "rules"):
+            ref = "none" if judge == "tau" else "rule1"
+            d_bal = row["rule1_balanced"] - get(base_pts, ref, "balanced")
+            d_net = row["rule1_crack_ctr_recall_net"] - get(base_pts, ref, "crack_ctr_recall_net")
+            r1 = None if judge == "tau" else rule1_tau({p: get(base_pts, p, "sensitivity") for p in ("fp1", "fp2")},
+                                                       {p: get(points, p, "sensitivity") for p in ("fp1", "fp2")})
+            r2, r3 = passes(d_bal, lambda d: d > 0), passes(d_net, lambda d: d >= -RULE3_DROP)
+            row.update({"rule1": "해당 없음(같은 후보에서 τ만 고름)" if judge == "tau" else rule_text(r1),
+                        "rule2": rule_text(r2), "rule3": rule_text(r3), "balanced_diff": d_bal, "crack_net_diff": d_net,
+                        "auto": "규칙 통과" if r2 and r3 and (judge == "tau" or r1) else "되돌림"})
+        rows.append(row)
+    columns = (["stage_id", "label", "folder", "status", "row", "base", "none_sens", "none_spec", "none_balanced", "none_fp",
+                "fp1_sens", "fp1_spec", "fp2_sens", "fp2_spec"]
+               + [f"rule1_{c}" for c in ("tau_crack", "tau_pothole", "sensitivity", "specificity", "balanced", "fp_per_image",
+                                          "crack_ctr_recall_net")]
+               + ["balanced_diff", "crack_net_diff", "rule1", "rule2", "rule3", "auto", "decision"])
+    return pd.DataFrame(rows, columns=columns)
+
+
+def supp_points_table(paths, states):
+    """15번 보완 실행의 동작점 표: 실행마다 끔·켬 × (none, fp1, fp2, rule1, config) 행을 tau_points.csv 그대로 모은다."""
+    frames = []
+    for sid in SUPP_IDS:
+        exp = EXP[sid]
+        df = read_csv(Path(paths["results"]) / exp["name"] / et.TAU_POINTS_NAME) if states[sid]["done"] else None
+        if df is not None:
+            frames.append(df.assign(stage_id=sid, label=exp["label"], folder=exp["name"]))
+    if not frames:
+        return pd.DataFrame(columns=["stage_id", "label", "folder", "preprocess", "point"])
+    df = pd.concat(frames, ignore_index=True)
+    return df[["stage_id", "label", "folder"] + [c for c in df.columns if c not in ("stage_id", "label", "folder")]]
+
+
 def keep_rule_changes(paths, states):
     """남기기 규칙 center(M0) → ratio(M1)로 영상 판정이 바뀐 사진(개발셋, 끔·켬)과, 그 사진에서 한쪽에만 남은 후보의 노면 안 비율.
     두 실행의 영상별 결과(correct)를 견주고, 바뀐 사진만 지금 config에서 남기기 규칙만 바꿔 다시 검출한다(사진 몇 장이라 짧다).
@@ -1726,7 +1822,8 @@ def build_report(paths, human=None, command_line="python tools/run_all.py tables
                          **dict(zip(("gt_in_band", "gt_in_mask", "widened"), mask_gt_ratios(mask_gt[sid])))} for sid in MASK_GT_IDS],
                        columns=["stage_id", "folder", "label", "gt_in_band", "gt_in_mask", "widened"]),
                    "table11_tests.csv": test_table(summaries, states), "table12_time.csv": time_table(runs),
-                   "table13_judge.csv": judge_table(runs)})
+                   "table13_judge.csv": judge_table(runs), "table14_supp.csv": supp_table(paths, states),
+                   "table15_tau_points.csv": supp_points_table(paths, states)})
     for name, table in tables.items():
         table.to_csv(out / name, encoding="utf-8-sig", index=False)
     for kind, file in DECISION_FILES.items():
@@ -1942,9 +2039,33 @@ def summary_lines(r):
     lines += mask2_lines(t)
     lines += time_lines(t["table12_time.csv"])
     lines += judge_lines(t["table13_judge.csv"])
+    lines += supp_lines(t["table14_supp.csv"])
     if r["repro"]:
         lines += ["## 시험셋 재현 확인 (같은 코드로 다시 돌린 결과가 한 번만 잰 결과와 같은지)", ""] + [f"- {line}" for line in r["repro"]] + [""]
     return lines
+
+
+def supp_lines(table):
+    """14번 보완 비교 줄: 실행마다 τ 없음·fp1·fp2 민감도, rule1 점(τ·민감도·특이도·균형 정확도·오검출·우연 뺀 균열), 규칙 판정."""
+    lines = ["## 14. 보완 비교 (개발셋, τ 곡선의 동작점, docs/tasks/supplement.md 4.1)", "",
+             "fp1·fp2 = 영상당 오검출 1·2개 이하에서 민감도 최대인 점(규칙 1), rule1 = 오검출 2개 이하에서 균형 정확도 최대인 점(규칙 2·3을 재는 점). "
+             "동작점마다의 모든 지표는 table15_tau_points.csv에 있다.", ""]
+    done = table[table["none_sens"].notna()] if len(table) and "none_sens" in table else table.iloc[0:0]
+    if not len(done):
+        return lines + ["아직 결과 없음 (supp 단계 뒤)", ""]
+
+    def tau(v):
+        return "-" if pd.isna(v) else ("−∞" if v == -math.inf else ("+∞" if v == math.inf else f"{float(v):.3g}"))
+    rows = [[r["stage_id"], r["label"], r["row"], f"{pct(r['none_sens'])} / {pct(r['none_spec'])} / {num(r['none_fp'])}",
+             f"{pct(r['fp1_sens'])} / {pct(r['fp1_spec'])}", f"{pct(r['fp2_sens'])} / {pct(r['fp2_spec'])}",
+             f"{tau(r['rule1_tau_crack'])}·{tau(r['rule1_tau_pothole'])}",
+             f"{pct(r['rule1_sensitivity'])} / {pct(r['rule1_specificity'])} / {pct(r['rule1_balanced'])} / {num(r['rule1_fp_per_image'])}",
+             pp(r["rule1_crack_ctr_recall_net"]), r["rule1"] if isinstance(r["rule1"], str) else "-",
+             r["rule2"] if isinstance(r["rule2"], str) else "-", r["rule3"] if isinstance(r["rule3"], str) else "-",
+             r["decision"] if isinstance(r["decision"], str) and r["decision"] else "-"] for _, r in done.iterrows()]
+    return lines + md_table(["단계", "이름", "판정 행", "τ 없음 민감도/특이도/오검출", "fp1 민감도/특이도", "fp2 민감도/특이도",
+                             "rule1 τ 균열·포트홀", "rule1 민감도/특이도/균형/오검출", "rule1 우연 뺀 균열", "규칙 1", "규칙 2", "규칙 3",
+                             "판정"], rows)
 
 
 def band_lines(t):
