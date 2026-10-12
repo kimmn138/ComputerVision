@@ -820,7 +820,7 @@ def is_missing(value):
 
 def draw_tau_curve(curves, points, path):
     """τ 곡선 그림 두 칸: 왼쪽 x = 영상당 오검출·y = 민감도(파레토 경계 실선, 두 종류 같은 분위 점선, x = 1·2 세로선, 동작점),
-    오른쪽 x = 1 − 특이도·y = 민감도(같은 점들, '정답률 = 검출 없음' 직선과 균형 정확도 50% 대각선). curves·points는 {전처리: …}."""
+    오른쪽 x = 1 - 특이도·y = 민감도(같은 점들, '정답률 = 검출 없음' 직선과 균형 정확도 50% 대각선). curves·points는 {전처리: …}."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -855,7 +855,7 @@ def draw_tau_curve(curves, points, path):
             right.plot(grid, n_none / n_damage * grid, "k--", linewidth=1, label=f"정답률 = 검출 없음 (기울기 {n_none / n_damage:.2f})")
         right.plot(grid, grid, color="gray", linewidth=0.8, label="균형 정확도 50%")
         left.set(xlabel="영상당 오검출", ylabel="민감도", title="민감도 - 영상당 오검출", ylim=(0, 1))
-        right.set(xlabel="1 − 특이도", ylabel="민감도", title="민감도 - (1 − 특이도)", xlim=(0, 1), ylim=(0, 1))
+        right.set(xlabel="1 - 특이도", ylabel="민감도", title="민감도 - (1 - 특이도)", xlim=(0, 1), ylim=(0, 1))
         left.legend(fontsize=8)
         right.legend(fontsize=8, loc="lower right")
         fig.tight_layout()
