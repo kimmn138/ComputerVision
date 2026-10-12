@@ -758,17 +758,18 @@ def test_score_tau_filters():
             raise AssertionError("점수식 none에서 τ를 켰는데 ValueError가 나지 않음(후보가 모두 지워짐)")
 
 
-def local_sigma_scene():
+def local_sigma_scene(lines=True):
     """국소 σ 시험 띠(240×640): 왼쪽 절반은 거친 골재 결(가우시안 잡음 σ 14를 3px로 흐림), 오른쪽 절반은 매끈한 노면(σ 3).
-    양쪽에 같은 진하기(배경 − 45)의 가로 균열 선을 하나씩 그린다."""
+    lines면 양쪽에 같은 진하기(배경 − 45)의 가로 균열 선을 하나씩 그린다."""
     rng = np.random.default_rng(5)
     gray = np.full((240, 640), 130.0)
     rough = cv.GaussianBlur(rng.normal(0, 14, (240, 320)), (0, 0), 1.2) * 2.2
     gray[:, :320] += rough
     gray[:, 320:] += rng.normal(0, 3, (240, 320))
     gray = gray.clip(0, 255).astype(np.uint8)
-    cv.line(gray, (40, 120), (280, 132), 85, 3)
-    cv.line(gray, (360, 120), (600, 132), 85, 3)
+    if lines:
+        cv.line(gray, (40, 120), (280, 132), 85, 3)
+        cv.line(gray, (360, 120), (600, 132), 85, 3)
     return gray
 
 
@@ -791,6 +792,32 @@ def test_dark_local_sigma_texture():
     assert len(rough_on) < len(rough_off), ("거친 쪽 후보가 줄지 않음", len(rough_off), len(rough_on))
     assert has_line(on, 40, 280) and has_line(on, 360, 600), ("국소 σ에서 균열 선이 사라짐", [r["bbox"] for r in on])
     assert len(side(on, False)) == len(side(off, False)), ("매끈한 쪽 후보 수가 바뀜", len(side(off, False)), len(side(on, False)))
+
+
+def test_dark_local_sigma_big_pothole():
+    """(보완 2-1 안 A) 거친 결 노면에 큰 포트홀(반지름 50)이 있어도 국소 σ를 켜면 포트홀 1개를 찾고, 결 쪽 잡티 후보는 줄어든다.
+    국소 σ를 양쪽 잔차로 재면 포트홀이 창을 채워 σ가 부풀어 포트홀을 잃는다(10/13 실패 사례). 밝은 쪽 잔차만 써서 막는다."""
+    gray = local_sigma_scene(lines=False).astype(np.int16)             # 균열 선이 포트홀에 붙지 않게 선 없이
+    cv.circle(gray, (160, 120), 50, 40, -1)                            # 거친 쪽에 큰 포트홀(배경 130보다 90 어두움)
+    gray = gray.clip(0, 255).astype(np.uint8)
+
+    def run(local):
+        with config_values(DETECT_MODE="dark", DARK_SIGMA_LOCAL=local, SCORE_FORMULA="none", USE_SCORE_TAU=False):
+            return detect_potholes(gray)[0], detect_cracks(gray)[0]
+
+    (pot_off, crack_off), (pot_on, crack_on) = run(False), run(True)
+    inside = centered_in(pot_on, (160, 120), 50)
+    assert len(inside) == 1, ("국소 σ에서 큰 포트홀이 1개로 잡히지 않음", [r["bbox"] for r in pot_on])
+    rough = lambda regions: [r for r in regions if r["bbox"][0] + r["bbox"][2] / 2 < 320 and not centered_in([r], (160, 120), 60)]  # noqa: E731
+    assert len(rough(crack_on + pot_on)) < len(rough(crack_off + pot_off)), \
+        ("결 쪽 잡티 후보가 줄지 않음", len(rough(crack_off + pot_off)), len(rough(crack_on + pot_on)))
+
+
+def test_dark_local_sigma_existing():
+    """(보완 2-1 안 A) 국소 σ를 켠 상태에서도 기존 합성 시험(큰 포트홀 한 덩어리, 포트홀이 균열로 안 잡힘, 합성 포트홀)이 통과한다."""
+    with config_values(DETECT_MODE="dark", DARK_SIGMA_LOCAL=True):
+        for fn in (test_dark_big_pothole_one_piece, test_pothole_not_crack, test_synthetic_pothole, test_existing_tests_in_dark_mode):
+            fn()
 
 
 def test_existing_tests_in_dark_mode():
