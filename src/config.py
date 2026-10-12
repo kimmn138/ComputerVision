@@ -96,6 +96,8 @@ DARK_BRIGHT_DILATE_DELTA = 80   # 밝기 단계, DARK_BRIGHT_DILATE의 팽창 �
 DARK_BRIGHT_SEED_KSIZE = 5  # px, 팽창 씨앗을 고르기 전 중앙값 필터 창. 샤프닝이 키운 골재 잡무늬 점(1~2px)은 지우고 폭 5px 이상 차선은 남김
 DARK_SPLIT_BLOB = False     # 보완 2-3(9c) 켬·끔. True면 원판 열림으로 덩어리(포트홀)와 선(균열)을 나눠 균열이 붙은 포트홀을 두 후보로
 DARK_SPLIT_KSIZE = 15       # px, 덩어리를 남길 원판 지름. 균열 폭(대부분 2~8px, 넓은 균열 시험 6~8px)의 약 두 배라 선은 지워지고, 지름 15px 이상 덩어리만 남음
+SCORE_USE_EDGE = False      # 보완 2-4(9b) 켬·끔. True면 점수에 경계 날카로움 항 min(1, edge / SCORE_EDGE_REF)를 곱함. 그림자 경계는 흐리고 포트홀·균열 경계는 날카로움(Plan.md 3.4)
+SCORE_EDGE_REF = 0.06       # 경계 날카로움(경계 고리 평균 기울기 ÷ 안쪽 평균 어둡기)의 기준. 합성 원(깊이 70)에서 가장자리 흐림 σ 0·1·2·4·8·15px일 때 0.39·0.10·0.06·0.045·0.032·0.026(10/13 측정) → σ 2px까지는 깎지 않고 σ 15px 그림자는 약 0.43배
 DARK_BRIGHT_REF = "coarse"  # 보완 2-2(9a). "coarse" = 지금(거친 배경 Bc와 비교·Bc로 메움), "road_median" = 노면 밝기 중앙값 하나와 비교·그 값으로 메움(억제 창보다 넓은 흰 줄무늬)
 
 # ===== C: 정량 측정 =====
