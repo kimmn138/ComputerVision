@@ -59,6 +59,23 @@ ROAD_EDGE_KSIZE = 15        # px, 8c 에지 밀도를 잴 창 (Plan.md 3.3 (5) 1
 ROAD_EDGE_QUANTILE = 0.95   # 분위, 8c 씨앗 영역 에지 밀도의 이 분위보다 크면 노면 아님 (Plan.md 95백분위)
 ROAD_EDGE_CANNY = (50, 150) # Canny 낮은·높은 문턱, 8c 에지 (B 구역 CANNY_LOW·HIGH와 같은 값, 구역을 넘지 않으려고 따로 둠)
 
+# 아래는 10/14 노면 마스크 두 결함(C가 A 동의로 넣음, docs/part_C.md '10/14 다시 시작'). 네 스위치를 모두 끄면 보완 최종과 같다
+ROAD_SEED_FILTER = True     # A2r 켬·끔. True면 시드 상자에서 노면답지 않은 픽셀(사진 안에서 유독 높은 채도·밝은 표시·노란 선 색)을 빼고 시드로 씀. 시드가 풀·차·흰 선에 찍히는 결함 A
+ROAD_SEED_CHROMA_REL = 8.3  # Lab a·b 채도 차, 픽셀 채도 − (그 사진 ROI 아래쪽 ROAD_SEED_REF_BOX 채도 중앙값)이 이보다 크면 빼는 픽셀. 깨끗한 시드 304장 픽셀의 99.5백분위(results/road_v6/calib.txt). 사진마다 상대적이라 빨간·푸른 아스팔트는 빠지지 않음
+ROAD_SEED_REF_BOX = (0.05, 0.35, 0.95, 0.90)    # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), 위 채도 중앙값을 잴 ROI 아래쪽 범위. 맨 아래 0.1(보닛)은 뺌
+ROAD_SEED_KEEP_MIN = 0.25   # 비율, 빼고 남은 시드 픽셀이 시드 상자의 이 비율보다 적으면 빼지 않음(시드가 사라지지 않게)
+ROAD_L_RANGE_MAX = 107.9    # 밝기 단계(L, 0~255), A3 밝기 허용 폭 ±ROAD_L_K × (1.4826 × MAD + 2)의 상한(0 = 끔). 깨끗한 시드 304장 ROI 허용 폭의 95백분위(calib.txt). 0~255를 덮던 71장 문제
+ROAD_KEEP_BLOBS = True      # B1 켬·끔. True면 시드와 이어진 덩어리에 더해, ROI 넓이 ROAD_BLOB_BIG 이상 덩어리와 (ROAD_BLOB_SMALL 이상이고 ROI 아래 ROAD_BLOB_BOTTOM에 닿은) 덩어리도 노면으로 남김. 흰 선에 막힌 건너편 노면(결함 B)
+ROAD_BLOB_SMALL = 0.005     # ROI 넓이 비율, B1 아래쪽 덩어리 최소 넓이
+ROAD_BLOB_BIG = 0.05        # ROI 넓이 비율, B1 위치와 상관없이 남길 덩어리 넓이(10/13 설계안 (3)②의 5%)
+ROAD_BLOB_BOTTOM = 0.25     # 높이 비율, B1 'ROI 아래쪽에 닿음'의 범위
+ROAD_LANE_AS_ROAD = True    # B2 켬·끔. True면 밝고 가는 흰·노란 줄(_lane_pixels) 가운데 가늘고 길며 둘레가 노면 색인 줄을 노면 후보에 더함(차선 (가)와 달리 노면 기준으로 고름)
+ROAD_LANE_MIN_AREA = 30     # px, B2 줄 덩어리 최소 넓이
+ROAD_LANE_ELONG = 3.0       # 배, B2 긴 변 ÷ 짧은 변 하한(가늘고 김)
+ROAD_LANE_RING = 9          # px, B2 줄 둘레 고리 폭(양옆 노면을 봄)
+ROAD_LANE_RING_ROAD = 0.5   # 비율, B2 둘레 고리에서 노면 색 픽셀이 이 이상이어야 노면 위의 차선
+ROAD_LANE_EDGE = 6          # px, B2로 더한 줄을 넓히는 폭 = 2 × ROAD_BLUR_SIGMA(흐림 때문에 줄 가장자리에 남는 틈을 메움)
+
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
 CRACK_CLOSE_KSIZE = 5
