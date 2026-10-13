@@ -670,11 +670,11 @@
 
 | 순서 | 할 일 | 기준 |
 |---|---|---|
-| 1 | 최종 τ 다시 고르기: 마지막 채택 설정으로 `--tau-curve`(ET 행). 그 실행의 fp2 점(`rule1` 행) τ를 config B 구역 `SCORE_TAU_*`에 쓴다(E4 뒤 config τ를 다시 쓰는 유일한 곳, E4와 같은 고르기) | 2단계부터 후보와 점수 분포가 바뀌어 E4 때 τ와 다르다. 채택 판정은 이미 단계마다 `rule1` 점으로 했으므로, 이 τ는 판정이 아니라 최종 설정을 정하는 일이다. 쓴 뒤 같은 설정으로 한 번 더 돌려 `config` 점 = `rule1` 점인지 확인한다 |
+| 1 | 최종 τ 다시 고르기: 마지막 채택 설정으로 `--tau-curve`(ET 행, `python tools/run_all.py supp --only ET --yes`가 끝에 config에 쓸 두 줄을 알려 줌: 판정 행(끔) fp2 점 τ를 소수 여섯째 자리로 내림). 그 실행의 fp2 점(`rule1` 행) τ를 config B 구역 `SCORE_TAU_*`에 쓴다(E4 뒤 config τ를 다시 쓰는 유일한 곳, E4와 같은 고르기) | 2단계부터 후보와 점수 분포가 바뀌어 E4 때 τ와 다르다. 채택 판정은 이미 단계마다 `rule1` 점으로 했으므로, 이 τ는 판정이 아니라 최종 설정을 정하는 일이다. 쓴 뒤 같은 설정으로 한 번 더 돌려 `config` 점 = `rule1` 점인지 확인한다 |
 | 2 | `python tools/run_all.py supp_final --yes`: 39장(roi.csv·자동 ROI·1차)·매칭·E5·E6(+ night) | 처리 시간은 이 실행 값만 보고서에 쓴다. **병렬 금지(다른 run_all·도구·시험을 동시에 돌리지 않음), 전원 연결, 다른 프로그램 종료.** 1차 설정 시간이 v9(40.6ms)와 크게 다르면 다시 잰다(v9 4.3의 사례, 0-2의 62.5 ms는 part_C 0-2 절: 같은 실행의 모든 설정이 약 1.5배 느렸음) |
 | 2b | **τ로 걸러진 후보 그리기 스위치**(사용자 결정 10/13, C 파일 `visualize`·`demo`): config C 구역 `DRAW_TAU_REJECTED = False`. 켜면 시연 그림에 τ 미만이라 걸러진 후보를 옅게(점선 윤곽) 함께 그린다. 발표에서 '후보는 만들지만 문턱에서 걸러진다'를 보여 주려는 것 | 평가 결과(evaluate_train·run_experiment의 숫자)에는 영향이 없어야 하고, 끔이면 지금 그림과 픽셀 하나까지 같아야 한다(test_c 시험). 6단계 3(시연 확인) 전에 넣는다 |
 | 3 | **시연 확인**: `python demo.py`로 그림 1~6 사진(China_MotorBike_002209·002159, Japan_000156·000107, own_19_none_normal, own_18_pothole_dark)을 돌려 이상이 없는지 본다 | 이상이 있으면 이 단계에서 고치고 개발셋으로 다시 판정한다. 시험셋을 돌린 뒤에는 고치지 않는다 |
-| 4 | `python tools/run_all.py retest_supp`: 시험셋 1회(`test_supp`) | 네 번째 평가. 결과를 보고 설정을 바꾸지 않는다 |
+| 4 | `python tools/run_all.py retest_supp`: 시험셋 1회(`test_supp`) | 네 번째 평가. 결과를 보고 설정을 바꾸지 않는다. 시작할 때 저장소 안 기록 파일 `docs/test_supp_done.txt`(시각·커밋·명령)를 남기고, 이 파일이 있으면 results/와 상관없이 다시 돌지 않는다(10/13 사용자 결정, 0-1과 같은 이유). 끝나면 이 파일을 커밋한다. supp_final의 E5(`e5_supp_dev`)를 돌린 config와 지금 config가 다르면 거부한다 |
 | 5 | `python tools/run_all.py retest_supp_repro`: 재현(`final_test_supp`) | 처리 시간 열 말고 같아야 한다. 다르면 원인만 찾는다 |
 | 6 | `python tools/run_all.py tables`: 표 1~15, `summary.md` | 손으로 고치지 않는다 |
 | 7 | 시연 그림 다시 저장(`results/demo/`) | 보고서 그림 1~6 |
