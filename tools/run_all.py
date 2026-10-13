@@ -182,9 +182,14 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("S8a2", "s08a_shadow20_dev", "4-2(8a) 그림자·햇빛 밝기 범위 2배", {"ROAD_SHADOW_L_K": 2}, "S6c", "off", "rules"),
              ("S8b", "s08b_hood_dev", "4-2(8b) 보닛·와이퍼 행 빼기", {"ROAD_HOOD_CUT": True}, "S6c", "off", "rules"),
              ("S8c", "s08c_edge_dev", "4-2(8c) 에지 밀도로 건물·인도 빼기", {"ROAD_EDGE_DENSITY": True}, "S6c", "off", "rules"),
-             ("S14", "s14_bandpersp_dev", "4-4(14번) 띠 높이 결 조건 원근 보정(0.8)", {"AUTO_BAND_TEX_PERSPECTIVE": True}, "S6c", "off", "rules"))
+             ("S14", "s14_bandpersp_dev", "4-4(14번) 띠 높이 결 조건 원근 보정(0.8)", {"AUTO_BAND_TEX_PERSPECTIVE": True}, "S6c", "off", "rules"),
+             # 4단계는 채택 없음 → 5단계의 비교 기준도 S6c. 격자 탐색(5-1)이 고른 값은 S10 행으로 판정한다
+             ("SH", "sh_hessian_dev", "5-2 헤시안 선 강조(균열 점수)", {"SCORE_USE_HESSIAN": True}, "S6c", "off", "rules"),
+             ("SP", "sp_persp_dev", "5-3 원근: 최소 넓이를 행 위치로(위 20 → 아래 40)", {"DARK_AREA_PERSPECTIVE": True}, "S6c", "off", "rules"),
+             ("S15", "s15_brightpot_dev", "5-4(15번) 밝은 자갈 포트홀(결 2배)", {"BRIGHT_POTHOLE": True}, "S6c", "off", "rules"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
+STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
 MASK_GT_MIN = 0.95                  # 4단계 채택 조건: 마스크 안 정답 비율이 이 값 이상 (v9 95.1%, 계획 7장 4단계 공통)
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
@@ -193,7 +198,7 @@ SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 �
                ("S9c_39", "s09c_split39", "2-3(9c) 덩어리·선 나누기 39장 자동 ROI(참고)", {"DARK_SPLIT_BLOB": True}),
                ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}),
                *[(f"{sid}_39", folder[:-4] + "_39", f"{label} 39장 자동 ROI(상태 판정 검증, 참고)", sets)
-                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
+                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS + STAGE5_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
 # 3단계 행은 E6 인위 저하도 함께 돈다(계획 4.1): 상태 판정 적중률과 원본 기준 비율. 비교 기준(S13)도 같은 저하로 한 번 돈다
 SUPP_DEGRADE = ("blur", "dark", "bright", "noise", "night")
 SUPP_E6_IDS = ("S13",) + tuple(r[0] for r in SUPP_RUNS if r[0].startswith(STAGE3_PREFIXES))
@@ -215,7 +220,12 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "S6c": "채택(규칙 1~3을 넘은 유일한 후보, NOISE_FLAT_QUANTILE 0.05. 밝기 값이 채택되지 않아 S13 기준 그대로)",
                   "S3a": "되돌림(규칙 2 못 넘음: 판정이 바뀐 사진 0장. GAMMA_RANGE (0.4, 2.5) 그대로)", "S3b": "되돌림(규칙 2 못 넘음: 판정이 바뀐 사진 0장)",
                   "S4": "되돌림(규칙 2 못 넘음: 특이도가 떨어짐. USE_CLAHE 끔 그대로)",
-                  "S5": "되돌림(규칙 1·2 못 넘음: 개발셋 원본에서 야간 조건(잡티 제거 + 밝게 하는 감마)을 고르는 영상이 0장. NIGHT_DENOISE 끔 그대로)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+                  "S5": "되돌림(규칙 1·2 못 넘음: 개발셋 원본에서 야간 조건(잡티 제거 + 밝게 하는 감마)을 고르는 영상이 0장. NIGHT_DENOISE 끔 그대로)",
+                  "S8da": "되돌림(규칙 1·3 못 넘음. ROAD_LANE_BRIDGE 끔 그대로)", "S8db": "되돌림(규칙 1~3 못 넘음)",
+                  "S8a1": "되돌림(규칙 1~3 못 넘음. ROAD_SHADOW_L_K 0 그대로)", "S8a2": "되돌림(규칙 1~3 못 넘음)",
+                  "S8b": "되돌림(규칙 1 못 넘음, 마스크 안 정답 94.9% < 95%)",
+                  "S8c": "되돌림(규칙 1~3은 통과했지만 마스크 안 정답 95.1 → 93.1%로 4단계 조건 95% 미달, 사용자 지시 10/13)",
+                  "S14": "되돌림(규칙 2 못 넘음: 균형 정확도 같음)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
