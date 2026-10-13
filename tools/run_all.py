@@ -35,6 +35,11 @@
   (docs/tasks/supplement.md 4.1). 규칙 1 = fp1·fp2 민감도가 둘 다 안 떨어지고 하나 이상 오름, 규칙 2·3 = 각 실행 자신의 rule1 점
   (10/13부터 fp2 점: 영상당 오검출 2개 이하 중 민감도 최대)의 균형 정확도·우연 뺀 균열 재현율. 표 14(table14_supp)·15(table15_tau_points).
   --only S12,E5s처럼 단계 안의 실험만 골라 돌릴 수 있다(앞 행을 다시 돌리지 않으려고).
+- supp_final: (10/13, 보완 6단계) 보완 최종 설정으로 39장(roi.csv·자동 ROI·1차)·매칭·E5(τ 곡선: config 점 = fp2 점 확인)·E6(+ night).
+  처리 시간을 보고서에 쓰는 실행이라 병렬 금지·전원 연결·다른 프로그램 종료(시작할 때 안내).
+- retest_supp: 시험셋 네 번째(test_supp). 한 번만 돈다: 시작할 때 저장소 안 기록 파일(docs/test_supp_done.txt)을 남기고, 그 파일이 있으면
+  results/가 지워졌어도 거부한다(0-1과 같은 이유). supp_final의 E5(e5_supp_dev)를 돌린 config와 지금 config가 다르면 거부한다.
+- retest_supp_repro: 같은 코드로 시험셋을 다시 돌려(final_test_supp) test_supp와 같은지 본다.
 - tables: 실험은 돌리지 않고 있는 결과 폴더로 표만 다시 만든다.
 자동 띠 높이(config AUTO_BAND_TOP): 띠 위쪽 비율을 옵션으로 정한 실험(E0~E3, 39장 1차 설정, 시험셋 1차)과 띠 고정 시절의 시험셋 실행
 (test_once·final_test)은 실행 중에만 AUTO_BAND_TOP=False로 고정해, 자동 띠를 켠 뒤에 다시 돌려도 처음과 같은 조건이다.
@@ -72,23 +77,26 @@ from src import config as C  # noqa: E402
 from tools import evaluate_train as et  # noqa: E402
 
 STAGES = {"compare": "비교", "band": "자동 띠 비교", "mask2": "노면 마스크 보완 비교", "supp": "보완 비교", "final": "최종", "test": "시험",
+          "supp_final": "보완 최종", "retest_supp": "시험(보완 최종, 한 번만)", "retest_supp_repro": "재현(보완 최종)",
           "repro": "재현",
           "retest": "시험(자동 띠)", "retest_repro": "재현(자동 띠)", "retest_ratio": "시험(ratio)", "retest_ratio_repro": "재현(ratio)",
           "tables": "표만"}
-TEST_STAGES = ("test", "retest", "retest_ratio")    # 시험셋을 한 번만 재는 단계: 실패하면 다음 실험을 돌리지 않는다
-SET_TEST_STAGES = ("test", "repro", "retest", "retest_repro", "retest_ratio", "retest_ratio_repro")   # 시험셋을 쓰는 단계
-RETESTS = {"retest": "TA", "retest_ratio": "TR"}    # 다시 재는 시험 단계 → 한 번만 재는 실험(최종 단계 config와 같아야 돈다)
-RETEST_REPROS = {"retest_repro": "retest", "retest_ratio_repro": "retest_ratio"}    # 재현 단계 → 그 앞 시험 단계
-RATIO_STAGES = ("final", "retest_ratio", "retest_ratio_repro", "mask2", "supp")   # 남기기 규칙을 config(또는 opts sets)대로 쓰는 단계. 나머지는 'center' 고정
+TEST_STAGES = ("test", "retest", "retest_ratio", "retest_supp")    # 시험셋을 한 번만 재는 단계: 실패하면 다음 실험을 돌리지 않는다
+SET_TEST_STAGES = ("test", "repro", "retest", "retest_repro", "retest_ratio", "retest_ratio_repro", "retest_supp", "retest_supp_repro")   # 시험셋을 쓰는 단계
+RETESTS = {"retest": "TA", "retest_ratio": "TR", "retest_supp": "TS"}    # 다시 재는 시험 단계 → 한 번만 재는 실험(최종 단계 config와 같아야 돈다)
+RETEST_REPROS = {"retest_repro": "retest", "retest_ratio_repro": "retest_ratio", "retest_supp_repro": "retest_supp"}    # 재현 단계 → 그 앞 시험 단계
+RATIO_STAGES = ("final", "retest_ratio", "retest_ratio_repro", "mask2", "supp", "supp_final", "retest_supp", "retest_supp_repro")   # 남기기 규칙을 config(또는 opts sets)대로 쓰는 단계. 나머지는 'center' 고정
 # 10/12에 이미 잰 시험셋 단계(재현 포함). results/가 지워져(10/12 밤) 폴더 유무로는 막을 수 없으므로 단계 이름으로 거부한다.
 # 다음 시험셋은 보완 뒤 retest_supp 한 번뿐이다(docs/tasks/supplement.md 0-1)
 DONE_TEST_STAGES = {"test": "test_once, 10/12 00:49", "repro": "final_test",
                     "retest": "test_autoband, 10/12 03:00", "retest_repro": "final_test_autoband",
                     "retest_ratio": "test_ratio, 10/12 06:38", "retest_ratio_repro": "final_test_ratio"}
 KEEP_BEFORE_RATIO = "center"        # ratio 채택(10/12) 전의 남기기 규칙
-SCORE_STAGES = ("supp", "final")   # 점수 문턱(E4, 10/13 채택)을 config대로 쓰는 단계(final은 늘 config 그대로). 나머지(E4 전에 돈 단계)는 실행 중에만 점수를 끔
+SCORE_STAGES = ("supp", "final", "supp_final", "retest_supp", "retest_supp_repro")   # 점수 문턱(E4, 10/13 채택)을 config대로 쓰는 단계(final은 늘 config 그대로). 나머지(E4 전에 돈 단계)는 실행 중에만 점수를 끔
 SCORE_BEFORE_E4 = {"SCORE_FORMULA": "none", "USE_SCORE_TAU": False}
 FINAL_CONFIG_EXP = "E5"                 # retest 전에 지금 config를 대조할 최종 단계 실험(config 그대로 돈 개발셋)
+RETEST_FINAL = {"retest": "E5", "retest_ratio": "E5", "retest_supp": "E5S"}   # 시험 단계마다 config를 대조할 최종 실험
+SUPP_TEST_MARKER = "docs/test_supp_done.txt"   # retest_supp를 돌린 기록(저장소 안, 커밋). 있으면 results/와 상관없이 다시 돌지 않는다
 REPORT_DIR = "report"               # 표는 results/report/
 DECISION_FILES = {"accept": "accept.txt", "reject": "reject.txt"}   # 사람이 정한 채택·되돌림(다음 단계에서 표를 다시 만들어도 유지되게)
 FORCED_MARK = "강제 실행(시험 미통과)"   # --force로 A·B 시험의 @todo가 남은 기능을 쓴 실험의 표시
@@ -186,7 +194,9 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              # 4단계는 채택 없음 → 5단계의 비교 기준도 S6c. 격자 탐색(5-1)이 고른 값은 S10 행으로 판정한다
              ("SH", "sh_hessian_dev", "5-2 헤시안 선 강조(균열 점수)", {"SCORE_USE_HESSIAN": True}, "S6c", "off", "rules"),
              ("SP", "sp_persp_dev", "5-3 원근: 최소 넓이를 행 위치로(위 20 → 아래 40)", {"DARK_AREA_PERSPECTIVE": True}, "S6c", "off", "rules"),
-             ("S15", "s15_brightpot_dev", "5-4(15번) 밝은 자갈 포트홀(결 2배)", {"BRIGHT_POTHOLE": True}, "S6c", "off", "rules"))
+             ("S15", "s15_brightpot_dev", "5-4(15번) 밝은 자갈 포트홀(결 2배)", {"BRIGHT_POTHOLE": True}, "S6c", "off", "rules"),
+             # 6단계 1번: 지금 config(마지막 채택 설정)의 τ 곡선. 판정 행(끔) fp2 점 τ를 config에 쓴다(et_tau_lines가 줄을 알려 줌)
+             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
@@ -224,10 +234,10 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "S8da": "되돌림(규칙 1·3 못 넘음. ROAD_LANE_BRIDGE 끔 그대로)", "S8db": "되돌림(규칙 1~3 못 넘음)",
                   "S8a1": "되돌림(규칙 1~3 못 넘음. ROAD_SHADOW_L_K 0 그대로)", "S8a2": "되돌림(규칙 1~3 못 넘음)",
                   "S8b": "되돌림(규칙 1 못 넘음, 마스크 안 정답 94.9% < 95%)",
-                  "S8c": "되돌림(규칙 1~3은 통과했지만 마스크 안 정답 95.1 → 93.1%로 4단계 조건 95% 미달, 사용자 지시 10/13)",
+                  "S8c": "되돌림(개발셋 규칙 1~3은 넘었지만 마스크 안 정답 조건(95%)이 정답 손실(95.1 → 93.1%)을 잡아 되돌림)",
                   "S14": "되돌림(규칙 2 못 넘음: 균형 정확도 같음)",
                   "SH": "되돌림(규칙 1·2 못 넘음. SCORE_USE_HESSIAN 끔 그대로)",
-                  "SP": "멈춤(사용자 판단 필요, 10/13): 규칙 1~3은 통과했지만 config에 켜자 test_b 2개 실패(띠 위쪽 결 조각이 영역으로 남음). config는 끔 그대로",
+                  "SP": "되돌림(개발셋 규칙 1~3은 넘었지만 기존 합성 시험이 부작용(띠 위쪽 결 조각)을 잡아 되돌림, 10/13 사용자 결정)",
                   "S15": "되돌림(규칙 1·2 못 넘음: S6c 기준 판정이 바뀐 사진 0장. SP를 채택하면 SP 위에서 다시 판정해야 함)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
@@ -290,6 +300,17 @@ EXPERIMENTS = [
     # 시험셋 세 번째 재기 (10/12, ratio 채택 뒤): 최종 설정(config 그대로)으로 한 번만, 그다음 같은 코드로 재현 확인
     _exp("TR", "retest_ratio", "train", "test_ratio", "시험셋 최종 설정(자동 띠 + 결 + ratio, 한 번만)", split="test"),
     _exp("RR", "retest_ratio_repro", "train", "final_test_ratio", "시험셋 재현 확인(자동 띠 + 결 + ratio)", split="test"),
+    # 보완 최종 (10/13, 6단계 2번): config 그대로. 처리 시간을 보고서에 쓰는 39장과 매칭을 앞에 둔다
+    _exp("F39S", "supp_final", "run39", "final_supp", "39장 보완 최종(roi.csv)", roi="csv"),
+    _exp("FMS", "supp_final", "match", "final_supp", "특징점·매칭 보완 최종"),
+    _exp("F39aS", "supp_final", "run39", "final_auto_supp", "39장 보완 최종(자동 ROI)", roi="auto"),
+    _exp("F39e0S", "supp_final", "run39", "e0_final_supp", "39장 1차 설정(보완 최종 실행에서 다시 잼)", FIRST, roi="csv"),
+    _exp("E5S", "supp_final", "train", "e5_supp_dev", "E5 보완 최종 끔·켬(τ 곡선: config 점 = fp2 점 확인)", {"tau_curve": True}, split="dev"),
+    *[_exp(f"F6S_{kind}", "supp_final", "train", f"e6_{kind}_final_supp_dev", f"E6 보완 최종 {DEGRADE_NAMES[kind]}", {"degrade": kind},
+           split="dev") for kind in V9_DEGRADE_KINDS + ("night",)],
+    # 시험셋 네 번째 (6단계 4번): 보완 최종 설정으로 한 번만, 그다음 같은 코드로 재현 확인
+    _exp("TS", "retest_supp", "train", "test_supp", "시험셋 보완 최종(네 번째, 한 번만)", split="test"),
+    _exp("RS", "retest_supp_repro", "train", "final_test_supp", "시험셋 재현 확인(보완 최종)", split="test"),
 ]
 EXP = {e["id"]: e for e in EXPERIMENTS}
 ADOPT_ORDER = [e["id"] for e in EXPERIMENTS if e.get("adopt")]       # E1, E1b, E2, E3, E3s, E4
@@ -299,7 +320,7 @@ METRICS = ["images", "n_damage", "n_none", "sensitivity", "specificity", "accura
            "crack_ctr_recall", "crack_ctr_recall_net", "crack_ctr_precision",
            "pothole_ctr_recall", "pothole_ctr_recall_net", "pothole_ctr_precision",
            "crack_iou_recall", "crack_iou_precision", "pothole_iou_recall", "pothole_iou_precision", "chance_skipped"]
-STAGE_IDS = ["E0_all", "E0", "E1", "E1b", "E2", "E3", "E3s", "E4", "B1", "M0", "M1", "M2", "M3", "E5", "T0", "T", "TA", "TR"]   # 1번 단계별 표의 행 순서
+STAGE_IDS = ["E0_all", "E0", "E1", "E1b", "E2", "E3", "E3s", "E4", "B1", "M0", "M1", "M2", "M3", "E5", "E5S", "T0", "T", "TA", "TR", "TS"]   # 1번 단계별 표의 행 순서
 STAGE_HEAD = ["stage_id", "label", "data", "folder", "status", "commit"]
 COUNTRY_RUNS = (("E0", "1차"), ("E3", "띠 고정(E3)"), ("B1", "자동 띠(결 없음)"), ("M0", "자동 띠 + 결(center)"),
                 ("E5", "최종(자동 띠 + 결 + ratio)"),
@@ -313,7 +334,8 @@ MASK2_IDS = ("M0", "M1", "M2", "M3")    # 10번 노면 마스크 보완 표 (개
 # 시험셋 세 번 (10/12 보고): (단계, 이름, 설정 글)
 TEST_RUNS = (("T", "띠 고정", "E3(dark + 노면 마스크) + 띠 고정 0.5 + 남기기 center"),
              ("TA", "자동 띠", "E3 + 자동 띠 + 결 1.5 + 남기기 center"),
-             ("TR", "자동 띠 + ratio(최종)", "E3 + 자동 띠 + 결 1.5 + 남기기 ratio"))
+             ("TR", "자동 띠 + ratio(최종)", "E3 + 자동 띠 + 결 1.5 + 남기기 ratio"),
+             ("TS", "보완 최종(네 번째)", "TR + 점수 τ(E4, ET) + 국소 σ + 밝은 줄 옆 테두리 메움 + 잡티 0.05 (docs/part_C.md 보완 결과)"))
 IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"))
 GROUP39 = ["n_images", "n_gt", "n_damage", "n_none", "sensitivity_off", "sensitivity_on", "specificity_off", "specificity_on",
            "accuracy_off", "accuracy_on", "baseline_none"]
@@ -364,7 +386,7 @@ def patched(obj, values):
 def default_paths():
     """실제 실행의 경로(맨 위 폴더 기준)와 학습 사진 수. 시험에서는 임시 폴더를 가리키는 dict를 대신 넘긴다."""
     return {"results": "results", "image_dirs": rx.IMAGE_DIRS, "roi": "data/roi.csv", "gt": "gt", "pairs": rm.PAIR_DIR,
-            "train_img": C.TRAIN_IMAGE_DIR, "train_gt": C.TRAIN_GT_DIR, "n_train": N_TRAIN}
+            "train_img": C.TRAIN_IMAGE_DIR, "train_gt": C.TRAIN_GT_DIR, "n_train": N_TRAIN, "test_marker": SUPP_TEST_MARKER}
 
 
 def parse_args(argv=None):
@@ -812,10 +834,10 @@ def config_used_values(path):
     return {name: value for name, value in pairs}
 
 
-def final_config_diff(results):
-    """지금 config와 최종 단계(FINAL_CONFIG_EXP)를 돌린 config(config_used_train.txt)가 다른 값 [(이름, 최종, 지금)].
+def final_config_diff(results, final_id=FINAL_CONFIG_EXP):
+    """지금 config와 최종 단계 실험(final_id, 기본 FINAL_CONFIG_EXP)을 돌린 config(config_used_train.txt)가 다른 값 [(이름, 최종, 지금)].
     최종 단계 결과가 없으면 None. retest가 시험셋을 최종 설정으로 재는지 확인하려고 쓴다."""
-    used = config_used_values(results / EXP[FINAL_CONFIG_EXP]["name"] / CONFIG_FILE["train"])
+    used = config_used_values(results / EXP[final_id]["name"] / CONFIG_FILE["train"])
     if used is None:
         return None
     now = {name: repr(value) for name, value in vars(C).items() if name.isupper()}
@@ -823,7 +845,7 @@ def final_config_diff(results):
             if used.get(name) != now.get(name)]
 
 
-def stage_refusal(stage, results):
+def stage_refusal(stage, results, marker=None):
     """단계를 거부할 이유(없으면 None): 시험은 test_once가 이미 있으면(한 번만), 재현은 test_once 결과가 없으면.
     retest(test_autoband)·retest_ratio(test_ratio)는 그 폴더가 이미 있거나, 최종 단계 결과가 없거나, 지금 config가 최종 단계를 돌린
     config와 다르면. retest_repro·retest_ratio_repro는 앞 시험 단계의 결과가 없으면.
@@ -831,13 +853,19 @@ def stage_refusal(stage, results):
     if stage in DONE_TEST_STAGES:
         return (f"{stage} 단계의 시험셋은 10/12에 이미 쟀습니다({DONE_TEST_STAGES[stage]}). results/가 지워져 폴더로는 막을 수 없어 "
                 "단계 이름으로 거부합니다. 다음 시험셋 평가는 보완을 마친 뒤 한 번뿐입니다(docs/tasks/supplement.md 0-1).")
+    if stage == "retest_supp" and marker and Path(marker).exists():
+        return (f"retest_supp의 시험셋은 이미 쟀습니다(기록 파일 {Path(marker).as_posix()}: "
+                f"{Path(marker).read_text(encoding='utf-8').strip().splitlines()[0]}). 시험셋은 한 번만 잽니다. "
+                "results/가 지워져도 막으려고 저장소 안 기록 파일로 거부합니다(docs/tasks/supplement.md 0-1).")
     if stage in RETESTS:
         again = results / EXP[RETESTS[stage]]["name"]
         if again.exists():
             return f"{again.as_posix()}/가 이미 있습니다. 시험셋은 한 번만 잽니다(Plan.md 3.10)."
-        diff = final_config_diff(results)
+        final_id = RETEST_FINAL[stage]
+        diff = final_config_diff(results, final_id)
         if diff is None:
-            return f"최종 단계 결과({EXP[FINAL_CONFIG_EXP]['name']})가 없습니다. final을 먼저 돌립니다(시험셋은 최종 설정으로 잼)."
+            first = "supp_final" if final_id == "E5S" else "final"
+            return f"최종 단계 결과({EXP[final_id]['name']})가 없습니다. {first}을 먼저 돌립니다(시험셋은 최종 설정으로 잼)."
         if diff:
             return "지금 config가 최종 단계를 돌린 config와 다릅니다: " + ", ".join(f"{n} 최종 {a} / 지금 {b}" for n, a, b in diff)
         return None
@@ -951,8 +979,8 @@ def print_plan(stage, exps, paths, ready, refusal, skips, human):
     else:
         for note in ready["notes"]:
             print(f"경고: {note}")
-    if stage == "final":
-        print("시작할 때: 전원 연결·다른 프로그램 닫기 안내 후 Enter를 기다림(--yes면 건너뜀)")
+    if stage in FINAL_STAGES:
+        print("시작할 때: 전원 연결·다른 프로그램 닫기·병렬 금지 안내 후 Enter를 기다림(--yes면 건너뜀)")
     if stage == "test":
         print("시작할 때: 지금 config를 보여 주고 Enter를 기다림(--yes면 건너뜀). 1차 방법이 실패하면 test_once를 돌리지 않음")
     print(f"예상 합계: 약 {duration(total)} (실행 전 확인 포함"
@@ -961,7 +989,9 @@ def print_plan(stage, exps, paths, ready, refusal, skips, human):
     print(f"표: {(results / REPORT_DIR).as_posix()}/ (table1_stages … table13_judge.csv, adoption.csv, summary.md)")
 
 
-FINAL_PROMPT = "처리 시간을 잽니다: 노트북 전원을 연결하고 다른 프로그램을 닫아 주세요."
+FINAL_PROMPT = ("처리 시간을 잽니다: 노트북 전원을 연결하고 다른 프로그램을 닫아 주세요. "
+                "다른 run_all·도구·시험을 동시에 돌리지 마세요(병렬 금지, 0-2의 62.5 ms 사례).")
+FINAL_STAGES = ("final", "supp_final")      # 처리 시간을 보고서에 쓰는 단계(시작 전 FINAL_PROMPT)
 
 
 def test_prompt(ready):
@@ -974,6 +1004,32 @@ def test_prompt(ready):
             + (f"\n--force로 쓰는 기능(A·B 시험 미통과, 표에 '{FORCED_MARK}'): {', '.join(forced)}" if forced else ""))
 
 
+def write_test_marker(path, command_line):
+    """retest_supp를 시작하는 순간(시험셋 평가 전) 저장소 안에 기록 파일을 쓴다: 첫 줄 = 시각·커밋, 그다음 명령. 이 파일이 있으면
+    stage_refusal이 results/와 상관없이 retest_supp를 거부한다. 숫자를 보기 전에 실패했더라도 파일은 남는다(지울지는 사람이 정함)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    head = git("rev-parse", "HEAD") or "커밋 알 수 없음"
+    path.write_text(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} 커밋 {head}\n{command_line}\n"
+                    "이 파일은 시험셋 네 번째(test_supp)를 잰 기록이다. 지우면 시험셋을 다시 돌릴 수 있게 되므로 지우지 않는다.\n",
+                    encoding="utf-8")
+
+
+def et_tau_lines(paths, states):
+    """ET(6단계 최종 τ) 실행이 끝났으면, 그 실행의 판정 행(끔) fp2 점 τ를 config B 구역에 쓸 줄로 돌려준다. tau_points.csv는 소수 여섯째
+    자리로 반올림돼 있어 그대로 쓰면 τ와 같은 점수의 후보(최고 점수 등)가 빠질 수 있으므로 1e-6을 빼 내림한다(반올림 오차 ≤ 5e-7).
+    ±∞는 float('±inf'). 끝나지 않았으면 빈 list."""
+    exp = EXP.get("ET")
+    points = tau_points_of(paths, exp, states["ET"]) if exp else None
+    if not points or ("off", "fp2") not in points:
+        return []
+    row = points[("off", "fp2")]
+
+    def text(v):
+        v = float(v)
+        return f'float("{"" if v > 0 else "-"}inf")' if math.isinf(v) else f"{(math.floor(round(v * 1e6, 3)) - 1) / 1e6:.6f}"
+    return [f"SCORE_TAU_CRACK = {text(row['tau_crack'])}", f"SCORE_TAU_POTHOLE = {text(row['tau_pothole'])}"]
+
+
 def run_stage(stage, args, paths, human, command_line, ask=input):
     """한 단계를 돈다: 거부 조건 → 실행 전 확인 → 건너뛸 실험·시작 확인 → 실험을 차례로 → 표 만들기. 끝 코드는 main과 같다.
     비교 단계는 E0와 채택 단계가 끝날 때마다 잠정 판정(adoption, 사람이 정한 --accept·--reject가 앞섬)을 다시 내어
@@ -981,7 +1037,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
     exps = [e for e in EXPERIMENTS if e["stage"] == stage and (not getattr(args, "only", None) or e["id"] in args.only)]
     ready = readiness(args.force)
     results_dir = Path(paths["results"])
-    refusal = stage_refusal(stage, results_dir)
+    refusal = stage_refusal(stage, results_dir, paths.get("test_marker"))
     skips = skip_list(exps, ready)
     if args.dry_run:
         print_plan(stage, exps, paths, ready, refusal, skips, human)
@@ -1002,10 +1058,12 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print_skips(skips, ready)
         if not confirm("위 실험을 건너뛰고 나머지를 돌립니다.", args.yes, ask):
             return 2
-    if stage == "final" and not confirm(FINAL_PROMPT, args.yes, ask):
+    if stage in FINAL_STAGES and not confirm(FINAL_PROMPT, args.yes, ask):
         return 2
     if stage in TEST_STAGES and not confirm(test_prompt(ready), args.yes, ask):
         return 2
+    if stage == "retest_supp" and paths.get("test_marker"):
+        write_test_marker(Path(paths["test_marker"]), command_line)
     if stage == "compare" and human_text(human):
         print(f"사람이 정한 것: {human_text(human)} (자동 판정보다 앞서고 뒤 단계 설정에 반영)")
 
@@ -1037,6 +1095,10 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
     report = build_report(paths, human, command_line)
     print_report(report, stage)
+    tau_lines = et_tau_lines(paths, report["states"]) if stage == "supp" and any(e["id"] == "ET" for e, _, _ in done) else []
+    if tau_lines:
+        print("\nET 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 supp_final을 돌린다(6단계 1번, docs/tasks/supplement.md)")
+        print("\n".join(f"  {line}" for line in tau_lines))
     return 1 if any(shown.startswith("실패") for _, shown, _ in done) else 0
 
 
@@ -1335,7 +1397,7 @@ def e0_reproduction(summary):
     return [(key, expect, actual[key], actual[key] == expect) for key, expect in E0_EXPECT.items()]
 
 
-REPRO_PAIRS = (("T", "R"), ("TA", "RA"), ("TR", "RR"))     # 재현 확인: (한 번만 잰 시험셋, 같은 코드로 다시 돈 것)
+REPRO_PAIRS = (("T", "R"), ("TA", "RA"), ("TR", "RR"), ("TS", "RS"))     # 재현 확인: (한 번만 잰 시험셋, 같은 코드로 다시 돈 것)
 
 
 def repro_pair(once, again):
@@ -1870,7 +1932,8 @@ def time_table(runs):
     """12번 처리 시간 비교: 최종 실행의 39장 기록에서 1차 설정(F39e0)과 최종 설정(roi.csv F39, 자동 ROI F39a)의 영상 1장 처리 시간
     (끔·켬 각 TIME_REPEAT번 중앙값의 39장 평균). 항목은 전처리·검출·노면 마스크·띠 경계와 그 합."""
     rows = []
-    for sid, name in (("F39e0", "1차 설정(roi.csv)"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI, 자동 띠 + 결 + ratio)")):
+    for sid, name in (("F39e0", "1차 설정(roi.csv)"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI, 자동 띠 + 결 + ratio)"),
+                      ("F39e0S", "1차 설정(roi.csv, 보완 최종 실행)"), ("F39S", "보완 최종(roi.csv)"), ("F39aS", "보완 최종(자동 ROI)")):
         data = runs.get(sid)
         if data is None:
             continue
