@@ -299,7 +299,9 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "V1e": "V1x 위 참고(판정에 쓰지 않음)", "V1f": "V1x 위 참고(판정에 쓰지 않음)",
                   "V1y": "채택(V6a 위 V1c, 규칙 1~3 + 마스크 안 정답 95.43%). AUTO_BAND_SEED_FIXED True",
                   "V1g": "미채택(규칙 1·마스크 안 정답 94.08% 못 넘음)", "V1h": "미채택(규칙 1·2·마스크 안 정답 94.13% 못 넘음)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
-SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
+SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False,
+                   "ROAD_SEED_MODE": "box", "ROAD_L_RANGE_MAX": 0, "ROAD_COLOR_DIST": "ab_L", "ROAD_SEED_CHECK": False,
+                   "AUTO_BAND_SEED_FIXED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
     # 비교 단계 (개발셋). 이 순서로 돌고, adopt 단계는 끝날 때마다 잠정 판정해 뒤 단계 설정에 반영한다
@@ -1771,7 +1773,11 @@ def mask_gt_rows(paths, exp, state, out_dir):
             small = io_utils.resize_width(io_utils.load_image(str(image_dir / name)))
             top = pipeline.auto_band_top(small, C.ROI_TOP_DEFAULT) if C.AUTO_BAND_TOP else C.ROI_TOP_DEFAULT
             roi, y0 = io_utils.crop_roi(small, top, C.ROI_BOTTOM_DEFAULT)
-            road = io_utils.road_mask(roi)
+            if C.AUTO_BAND_SEED_FIXED and top != C.ROI_TOP_DEFAULT:    # pipeline.run_pipeline과 같게(v5 V1c: 넓어진 ROI는 원래 ROI 자리의 시드)
+                road = io_utils.road_mask_seeded(roi, pipeline.fixed_seed_box(small.shape[1], small.shape[0], C.ROI_TOP_DEFAULT,
+                                                                               C.ROI_BOTTOM_DEFAULT, y0))
+            else:
+                road = io_utils.road_mask(roi)
             gt = evaluate.load_gt(str(Path(paths["train_gt"]) / f"{Path(name).stem}.csv")) or []
             band = [(int(x + w / 2), int(y + h / 2) - y0) for x, y, w, h, _ in gt if 0 <= int(y + h / 2) - y0 < road.shape[0]]
             rows.append({"image": name, "source": et.source_of(name), "top": top,
