@@ -173,4 +173,4 @@ REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상�
 REJECTED_DASH = 4                  # px, 걸러진 후보 점선의 한 칸 길이(대각 줄무늬 주기의 절반)
 REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께(시연 창은 화면에 맞춰 줄어들어 1px는 거의 안 보임)
 AUTO_BAND_SEED_FIXED = True       # v5 V1c 켬·끔(10/13 밤). V6a 위에서 채택(규칙 1~3 + 마스크 안 정답 95.43%, part_C). True면 ROI가 넓어져도 노면 마스크 시드를 받은 ROI 상단 경계(top~bottom)의 ROAD_SEED_BOX 자리에 둠. 사진 전체 마스크(ROI 상단 경계 판단)도 같은 자리. Norway_007802(ROI가 넓어지자 시드가 숲에 떨어짐) 대응
-AUTO_BAND_TEX_REF = "start"         # v5 V1d(10/14). "start" = 확장 구간 질감을 시작 ROI 노면과 비교(지금), "below" = 바로 아래(직전에 받아들인) 구간 노면과 비교. 비 범위는 AUTO_BAND_TEX_RATIO 그대로
+AUTO_BAND_TEX_REF = "below"         # v5 V1d(10/14). V7a 채택(규칙 1~3 + 마스크 안 정답 95.76%, part_C). "start" = 확장 구간 질감을 시작 ROI 노면과 비교(지금), "below" = 바로 아래(직전에 받아들인) 구간 노면과 비교. 비 범위는 AUTO_BAND_TEX_RATIO 그대로
