@@ -172,4 +172,4 @@ DRAW_TAU_REJECTED = False           # 보완 6단계 켬·끔. True면 시연 �
 REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상과 섞는 비율(0 = 안 보임, 1 = 진한 색)
 REJECTED_DASH = 4                  # px, 걸러진 후보 점선의 한 칸 길이(대각 줄무늬 주기의 절반)
 REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께(시연 창은 화면에 맞춰 줄어들어 1px는 거의 안 보임)
-AUTO_BAND_SEED_FIXED = False      # v5 V1c 켬·끔(10/13 밤). True면 ROI가 넓어져도 노면 마스크 시드를 받은 ROI 상단 경계(top~bottom)의 ROAD_SEED_BOX 자리에 둠. 사진 전체 마스크(ROI 상단 경계 판단)도 같은 자리. Norway_007802(ROI가 넓어지자 시드가 숲에 떨어짐) 대응
+AUTO_BAND_SEED_FIXED = True       # v5 V1c 켬·끔(10/13 밤). V6a 위에서 채택(규칙 1~3 + 마스크 안 정답 95.43%, part_C). True면 ROI가 넓어져도 노면 마스크 시드를 받은 ROI 상단 경계(top~bottom)의 ROAD_SEED_BOX 자리에 둠. 사진 전체 마스크(ROI 상단 경계 판단)도 같은 자리. Norway_007802(ROI가 넓어지자 시드가 숲에 떨어짐) 대응
