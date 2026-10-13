@@ -727,6 +727,32 @@ def test_demo_tau_rejected():
           "DRAW_TAU_REJECTED가 결과 숫자(row·후보)를 바꿈")
 
 
+def test_report_figures_helpers():
+    """보고서 그림 도구(tools/report_figures.py): 번호판 모자이크는 받은 영상을 바꾸지 않고 상자 안만 칸 평균색으로 바꾸며(상자 밖은 그대로),
+    정답 상자는 v9 그림 2와 같은 2px(왼 변 x·x+1, 위 변 y−1·y)로 그린다. 그림 목록의 사진이 모두 있고 이름이 겹치지 않으며,
+    demo.wrap_footer는 폭을 넘는 줄을 구분자에서 나누고 넘지 않으면 그대로 둔다."""
+    from tools import report_figures as rf
+    rng = np.random.default_rng(3)
+    img = rng.integers(0, 256, (60, 120, 3), dtype=np.uint8)
+    before = img.copy()
+    out = rf.mosaic(img, [(10, 5, 24, 12)])
+    inside = np.zeros(img.shape[:2], bool)
+    inside[5:17, 10:34] = True
+    check(np.array_equal(img, before) and np.array_equal(out[~inside], img[~inside]) and not np.array_equal(out[inside], img[inside])
+          and len(np.unique(out[5:11, 10:16].reshape(-1, 3), axis=0)) == 1, "report_figures.mosaic: 상자 밖을 바꾸거나 칸이 한 색이 아님")
+    drawn = rf.draw_gt(np.zeros((100, 100, 3), np.uint8), [(20, 30, 40, 50, "crack")])
+    white = lambda y, x: bool((drawn[y, x] == 255).all())  # noqa: E731
+    check(white(50, 20) and white(50, 21) and not white(50, 19) and not white(50, 22) and white(29, 40) and white(30, 40)
+          and not white(31, 40) and not white(28, 40), "report_figures.draw_gt: 정답 상자가 v9와 같은 2px가 아님")
+    names = [f[0] for f in rf.FIGURES]
+    check(len(set(names)) == len(names) and all(os.path.exists(f[1]) for f in rf.FIGURES), "report_figures: 그림 이름이 겹치거나 사진이 없음")
+    lines = ["가 · 나 · 다", "짧음"]
+    check(demo.wrap_footer(lines, 10_000, True) == lines, "wrap_footer: 폭이 넉넉한데 줄을 나눔")
+    wrapped = demo.wrap_footer(["상태 판정: 평균 175 · 표준편차 26.7 · 라플라시안 분산 5338 · 잡티 8.2"], 300, True)
+    check(len(wrapped) > 1 and wrapped[1].startswith("  ") and all(demo.text_width(w, True) <= 300 for w in wrapped),
+          f"wrap_footer: 좁은 폭에서 나누지 않거나 넘침 ({wrapped})")
+
+
 def test_demo_dialog_args():
     """선택 창 모드의 명령행: 인자가 없으면 --roi auto, --list·경로는 csv, 직접 준 --roi는 그대로.
     --list와 경로를 함께 주거나 선택 창에 --save를 주면(고를 때마다 덮어씀) 거부하고, --list와 --save는 함께 쓸 수 있다."""
