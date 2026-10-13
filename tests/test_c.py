@@ -1626,13 +1626,13 @@ def test_degrade_main():
 
 
 def test_run_all_plan():
-    """run_all의 실험 목록: 결과 폴더는 겹치지 않고(39장 최종과 매칭만 final을 함께 씀) 1차 결과 폴더가 아니며, 학습 데이터 실행은
+    """run_all의 실험 목록: 결과 폴더는 겹치지 않고(39장 최종과 매칭만 final·final_supp·final_v5를 함께 씀) 1차 결과 폴더가 아니며, 학습 데이터 실행은
     이름 끝이 데이터(_all·_dev·_test)이거나 test_once·final_test다. 명령은 각 도구가 그대로 받고, E0·E1·E1b는 1차 값(base 세트·legacy·
     띠 0.5)으로 고정, run_experiment에 없는 옵션(1차 legacy 값·σ)은 실행 중에만 덮는다. 최종·시험셋 최종은 config 그대로 돈다."""
     from tools import evaluate_train as et
     from tools import run_all as ra
     names = collections.Counter(e["name"] for e in ra.EXPERIMENTS)
-    check(names.pop("final_ratio") == 2 and names.pop("final_supp") == 2 and set(names.values()) == {1},
+    check(names.pop("final_ratio") == 2 and names.pop("final_supp") == 2 and names.pop("final_v5") == 2 and set(names.values()) == {1},
           f"run_all: 결과 폴더 이름이 겹침 ({names.most_common(3)})")
     old_final = {"final", "final_auto", "e0", "e5_dev"} | {f"e6_{k}_final_dev" for k in et.DEGRADE_KINDS}
     check(not old_final & {e["name"] for e in ra.EXPERIMENTS if e["stage"] == "final"},
@@ -1641,7 +1641,8 @@ def test_run_all_plan():
     for e in ra.EXPERIMENTS:
         if e["tool"] == "train":
             check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test", "test_autoband", "final_test_autoband",
-                                                                                 "test_ratio", "final_test_ratio", "test_supp", "final_test_supp"),
+                                                                                 "test_ratio", "final_test_ratio", "test_supp", "final_test_supp",
+                                                                                 "test_v5", "final_test_v5"),
                   f"run_all: 학습 데이터 폴더 이름 끝에 데이터가 없음 ({e['name']})")
         if e["tool"]:
             argv, _ = ra.command(e, ra.resolve(e, {"E0"}))
@@ -2020,6 +2021,96 @@ def test_run_all_retest_supp_refuse():
         with contextlib.redirect_stdout(io.StringIO()) as printed:
             code = ra.main(["retest_supp", "--yes"], paths)
         check(code == 2 and "이미 쟀습니다" in printed.getvalue() and len(calls) == 1, "run_all retest_supp: 두 번째 실행을 거부하지 않음")
+
+
+def test_run_all_final_v5_stages():
+    """(v5 7단계, 10/13 밤) final_v5는 supp_final과 같은 구성(39장 roi.csv·매칭·자동 ROI·1차, E5 τ 곡선, E6 여섯 가지)을 config 그대로,
+    시험셋 다섯 번째(TV)·재현(RV)은 시험셋을 쓰고, 처리 시간 단계라 병렬 금지 안내를 띄운다. ETV는 지금 config의 τ 곡선이다."""
+    from tools import run_all as ra
+    from tools import evaluate_train as et
+    ids = [e["id"] for e in ra.EXPERIMENTS if e["stage"] == "final_v5"]
+    check(ids == ["F39V", "FMV", "F39aV", "F39e0V", "E5V"] + [f"F6V_{k}" for k in ra.V9_DEGRADE_KINDS + ("night",)],
+          f"run_all final_v5: 실험 목록·순서가 다름 ({ids})")
+    argv, pins = ra.command(ra.EXP["E5V"], ra.resolve(ra.EXP["E5V"], {"E0"}))
+    args = parse_quietly(et.parse_args, argv)
+    check(args is not None and args.tau_curve and args.split == "dev" and not args.overrides and not pins,
+          f"run_all E5V: config 그대로 τ 곡선이 아님 ({argv}, {pins})")
+    for sid in ("F39V", "F39aV", "TV", "RV"):
+        _, pins = ra.command(ra.EXP[sid], ra.resolve(ra.EXP[sid], {"E0"}))
+        check(not pins, f"run_all {sid}: v5 최종 실행이 config 값을 실행 중에 고정함 ({pins})")
+    check(ra.EXP["TV"]["split"] == "test" and ra.EXP["RV"]["split"] == "test" and "retest_v5" in ra.TEST_STAGES
+          and {"retest_v5", "retest_v5_repro"} <= set(ra.SET_TEST_STAGES) and ("TV", "RV") in ra.REPRO_PAIRS,
+          "run_all: 시험셋 다섯 번째·재현 행이 빠짐")
+    check("final_v5" in ra.FINAL_STAGES and ra.RETEST_FINAL["retest_v5"] == "E5V" and ra.FINAL_STAGE_OF["E5V"] == "final_v5",
+          "run_all final_v5: 최종 단계·대조 실험이 맞지 않음")
+    check(ra.EXP["ETV"]["stage"] == "supp" and not ra.EXP["ETV"]["opts"]["sets"] and ra.EXP["ETV"]["opts"]["tau_curve"],
+          "run_all ETV: 지금 config의 τ 곡선 행이 아님")
+    check(ra.default_paths()["test_marker_v5"] == "docs/test_v5_done.txt" and ra.default_paths()["test_marker"] == "docs/test_supp_done.txt",
+          "run_all: 시험셋 기록 파일 경로가 다름")
+
+
+def test_run_all_retest_v5_refuse():
+    """시험셋 다섯 번째(retest_v5)도 한 번만 돈다(10/13 밤 사용자, retest_supp와 같은 방식). final_v5의 E5(e5_v5_dev)가 없거나 config가
+    다르면 거부, test_v5 폴더가 있으면 거부, 저장소 안 기록 파일(docs/test_v5_done.txt)이 있으면 results/가 없어도 거부(끝 코드 2).
+    처음 돌 때는 시험 실험(TV)을 돌리기 전에 기록 파일을 쓰고, 그 뒤 다시 부르면 거부한다. retest_v5_repro는 test_v5가 없으면 거부.
+    retest_supp의 기록 파일만 있을 때는 retest_v5를 막지 않는다(단계마다 자기 기록 파일)."""
+    from tools import run_all as ra
+
+    def must_not_run(*args):
+        raise AssertionError("거부에서 멈춰야 하는데 더 감")
+
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
+        results = Path(tmp) / "results"
+        supp_marker, marker = Path(tmp) / "repo" / "docs" / "test_supp_done.txt", Path(tmp) / "repo" / "docs" / "test_v5_done.txt"
+        paths = {**ra.default_paths(), "results": str(results), "test_marker": str(supp_marker), "test_marker_v5": str(marker)}
+        text = ra.stage_refusal("retest_v5", results, str(marker)) or ""
+        check("final_v5을 먼저" in text, f"run_all retest_v5: v5 최종 결과 없이 거부하지 않음 ({text})")
+        e5 = results / "e5_v5_dev"
+        e5.mkdir(parents=True)
+        rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
+        supp_marker.parent.mkdir(parents=True)
+        supp_marker.write_text("2026-10-13 14:00:33 커밋 b27a289\n", encoding="utf-8")
+        check(ra.stage_refusal("retest_v5", results, str(marker)) is None,
+              "run_all retest_v5: config가 같고 v5 기록 파일이 없는데 거부함(retest_supp 기록 파일에 막힘?)")
+        with patched(C, "ROAD_COLOR_DIST", "ab_L"):
+            text = ra.stage_refusal("retest_v5", results, str(marker)) or ""
+        check("ROAD_COLOR_DIST" in text, f"run_all retest_v5: config가 다른데 거부하지 않음 ({text})")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_v5_repro"], paths)
+        check(code == 2 and "retest_v5 뒤에" in printed.getvalue(), "run_all retest_v5_repro: test_v5 없이도 돌았음")
+        marker.write_text("2026-10-14 10:00:00 커밋 abc\n", encoding="utf-8")
+        shutil.rmtree(results)                       # results/를 지워도 기록 파일로 거부
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_v5", "--yes"], paths)
+        check(code == 2 and "이미 쟀습니다" in printed.getvalue() and not results.exists(),
+              f"run_all retest_v5: 기록 파일이 있는데 거부하지 않음 ({code})")
+        marker.unlink()
+        (results / "test_v5").mkdir(parents=True)
+        check("한 번만" in (ra.stage_refusal("retest_v5", results, str(marker)) or ""), "run_all retest_v5: test_v5가 있는데 거부하지 않음")
+
+    calls = []
+
+    def fake_run(exp, opts, paths, ready, context, source=""):
+        calls.append((exp["id"], marker.exists()))
+        return "완료", 0.0, []
+
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", lambda paths: [("확인", True, "", True)]), \
+            patched(ra, "readiness", lambda force=(): {"mask": True, "dark": True, "notes": [], "forced": set()}), \
+            patched(ra, "run_one", fake_run):
+        results = Path(tmp) / "results"
+        supp_marker, marker = Path(tmp) / "repo" / "docs" / "test_supp_done.txt", Path(tmp) / "repo" / "docs" / "test_v5_done.txt"
+        paths = {**ra.default_paths(), "results": str(results), "test_marker": str(supp_marker), "test_marker_v5": str(marker)}
+        e5 = results / "e5_v5_dev"
+        e5.mkdir(parents=True)
+        rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            ra.main(["retest_v5", "--yes"], paths)
+        lines = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else [""]
+        check(calls == [("TV", True)] and "커밋" in lines[0] and "다섯 번째" in "".join(lines) and not supp_marker.exists(),
+              f"run_all retest_v5: 시험 실험 전에 자기 기록 파일을 쓰지 않음 ({calls}, {lines})")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_v5", "--yes"], paths)
+        check(code == 2 and "이미 쟀습니다" in printed.getvalue() and len(calls) == 1, "run_all retest_v5: 두 번째 실행을 거부하지 않음")
 
 
 def test_run_all_et_tau_lines():
