@@ -67,6 +67,8 @@ ROAD_L_RANGE_MAX = 0        # 밝기 단계(L, 0~255), 노면 밝기 범위 ±RO
 ROAD_COLOR_DIST = "mahal"   # 노면 색 기준: "ab_L" = a·b 거리 < ROAD_CHROMA_MAX 그리고 L 범위(v12까지), "mahal" = 시드 Lab 분포의 마할라노비스 거리² < ROAD_MAHAL_D2. 10/13 V5a 채택(규칙 1~3 + 마스크 안 정답 95.66%, part_C)
 ROAD_MAHAL_D2 = 11.34       # 마할라노비스 거리², χ²(자유도 3) 99% 점. 시드 노면 색이 정규분포라면 노면 픽셀의 99%가 들어옴
 ROAD_MAHAL_SIGMA_MIN = (2.4, 3.0, 3.0)  # (L, a, b) 표준편차 하한(Lab 0~255 단위). √11.34 = 3.37배가 기존 기준의 최소 범위 L ±8(= 4 × 2)·a·b 10과 맞게
+# 아래는 10/13 밤 v5 V6a 시드 검사(C가 A 동의로 넣음). 끄면 그 전과 같다
+ROAD_SEED_CHECK = False     # V6a 켬·끔. True면 상자 시드를 2×2로 나눈 칸끼리 a·b 거리가 ROAD_CHROMA_MAX 이상일 때(색이 다른 면이 섞임)만 그 사진에서 칸 시드로 바꿈. 개발셋 92장이 걸림
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
@@ -170,3 +172,4 @@ DRAW_TAU_REJECTED = False           # 보완 6단계 켬·끔. True면 시연 �
 REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상과 섞는 비율(0 = 안 보임, 1 = 진한 색)
 REJECTED_DASH = 4                  # px, 걸러진 후보 점선의 한 칸 길이(대각 줄무늬 주기의 절반)
 REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께(시연 창은 화면에 맞춰 줄어들어 1px는 거의 안 보임)
+AUTO_BAND_SEED_FIXED = False      # v5 V1c 켬·끔(10/13 밤). True면 ROI가 넓어져도 노면 마스크 시드를 받은 ROI 상단 경계(top~bottom)의 ROAD_SEED_BOX 자리에 둠. 사진 전체 마스크(ROI 상단 경계 판단)도 같은 자리. Norway_007802(ROI가 넓어지자 시드가 숲에 떨어짐) 대응
