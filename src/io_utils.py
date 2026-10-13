@@ -181,6 +181,22 @@ def road_mask(bgr_roi):
         (np.abs(L - L_med) < l_threshold)
     )
 
+    # (v2 8a 그림자·햇빛) 색이 씨앗과 더 가까우면(ROAD_SHADOW_CHROMA) 밝기 범위를 위아래 모두 ROAD_SHADOW_L_K배로 넓힘.
+    # 그림자와 햇빛은 밝기만 바꾸고 색은 거의 그대로라, 씨앗이 어느 쪽에 있든 반대쪽 노면을 잇는다 (Plan.md 3.3 (5))
+    if C.ROAD_SHADOW_L_K > 0:
+        candidate = candidate | (
+            (chroma_dist < C.ROAD_SHADOW_CHROMA) &
+            (np.abs(L - L_med) < C.ROAD_SHADOW_L_K * l_threshold)
+        )
+
+    # (v2 8c 건물·인도·비탈) 창 안 에지 밀도가 씨앗 창들의 상위 분위보다 크면 노면이 아닌 것으로 봄. 균열이 많은 노면도 잘릴 수 있다
+    if C.ROAD_EDGE_DENSITY:
+        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        edges = (cv.Canny(gray, *C.ROAD_EDGE_CANNY) > 0).astype(np.float32)
+        density = cv.boxFilter(edges, -1, (C.ROAD_EDGE_KSIZE, C.ROAD_EDGE_KSIZE), borderType=cv.BORDER_REFLECT)
+        limit = float(np.quantile(density[y0:y1, x0:x1], C.ROAD_EDGE_QUANTILE))
+        candidate = candidate & (density <= limit)
+
     # (v2 차선 (가)) 차선 픽셀도 노면으로 다뤄 차선 건너편 노면과 이어지게 함
     if C.ROAD_LANE_BRIDGE:
         candidate = candidate | _lane_pixels(L, a, b, L_med)
@@ -246,7 +262,30 @@ def road_mask(bgr_roi):
     # 노면 내부의 포트홀·차선 등의 구멍 채우기
     connected = _fill_holes(connected)
 
+    # (v2 8b 보닛·와이퍼) 아래 테두리부터 위로, 결이 씨앗보다 훨씬 매끈한 행이 이어지는 띠를 뺀다
+    if C.ROAD_HOOD_CUT:
+        connected[_hood_rows(img, (x0, y0, x1, y1))] = 0
+
     return connected.astype(np.uint8)
+
+
+def _hood_rows(bgr, seed_box):
+    """노면 띠 아래 테두리에 붙은 보닛·와이퍼 행을 bool (H,) 배열로 찾는다. 행마다 결(ROAD_HOOD_TEX_KSIZE 창의 흑백 국소 표준편차)의
+    중앙값을 내어, 맨 아래 행부터 위로 '씨앗 결 중앙값 × ROAD_HOOD_TEX_RATIO'보다 작은 행이 이어지는 동안만 보닛으로 본다.
+    보닛은 도장면이라 매끈하고 아스팔트는 골재 결이 있다. 매끈한 행이 아래 테두리에 붙어 있지 않으면 아무 행도 빼지 않는다."""
+    gray = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY).astype(np.float32)
+    k = (C.ROAD_HOOD_TEX_KSIZE, C.ROAD_HOOD_TEX_KSIZE)
+    mean = cv.boxFilter(gray, -1, k, borderType=cv.BORDER_REFLECT)
+    sq = cv.boxFilter(gray * gray, -1, k, borderType=cv.BORDER_REFLECT)
+    std = np.sqrt(np.maximum(sq - mean * mean, 0.0))
+    x0, y0, x1, y1 = seed_box
+    limit = float(np.median(std[y0:y1, x0:x1])) * C.ROAD_HOOD_TEX_RATIO
+    smooth = np.median(std, axis=1) < limit
+    rough_from_bottom = np.flatnonzero(~smooth[::-1])                # 아래에서 센 '매끈하지 않은' 행의 순번
+    n = int(rough_from_bottom[0]) if rough_from_bottom.size else len(smooth)
+    rows = np.zeros(gray.shape[0], bool)
+    rows[len(smooth) - n:] = True                                      # 아래 테두리부터 이어진 매끈한 행 n개
+    return rows
 
 def load_roi_table(path):
     """사진마다 다른 노면 범위(top·bottom 비율)와 촬영 조건을 roi.csv에서 읽는다.
