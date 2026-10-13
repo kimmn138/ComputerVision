@@ -2322,7 +2322,7 @@ def test_run_all_judgement():
 
 
 def test_road_v6_variants():
-    """(10/14 1번) tools/road_v6: 변형이 없으면 io_utils.road_mask와 픽셀 하나까지 같다. 시드 상자 밖의 흰 세로 선(폭 20px)이 노면을 가르면
+    """(10/14 1번) tools/road_v6: 변형이 없으면 10/14 스위치를 끈 io_utils.road_mask와, 채택 조합은 지금 road_mask와 픽셀 하나까지 같다. 시드 상자 밖의 흰 세로 선(폭 20px)이 노면을 가르면
     지금 방식은 건너편 노면을 버리고, B1(연결 조건 없애기)·B2(차선을 노면으로)는 건너편을 노면으로 남긴다. A1(여러 점 다수결)은
     시드 상자 오른쪽 절반이 풀이어도 노면 색을 고른다."""
     from tools import road_v6 as rv
@@ -2330,8 +2330,11 @@ def test_road_v6_variants():
     rng = np.random.default_rng(5)
     bgr = (np.full((240, 640, 3), 110.0) + rng.normal(0, 4, (240, 640, 3))).clip(0, 255).astype(np.uint8)
     bgr[:, 500:520] = 235                                   # 시드 상자(x 192~448) 밖 흰 차선
-    base = io_utils.road_mask(bgr)
-    check(np.array_equal(rv.road_mask_v6(bgr, (), calib), base), "road_v6: 변형 없음이 road_mask와 다름")
+    with rv.config_values(rv.SRC_OFF):                     # 10/14 src로 옮긴 스위치를 끄면 그 전 road_mask = 변형 없음
+        base = io_utils.road_mask(bgr)
+    check(np.array_equal(rv.road_mask_v6(bgr, (), calib), base), "road_v6: 변형 없음이 스위치를 끈 road_mask와 다름")
+    check(np.array_equal(rv.road_mask_v6(bgr, rv.VARIANTS[rv.ADOPTED], rv.load_calib()), io_utils.road_mask(bgr)),
+          f"road_v6: 지금 road_mask(config 그대로)가 채택 조합 {rv.ADOPTED}와 다름")
     right = (slice(20, 220), slice(540, 630))
     check((base[right] > 0).mean() < 0.1, f"road_v6 시험 장면: 지금 방식이 차선 건너편을 이미 칠함 ({(base[right] > 0).mean():.2f})")
     for opts in (("B1",), ("B2",)):

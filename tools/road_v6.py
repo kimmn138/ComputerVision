@@ -41,7 +41,9 @@ VARIANTS = {"now": (), "A1": ("A1",), "A2": ("A2",), "A3": ("A3",), "B1": ("B1",
             # 효과가 큰 조합(첫 실행 뒤): A1은 시드 오염을 줄이지만 밝기 허용 폭 ≥ 128을 늘려(71 → 111장) A1 없는 조합과 B2만 더한 조합을 견줌
             "A2A3": ("A2", "A3"), "A2A3B1B2": ("A2", "A3", "B1", "B2"), "A1A2A3B2": ("A1", "A2", "A3", "B2"),
             # A2b = A2에서 채도 기준을 뺌(밝은 표시·노란 선만). 빨간·푸른 아스팔트(Czech_001106, United_States_003320)에서 A2가 노면을 빼 실패해서 더함
-            "A2b": ("A2b",), "A2bA3B1B2": ("A2b", "A3", "B1", "B2"), "A1A2bA3B1B2": ("A1", "A2b", "A3", "B1", "B2")}
+            "A2b": ("A2b",), "A2bA3B1B2": ("A2b", "A3", "B1", "B2"), "A1A2bA3B1B2": ("A1", "A2b", "A3", "B1", "B2"),
+            # A2r = 채도 기준을 사진마다 상대적으로(10/14 사용자 지시, A2A3B1B2의 빨간 아스팔트 실패 대응)
+            "A2r": ("A2r",), "A2rA3B1B2": ("A2r", "A3", "B1", "B2")}
 GRID = (8, 4)                    # 점 수 (가로, 세로), A1. 띠 아래쪽을 고르게 덮음
 GRID_BOX = (0.05, 0.35, 0.95, 0.90)   # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), A1 점을 놓을 범위. 맨 아래 0.1(보닛)은 뺌
 PATCH = 15                       # px, A1 점 하나의 창 한 변. 골재 결(σ 3 흐림 뒤)보다 넓고 차선 폭(8~40px)과 비슷해 차선 위 점은 차선 색이 됨
@@ -62,6 +64,22 @@ LANE_SIDE_DL = 40                # 밝기 단계(Lab L 0~255), 양옆 노면 밝
 LANE_PAINT = 0.5                 # 비율, 한쪽 띠의 마스크 비율이 이 이상이면 칠해짐
 SPREAD_ROWS, SPREAD_MIN = 0.3, 0.3    # 사진 위 30% 행에서 마스크가 30% 이상이면 '위쪽까지 번짐'
 DRONE_SOURCES = ("China_Drone", "China_MotorBike")
+# 10/14 io_utils.road_mask로 옮긴 스위치(A2r·A3·B1·B2). 이 도구의 '변형 없음'은 이 스위치를 모두 끈 src와 같아야 한다
+SRC_OFF = {"ROAD_SEED_FILTER": False, "ROAD_L_RANGE_MAX": 0, "ROAD_KEEP_BLOBS": False, "ROAD_LANE_AS_ROAD": False}
+ADOPTED = "A2rA3B1B2"            # 10/14 사용자 결정으로 src에 옮긴 조합(--check-src의 기본)
+
+
+@contextmanager
+def config_values(values):
+    """config 값을 잠시 바꾸고 되돌린다."""
+    old = {k: getattr(C, k) for k in values}
+    for k, v in values.items():
+        setattr(C, k, v)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            setattr(C, k, v)
 N_FIG_DRONE, N_FIG_CAR = 6, 14
 
 
@@ -80,11 +98,25 @@ def load_calib():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def not_road_pixels(bgr, lab, calib, use_chroma=True):
+def grid_region(h, w):
+    """A1 격자 점을 놓는 범위(GRID_BOX)의 (행 slice, 열 slice). A2r의 '그 사진 ROI 아래쪽' 채도 기준을 재는 곳이기도 하다."""
+    fx0, fy0, fx1, fy1 = GRID_BOX
+    return slice(int(h * fy0), int(h * fy1)), slice(int(w * fx0), int(w * fx1))
+
+
+def not_road_pixels(bgr, lab, calib, use_chroma=True, relative=False):
     """A2: 시드로 쓰면 안 되는 픽셀(bool). 높은 채도 = 흐린 Lab a·b의 무채색(128, 128) 거리 > calib 채도 기준,
-    밝은 표시 = 검출기 1단계와 같은 기준(팽창 전), 노란 선 색 = io_utils._lane_pixels와 같은 노랑 규칙."""
+    밝은 표시 = 검출기 1단계와 같은 기준(팽창 전), 노란 선 색 = io_utils._lane_pixels와 같은 노랑 규칙.
+    relative(A2r)면 채도 기준을 사진마다: 채도 − (그 사진 ROI 아래쪽 GRID_BOX 픽셀 채도 중앙값) > calib 상대 채도 기준.
+    빨간·푸른 아스팔트처럼 노면 자체의 채도가 높으면 아래쪽 중앙값도 높아 노면은 빠지지 않고, 그보다 유독 높은 풀·차만 빠진다."""
     da, db = lab[:, :, 1] - 128, lab[:, :, 2] - 128
-    chroma = (np.sqrt(da ** 2 + db ** 2) > calib["chroma_max"]) if use_chroma else np.zeros(lab.shape[:2], bool)
+    c = np.sqrt(da ** 2 + db ** 2)
+    if relative:
+        chroma = (c - float(np.median(c[grid_region(*c.shape)]))) > calib["chroma_rel_max"]
+    elif use_chroma:
+        chroma = c > calib["chroma_max"]
+    else:
+        chroma = np.zeros(lab.shape[:2], bool)
     bright = mv.bright_fill(cv.cvtColor(bgr, cv.COLOR_BGR2GRAY), dilate=False)
     yellow = (db >= C.ROAD_LANE_YELLOW_B) & (db >= 2 * np.abs(da))
     return chroma | bright | yellow
@@ -173,8 +205,8 @@ def road_mask_v6(bgr_roi, opts=(), calib=None, info=None):
     fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
     x0, y0 = max(0, min(int(w * fx0), w - 1)), max(0, min(int(h * fy0), h - 1))
     x1, y1 = max(x0 + 1, min(int(w * fx1), w)), max(y0 + 1, min(int(h * fy1), h))
-    a2 = "A2" in opts or "A2b" in opts
-    bad = not_road_pixels(bgr_roi, lab, calib, use_chroma="A2" in opts) if a2 else None
+    a2 = "A2" in opts or "A2b" in opts or "A2r" in opts
+    bad = not_road_pixels(bgr_roi, lab, calib, use_chroma="A2" in opts, relative="A2r" in opts) if a2 else None
     seed, points = (grid_seed(lab, bad, opts, h, w) if "A1" in opts else (None, []))
     if seed is None:
         seed = np.zeros((h, w), bool)
@@ -276,7 +308,7 @@ def calibrate():
     cm = pd.read_csv("results/measure_v5/C_mask_dev.csv", encoding="utf-8-sig")
     clean = cm[cm["seed_bad"] < 0.05]
     items = {it[0]: it for it in mv.dev_items()}
-    chroma = []
+    chroma, rel = [], []
     for name in clean["image"]:
         _, path, _, top0, bottom = items[name]
         small = io_utils.resize_width(io_utils.load_image(path))
@@ -287,16 +319,20 @@ def calibrate():
         fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
         s = lab[int(h * fy0):int(h * fy1), int(w * fx0):int(w * fx1)].reshape(-1, 3)
         chroma.append(np.hypot(s[:, 1] - 128, s[:, 2] - 128)[::7])
-    chroma = np.concatenate(chroma)
+        whole = np.hypot(lab[:, :, 1] - 128, lab[:, :, 2] - 128)
+        rel.append(chroma[-1] - float(np.median(whole[grid_region(h, w)])))
+    chroma, rel = np.concatenate(chroma), np.concatenate(rel)
     calib = {"chroma_max": round(float(np.quantile(chroma, 0.995)), 2), "l_range_max": round(float(clean["l_range"].quantile(0.95)), 1),
-             "n_clean": int(len(clean)), "n_dev": int(len(cm))}
+             "n_clean": int(len(clean)), "n_dev": int(len(cm)), "chroma_rel_max": round(float(np.quantile(rel, 0.995)), 2)}
     lines = [f"깨끗한 시드(측정 C 오염 합 < 5%): 개발셋 {calib['n_clean']}/{calib['n_dev']}장",
              f"시드 상자 픽셀 채도(a·b의 무채색 거리, 0~255 Lab): 중앙값 {np.median(chroma):.2f}, 95백분위 {np.quantile(chroma, 0.95):.2f}, "
              f"99백분위 {np.quantile(chroma, 0.99):.2f}, 99.5백분위 {calib['chroma_max']} → A2 채도 기준 {calib['chroma_max']}",
              f"ROI 밝기 허용 폭 ±L: 깨끗한 시드 중앙값 {clean['l_range'].median():.1f}, 90백분위 {clean['l_range'].quantile(0.9):.1f}, "
              f"95백분위 {calib['l_range_max']} (개발셋 전체 중앙값 {cm['l_range'].median():.1f}, ≥ 128 {int((cm['l_range'] >= 128).sum())}장) "
              f"→ A3 상한 {calib['l_range_max']}",
-             f"상한에 걸리는 개발셋 사진: {int((cm['l_range'] > calib['l_range_max']).sum())}장"]
+             f"상한에 걸리는 개발셋 사진: {int((cm['l_range'] > calib['l_range_max']).sum())}장",
+             f"A2r 상대 채도(시드 픽셀 채도 − 그 사진 ROI 아래쪽 GRID_BOX 채도 중앙값): 중앙값 {np.median(rel):.2f}, 99백분위 "
+             f"{np.quantile(rel, 0.99):.2f}, 99.5백분위 {calib['chroma_rel_max']} → A2r 상대 채도 기준 {calib['chroma_rel_max']}"]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "calib.json").write_text(json.dumps(calib, ensure_ascii=False, indent=1), encoding="utf-8")
     (OUT_DIR / "calib.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -353,8 +389,9 @@ def measure_image(set_name, item, calib, variants):
             row[f"{kind}_in_band"] = len(band)
             row[f"{kind}_in_mask"] = sum(1 for cx, cy in band if full[cy, min(cx, W - 1)])
         if vid == "now":
-            row["same_as_src"] = bool(np.array_equal(road, io_utils.road_mask(roi) > 0)
-                                      and np.array_equal(road_mask_v6(small, (), calib), io_utils.road_mask(small)))
+            with config_values(SRC_OFF):
+                row["same_as_src"] = bool(np.array_equal(road, io_utils.road_mask(roi) > 0)
+                                          and np.array_equal(road_mask_v6(small, (), calib), io_utils.road_mask(small)))
         row.update(fp_counts(out, gt))
         rows.append(row)
     return rows
@@ -436,7 +473,7 @@ def pick_dev_figures(df):
     return picked
 
 
-FIG_VARIANTS = ("now", "A1", "A2", "A2b", "A3", "B1", "B2", "B1B2", "A2A3B1B2", "A2bA3B1B2", "A1A2bA3B1B2", "all")
+FIG_VARIANTS = ("now", "A1", "A2", "A2b", "A2r", "A3", "B1", "B2", "B1B2", "A2A3B1B2", "A2bA3B1B2", "A2rA3B1B2", "all")
 
 
 def panel(small, road_full, top_y, seed_full, label):
@@ -457,7 +494,7 @@ def panel(small, road_full, top_y, seed_full, label):
 
 
 def make_figures(df, calib):
-    """39장 전부와 개발셋 20장의 확인 그림(원본 + 변형 12개, 13칸을 2줄 × 7칸, 마지막 칸은 빈칸)을 저장한다."""
+    """39장 전부와 개발셋 20장의 확인 그림(원본 + 변형 13개, 2줄 × 7칸)을 저장한다."""
     picks = [("39", it) for it in mv.own_items()]
     dev = {it[0]: it for it in mv.dev_items()}
     picks += [("dev", dev[n]) for n in pick_dev_figures(df)]
@@ -475,11 +512,24 @@ def make_figures(df, calib):
             full[out["y0"]:out["y0"] + out["road"].shape[0]] = out["road"] > 0
             seed[out["y0"]:out["y0"] + out["road"].shape[0]] = info["seed"]
             tiles.append(panel(small, full, out["y0"], seed, vid))
-        tiles.append(np.zeros_like(tiles[0]))
         rows = [np.hstack(tiles[i:i + 7]) for i in (0, 7)]
         cv.imwrite(str(OUT_DIR / f"fig_{set_name}_{name[:-4]}.png"), np.vstack(rows))
     (OUT_DIR / "figures.txt").write_text("\n".join(f"{s} {it[0]} {view_of(it[0])}" for s, it in picks) + "\n", encoding="utf-8")
     print(f"그림 {len(picks)}장 → {OUT_DIR}")
+
+
+def check_src_one(pair, calib, vid):
+    """--check-src: 사진 1장을 지금 src(config 그대로)와 이 도구의 변형으로 각각 파이프라인에 돌려 ROI 상단 경계·노면 마스크·후보가 같은지."""
+    _, (name, path, _, top0, bottom) = pair
+    bgr = io_utils.load_image(path)
+    src = pipeline.run_pipeline(bgr, top0, bottom, False)
+    with mask_variant(VARIANTS[vid], calib):
+        tool = pipeline.run_pipeline(bgr, top0, bottom, False)
+    small = io_utils.resize_width(bgr)
+    whole = np.array_equal(io_utils.road_mask(small), road_mask_v6(small, VARIANTS[vid], calib))
+    same = (src["top"] == tool["top"] and np.array_equal(src["road"], tool["road"]) and whole
+            and [r["bbox"] for r in src["cracks"] + src["potholes"]] == [r["bbox"] for r in tool["cracks"] + tool["potholes"]])
+    return name, bool(same)
 
 
 def _measure_one(pair, calib, variants):
@@ -506,12 +556,20 @@ def main(argv=None):
     ap.add_argument("--limit", type=int)
     ap.add_argument("--variants", default=",".join(VARIANTS))
     ap.add_argument("--jobs", type=int, default=1, help="사진을 나눠 돌릴 프로세스 수(결과 순서·값은 같음)")
+    ap.add_argument("--check-src", nargs="?", const=ADOPTED, help="src(io_utils.road_mask, config 그대로)가 이 도구의 변형과 같은지 691장 대조")
     args = ap.parse_args(argv)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if args.calib:
         calibrate()
         return 0
     calib = load_calib()
+    if args.check_src:
+        items = items_all(args.limit)
+        with Pool(args.jobs, initializer=cv.setNumThreads, initargs=(1,)) if args.jobs > 1 else _Serial() as pool:
+            res = list(pool.imap(partial(check_src_one, calib=calib, vid=args.check_src), items))
+        bad = [n for n, ok in res if not ok]
+        print(f"src와 {args.check_src} 같음 {len(res) - len(bad)}/{len(res)}장" + (f", 다름: {bad[:20]}" if bad else ""))
+        return 1 if bad else 0
     if args.figs:
         make_figures(pd.read_csv(OUT_DIR / "per_image.csv", encoding="utf-8-sig"), calib)
         return 0
