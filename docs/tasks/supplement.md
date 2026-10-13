@@ -686,16 +686,23 @@
 
 v12 뒤 남은 문제 측정·보완(docs/part_C.md 'v12 뒤 남은 문제 세 가지'·'v5 진행 기록')에서 채택된 것은 (3)③ V5a(노면 색 기준 마할라노비스, config A 구역 `ROAD_COLOR_DIST = "mahal"`)다. 10/13 저녁에 더 시도할 항목은 없다.
 
+**10/13 밤 변경(사용자 결정)**: 동결을 10/14 12:00에서 10/13 밤으로 당겼다. 1·2번을 오늘 밤 했고, 최종 실행 단계 이름은 `final_v5`다.
+
+- 1번 운영점: ETV(`results/e5_v5_tau_dev/`) → config B 구역 SCORE_TAU_CRACK −∞·SCORE_TAU_POTHOLE 3.391713, 커밋 28f7cea.
+- 2번 시험셋 다섯 번째 단계: `final_v5`·`retest_v5`·`retest_v5_repro`, 커밋 7382377.
+- **코드 동결 커밋: 7382377** (2026-10-13 밤). 이 커밋 뒤로는 버그 수정만 한다. 최종 실행·시험셋·재현은 이 커밋의 코드로 돈다.
+- 동결 뒤 순서: `python tools/run_all.py final_v5 --yes` → 보고서 표 다시 만들기(시험셋 행 제외) → 시연 확인(사용자) → `retest_v5`(사용자 지시 뒤, 한 번만) → `retest_v5_repro` → 시험셋 행을 포함해 표·그림 1~6 다시 만들기.
+
 | 순서 | 시각 | 할 일 | 기준 |
 |---|---|---|---|
 | 1 | 10/14 09:00~ | 운영점(점수 임계값) 다시 정하기: 지금 config(V5a 채택)로 `python tools/run_all.py supp --only ET --yes`와 같은 방식의 실행을 새 폴더로 돌려, 판정 행(전처리 미적용) fp2 점 τ를 소수 여섯째 자리로 내려 config B 구역 `SCORE_TAU_*`에 쓴다(6단계 1과 같은 고르기) | 쓴 뒤 같은 설정으로 한 번 더 돌려 config 점 = fp2 점인지 확인 |
-| 2 | ~11:00 | 시험셋 5번째 단계 만들기: run_all에 `v5_final`(supp_final과 같은 실행, 새 폴더)·`retest_v5`(시험셋 한 번만, 시작할 때 저장소 기록 파일 `docs/test_v5_done.txt`를 남기고 그 파일이 있으면 results/와 상관없이 거부, `v5_final`의 E5를 돌린 config와 지금 config가 다르면 거부)·`retest_v5_repro`(재현) | retest_supp와 같은 방식. test_c에 거부 조건 시험 |
+| 2 | ~11:00 | 시험셋 5번째 단계 만들기: run_all에 `final_v5`(supp_final과 같은 실행, 새 폴더)·`retest_v5`(시험셋 한 번만, 시작할 때 저장소 기록 파일 `docs/test_v5_done.txt`를 남기고 그 파일이 있으면 results/와 상관없이 거부, `final_v5`의 E5를 돌린 config와 지금 config가 다르면 거부)·`retest_v5_repro`(재현) | retest_supp와 같은 방식. test_c에 거부 조건 시험 |
 | 3 | 12:00 | **코드 동결**. 이후는 버그 수정만 | 동결 전 check_contract·test_a·b·c 통과, config 구역 확인 |
-| 4 | 동결 뒤 | `python tools/run_all.py v5_final --yes`: 39장(roi.csv·자동 ROI·1차)·매칭·E5(τ 곡선)·E6(+ night) | **전원 연결, 다른 프로그램 종료, 병렬 금지.** 처리 시간은 이 실행 값만 보고서에 쓴다 |
+| 4 | 동결 뒤 | `python tools/run_all.py final_v5 --yes`: 39장(roi.csv·자동 ROI·1차)·매칭·E5(τ 곡선)·E6(+ night) | **전원 연결, 다른 프로그램 종료, 병렬 금지.** 처리 시간은 이 실행 값만 보고서에 쓴다 |
 | 5 | | 시연 확인(사용자): `python demo.py`로 그림 1~6 사진 | 이상이 있으면 이 단계에서 고치고 개발셋으로 다시 판정. 시험셋을 돌린 뒤에는 고치지 않는다 |
 | 6 | | `python tools/run_all.py retest_v5`: 시험셋 5번째(한 번만) → 기록 파일 커밋 | 결과를 보고 설정을 바꾸지 않는다 |
 | 7 | | `python tools/run_all.py retest_v5_repro`: 재현 확인 | 처리 시간 열 말고 같아야 한다. 다르면 원인만 찾는다 |
-| 8 | | 보고서 표·그림 다시 만들기: `python tools/run_all.py tables`, `python tools/report_tables.py --run <v5_final의 E5 폴더>`(table18·19·20), `python tools/report_tables.py --scores <E5 폴더>,<시험셋 5번째 폴더>`(table21), `python tools/report_figures.py`(그림 1~6) | 손으로 고치지 않는다 |
+| 8 | | 보고서 표·그림 다시 만들기: `python tools/run_all.py tables`, `python tools/report_tables.py --run e5_v5_dev`(table18·19·20), `python tools/report_tables.py --scores <E5 폴더>,<시험셋 5번째 폴더>`(table21), `python tools/report_figures.py`(그림 1~6) | 손으로 고치지 않는다 |
 | 9 | | 시험 통과 확인 → part_C·ai_log_C → 커밋 | push는 사용자 |
 
 ---
