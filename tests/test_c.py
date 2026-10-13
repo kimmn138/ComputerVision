@@ -2349,6 +2349,34 @@ def test_road_v6_variants():
     check(np.array_equal(bgr, bgr.copy()) and info["seed"][:, 340:].sum() == 0, "road_v6 A1: 시드가 풀 쪽 점을 포함함")
 
 
+def test_tau_split_points():
+    """(10/14) 종류별 운영점: crack_op = 포트홀 τ +∞ 단면에서 오검출 ≤ 1.5 중 균열 재현율 최대(같으면 오검출 적은 쪽),
+    pothole_op = 균열 τ +∞ 단면에서 오검출 ≤ 0.5 중 포트홀 재현율 최대, split = 두 τ를 합친 격자 점. run_all et_tau_lines는
+    point="split"이면 그 점의 τ를 config 줄로 낸다(기본 TAU_CONFIG_POINT는 아직 fp2)."""
+    from tools import evaluate_train as et
+    from tools import run_all as ra
+    inf = math.inf
+    rows = []
+    for tc, cr, cfp in ((-inf, 0.5, 3.0), (1.0, 0.4, 1.5), (2.0, 0.4, 1.0), (3.0, 0.2, 0.5), (inf, 0.0, 0.0)):
+        for tp, pr, pfp in ((-inf, 0.3, 2.0), (5.0, 0.2, 0.5), (6.0, 0.1, 0.4), (inf, 0.0, 0.0)):
+            rows.append({"tau_crack": tc, "tau_pothole": tp, "q_crack": 0.0, "q_pothole": 0.0, "sensitivity": 0.5, "specificity": 0.5,
+                         "balanced": 0.5, "fp_per_image": cfp + pfp, "crack_ctr_recall": cr, "pothole_ctr_recall": pr})
+    pts = et.tau_points(pd.DataFrame(rows))
+    pick = {n: (pts[n]["tau_crack"], pts[n]["tau_pothole"]) for n in ("crack_op", "pothole_op", "split")}
+    check(pick == {"crack_op": (2.0, inf), "pothole_op": (inf, 5.0), "split": (2.0, 5.0)}, f"split_points: 고른 점이 틀림 ({pick})")
+    check(ra.TAU_CONFIG_POINT == "fp2", "run_all: 종류별 운영점은 3번 결정 뒤에 적용(지금은 fp2)")
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp) / "x"
+        folder.mkdir()
+        pd.DataFrame([{"params": "a", "preprocess": "off", "degrade": "none", "point": n, "tau_crack": pts[n]["tau_crack"],
+                       "tau_pothole": pts[n]["tau_pothole"]} for n in ("fp2", "split")]).to_csv(folder / et.TAU_POINTS_NAME, encoding="utf-8-sig", index=False)
+        exp = {"id": "ETS", "name": "x"}
+        with patched(ra, "EXP", {"ETS": exp}), patched(ra, "tau_points_of", lambda paths, e, st: {("off", "split"): pts["split"],
+                                                                                               ("off", "fp2"): pts["fp2"]}):
+            lines = ra.et_tau_lines({"results": tmp}, {"ETS": {}}, "ETS", point="split")
+    check(lines == ["SCORE_TAU_CRACK = 1.999999", "SCORE_TAU_POTHOLE = 4.999999"], f"et_tau_lines split: 줄이 틀림 ({lines})")
+
+
 def main():
     """시험 함수를 차례로 돌려 실패를 모아 보여 준다. @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
     skips = []
@@ -2371,7 +2399,7 @@ def main():
                test_run_all_judgement,
                test_demo_tau_rejected, test_report_figures_helpers, test_auto_band_perspective, test_scores_f1_f2, test_run_all_supp_final_plan,
                test_run_all_retest_supp_refuse, test_run_all_final_v5_stages, test_run_all_retest_v5_refuse, test_run_all_et_tau_lines,
-               test_road_v6_variants):
+               test_road_v6_variants, test_tau_split_points):
         try:
             fn()
         except unittest.SkipTest as e:

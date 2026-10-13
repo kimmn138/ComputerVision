@@ -1044,15 +1044,21 @@ def write_test_marker(path, command_line, what="시험셋 네 번째(test_supp)"
                     encoding="utf-8")
 
 
-def et_tau_lines(paths, states, sid="ET"):
-    """ET(6단계 최종 τ) 실행이 끝났으면, 그 실행의 판정 행(끔) fp2 점 τ를 config B 구역에 쓸 줄로 돌려준다. tau_points.csv는 소수 여섯째
+TAU_CONFIG_POINT = "fp2"     # config B 구역 점수 임계값을 가져올 τ 점. (10/14) 종류별 운영점으로 바꾸면 "split"(evaluate_train.split_points)
+
+
+def et_tau_lines(paths, states, sid="ET", point=None):
+    """ET(6단계 최종 τ) 실행이 끝났으면, 그 실행의 판정 행(끔) TAU_CONFIG_POINT 점(기본 fp2) τ를 config B 구역에 쓸 줄로 돌려준다. tau_points.csv는 소수 여섯째
     자리로 반올림돼 있어 그대로 쓰면 τ와 같은 점수의 후보(최고 점수 등)가 빠질 수 있으므로 1e-6을 빼 내림한다(반올림 오차 ≤ 5e-7).
     ±∞는 float('±inf'). 끝나지 않았으면 빈 list."""
     exp = EXP.get(sid)
     points = tau_points_of(paths, exp, states[sid]) if exp and sid in states else None
-    if not points or ("off", "fp2") not in points:
+    point = point or TAU_CONFIG_POINT
+    if not points or ("off", point) not in points:
         return []
-    row = points[("off", "fp2")]
+    row = points[("off", point)]
+    if any(et.is_missing(row.get(k)) for k in ("tau_crack", "tau_pothole")):
+        return []
 
     def text(v):
         v = float(v)

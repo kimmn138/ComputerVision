@@ -121,7 +121,8 @@ TAU_SCORE_METRICS = ([f"{kind}_ctr_precision" for kind in KINDS] + [f"{kind}_iou
                      + [c for c in SCORE_COLUMNS if c not in IMAGE_COUNT_COLUMNS])
 TAU_FP_POINTS = {"fp1": 1.0, "fp2": 2.0}   # 영상당 오검출 1개·2개 동작점(채택 규칙 1, Plan.md 3.10)
 TAU_RULE1_FP = 2.0                         # rule1 점(채택 규칙 2·3을 재는 곳) = fp2 점: 영상당 오검출 2개 이하에서 민감도 최대(10/13 사용자 결정)
-TAU_POINT_NAMES = ("none", "fp1", "fp2", "rule1", "config")
+TAU_SPLIT_FP = {"crack": 1.5, "pothole": 0.5}   # (10/14 사용자) 종류별 운영점: 상대 종류 후보를 모두 지운 단면(τ = +∞)에서 영상당 그 종류 오검출 상한
+TAU_POINT_NAMES = ("none", "fp1", "fp2", "rule1", "config", "crack_op", "pothole_op", "split")
 TAU_CURVE_NAME = "tau_curve.csv"
 TAU_POINTS_NAME = "tau_points.csv"
 TAU_FIGURE_NAME = "tau_curve.png"
@@ -900,7 +901,31 @@ def tau_points(curve, config_row=None):
                             [False, False, False, True], f"영상당 오검출 {TAU_RULE1_FP:g}개 이하 불가")
     if config_row is not None:
         points["config"] = {**config_row, "note": ""}
+    points.update(split_points(curve, empty))
     return points
+
+
+def split_points(curve, empty):
+    """(10/14) 종류별 운영점. crack_op = 포트홀 τ +∞ 단면(오검출 = 균열 오검출)에서 오검출 ≤ TAU_SPLIT_FP["crack"]인 점 가운데
+    균열 재현율(중심) 최대, pothole_op = 균열 τ +∞ 단면에서 오검출 ≤ TAU_SPLIT_FP["pothole"]인 점 가운데 포트홀 재현율 최대
+    (같으면 오검출이 적은 쪽 → 분위 합이 작은 쪽). split = (crack_op의 균열 τ, pothole_op의 포트홀 τ) 격자 점. 고를 수 없으면 NaN과 note."""
+    out = {}
+    for kind, other in (("crack", "pothole"), ("pothole", "crack")):
+        name, col = f"{kind}_op", f"{kind}_ctr_recall"
+        if col not in curve.columns:
+            out[name] = empty(f"{col} 열 없음")
+            continue
+        side = curve[(curve[f"tau_{other}"] == np.inf) & (curve["fp_per_image"] <= TAU_SPLIT_FP[kind])]
+        if not len(side):
+            out[name] = empty(f"{other} τ +∞ 단면에서 영상당 오검출 {TAU_SPLIT_FP[kind]:g}개 이하 불가")
+            continue
+        side = side.assign(q_sum=side["q_crack"] + side["q_pothole"], _r=side[col].fillna(-1.0))
+        best = side.sort_values(["_r", "fp_per_image", "q_sum"], ascending=[False, True, True], kind="mergesort").iloc[0]
+        out[name] = {**best.drop(["q_sum", "_r"]).to_dict(), "note": ""}
+    tc, tp = out["crack_op"].get("tau_crack"), out["pothole_op"].get("tau_pothole")
+    row = curve[(curve["tau_crack"] == tc) & (curve["tau_pothole"] == tp)] if not (is_missing(tc) or is_missing(tp)) else curve.iloc[0:0]
+    out["split"] = {**row.iloc[0].to_dict(), "note": ""} if len(row) else empty("종류별 운영점을 고를 수 없음")
+    return out
 
 
 def tau_image_rows(names, scored, gts, tau_crack, tau_pothole):
