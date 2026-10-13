@@ -214,7 +214,9 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("V1b", "v1b_roadmin85_dev", "v5 (1)③ 자동 ROI 노면 비율 0.85", {"AUTO_BAND_ROAD_MIN": 0.85}, "S6c", "off", "rules"),
              # V5a 채택(10/13, config ROAD_COLOR_DIST mahal) 뒤 V1을 그 위에서 다시: 비교 기준 V5a(새 config와 같은 설정)
              ("V1c", "v1c_mahal_roadmin90_dev", "v5 (1)③ V5a 위 자동 ROI 노면 비율 0.9", {"AUTO_BAND_ROAD_MIN": 0.9}, "V5a", "off", "rules"),
-             ("V1d", "v1d_mahal_roadmin85_dev", "v5 (1)③ V5a 위 자동 ROI 노면 비율 0.85", {"AUTO_BAND_ROAD_MIN": 0.85}, "V5a", "off", "rules"))
+             ("V1d", "v1d_mahal_roadmin85_dev", "v5 (1)③ V5a 위 자동 ROI 노면 비율 0.85", {"AUTO_BAND_ROAD_MIN": 0.85}, "V5a", "off", "rules"),
+             # v5 7단계 1번(10/13 밤): V5a 채택 뒤 지금 config의 τ 곡선. 판정 행(끔) fp2 점 τ를 config B 구역에 쓴다(ET와 같은 방식, 새 폴더)
+             ("ETV", "e5_v5_tau_dev", "v5 운영점: V5a 채택 뒤 지금 config의 fp2 점", {}, "V5a", "off", "curve"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
@@ -1043,12 +1045,12 @@ def write_test_marker(path, command_line):
                     encoding="utf-8")
 
 
-def et_tau_lines(paths, states):
+def et_tau_lines(paths, states, sid="ET"):
     """ET(6단계 최종 τ) 실행이 끝났으면, 그 실행의 판정 행(끔) fp2 점 τ를 config B 구역에 쓸 줄로 돌려준다. tau_points.csv는 소수 여섯째
     자리로 반올림돼 있어 그대로 쓰면 τ와 같은 점수의 후보(최고 점수 등)가 빠질 수 있으므로 1e-6을 빼 내림한다(반올림 오차 ≤ 5e-7).
     ±∞는 float('±inf'). 끝나지 않았으면 빈 list."""
-    exp = EXP.get("ET")
-    points = tau_points_of(paths, exp, states["ET"]) if exp else None
+    exp = EXP.get(sid)
+    points = tau_points_of(paths, exp, states[sid]) if exp and sid in states else None
     if not points or ("off", "fp2") not in points:
         return []
     row = points[("off", "fp2")]
@@ -1124,9 +1126,11 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
     report = build_report(paths, human, command_line)
     print_report(report, stage)
-    tau_lines = et_tau_lines(paths, report["states"]) if stage == "supp" and any(e["id"] == "ET" for e, _, _ in done) else []
+    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETV")), None) if stage == "supp" else None
+    tau_lines = et_tau_lines(paths, report["states"], tau_id) if tau_id else []
     if tau_lines:
-        print("\nET 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 supp_final을 돌린다(6단계 1번, docs/tasks/supplement.md)")
+        print(f"\n{tau_id} 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 최종 실행(ET → supp_final, ETV → final_v5)을 돌린다"
+              "(docs/tasks/supplement.md)")
         print("\n".join(f"  {line}" for line in tau_lines))
     return 1 if any(shown.startswith("실패") for _, shown, _ in done) else 0
 
