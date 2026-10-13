@@ -60,10 +60,25 @@ def _mean_gradient(gray):
 
     return float(magnitude.mean())
 
+def _direction_ratio(gray):
+    """방향별 에지 세기의 최소 ÷ 최대(blur_dir)를 잰다. 흔들림(움직임 흐림)은 움직인 방향의 경계만 뭉개므로 이 값이 작아진다.
+    방향 θ의 기울기 = gx·cosθ + gy·sinθ의 제곱 평균을 BLUR_DIR_ANGLES(도)마다 낸다. 제곱 평균은 gx², gy², gx·gy의 평균
+    세 개로 바로 계산되므로 방향마다 영상을 다시 만들지 않는다. 가우시안 흐림은 모든 방향을 같이 뭉개 비율이 거의 그대로다.
+    기울기가 거의 없는 평평한 영상은 비율을 정할 수 없어 NaN."""
+    gray_f = gray.astype(np.float32)
+    gx = cv.Sobel(gray_f, cv.CV_32F, 1, 0, ksize=3)
+    gy = cv.Sobel(gray_f, cv.CV_32F, 0, 1, ksize=3)
+    xx, yy, xy = float((gx * gx).mean()), float((gy * gy).mean()), float((gx * gy).mean())
+    theta = np.deg2rad(np.asarray(C.BLUR_DIR_ANGLES, np.float64))
+    energy = xx * np.cos(theta) ** 2 + yy * np.sin(theta) ** 2 + 2.0 * xy * np.sin(theta) * np.cos(theta)
+    if energy.max() <= 1e-6:
+        return float("nan")
+    return float(energy.min() / energy.max())
+
 def measure_quality(gray):
     """전처리를 고르는 근거로 밝기·대비·흐림·잡티를 측정한다.
     blur_ratio는 원본과 재흐림 영상의 Sobel 기울기 평균 비율로 계산하며,
-    기존 라플라시안 분산과 함께 흐림 판정에 사용한다."""
+    기존 라플라시안 분산과 함께 흐림 판정에 사용한다. blur_dir은 방향별 에지 세기의 최소 ÷ 최대(흔들림 판정, USE_BLUR_DIR)."""
 
     mean_val = float(gray.mean())
     std_val = float(gray.std())
@@ -106,12 +121,14 @@ def measure_quality(gray):
         "lap_var": lap_var,
         "noise": noise,
         "blur_ratio": blur_ratio,
+        "blur_dir": _direction_ratio(gray),
     }
 
 def choose_steps(q):
     """상태 지표를 config A 구역의 기준값과 비교해 적용할 전처리 단계를 고른다.
     잡티 > NOISE_SIGMA_MAX → 가우시안, 평균 < DARK_MEAN_MAX 또는 > BRIGHT_MEAN_MIN → 감마,
-    (밝기는 괜찮고) 표준편차 < CONTRAST_STD_MIN → 평활화(USE_CLAHE면 CLAHE), 라플라시안 분산 < BLUR_VAR_MAX → 샤프닝.
+    (밝기는 괜찮고) 표준편차 < CONTRAST_STD_MIN → 평활화(USE_CLAHE면 CLAHE), 라플라시안 분산 < BLUR_VAR_MAX
+    또는 재흐림 비율 < BLUR_RATIO_MAX 또는 (USE_BLUR_DIR이면) 방향 비율 < BLUR_DIR_MIN → 샤프닝.
     감마는 평균 밝기를 가운데(0.5)로 옮기는 값 log(0.5) / log(평균/255)이고, preprocess가 결과 = 입력^감마로 적용한다
     (감마 < 1이면 밝게, > 1이면 어둡게). GAMMA_RANGE 밖이면 끝값으로 자른다."""
     steps = dict(NO_STEPS)
@@ -141,9 +158,16 @@ def choose_steps(q):
         np.isfinite(blur_ratio)
         and blur_ratio < C.BLUR_RATIO_MAX
     )
-    # 둘 중 하나라도 흐림으로 판단하면 sharpening
+    # 방향별 흐림 기준(USE_BLUR_DIR일 때만): 흔들림은 한 방향만 뭉개 blur_dir이 작다
+    blur_dir = q.get("blur_dir", float("nan"))
+    blur_by_dir = bool(
+        C.USE_BLUR_DIR
+        and np.isfinite(blur_dir)
+        and blur_dir < C.BLUR_DIR_MIN
+    )
+    # 하나라도 흐림으로 판단하면 sharpening
     steps["sharpen"] = bool(
-        blur_by_laplacian or blur_by_ratio
+        blur_by_laplacian or blur_by_ratio or blur_by_dir
     )
 
     return steps
