@@ -145,6 +145,62 @@ def test_road_mask_v1_synthetic():
     assert ratio["grass"] <= 0.05 and ratio["building"] <= 0.05, ratio
 
 
+def test_road_mask_v2_shadow():
+    """v2 8a(보완 4-2): 오른쪽 노면에 같은 색의 그림자(밝기 −50)를 드리우면 v1은 그늘진 노면을 빼고, ROAD_SHADOW_L_K를 켜면 잇는다.
+    풀·건물(색이 다름)은 켜도 들어오지 않는다. 합성 씨앗은 결이 고와 밝기 문턱이 작아(약 14) 시험에서는 K 5로 장치만 확인한다
+    (개발셋 띠의 밝기 문턱은 중앙값 55라 후보 K는 1.5·2, part_C 4-2). (C가 메모리에서 확인: K 0 → 그림자 0.0, K 5 → 0.98)"""
+    bgr, part = road_band()
+    shadow = part["road"] & (np.arange(640)[None, :] >= 500)
+    img = bgr.copy()
+    img[shadow] = (img[shadow].astype(int) - 50).clip(0, 255).astype(np.uint8)
+    with config_values(ROAD_SHADOW_L_K=0):
+        off = io_utils.road_mask(img) == 255
+    with config_values(ROAD_SHADOW_L_K=5):
+        on = io_utils.road_mask(img) == 255
+    assert off[shadow].mean() <= 0.05, f"v1이 그림자 노면을 이미 넣음 ({off[shadow].mean():.3f}): 시험 장면이 그림자를 만들지 못함"
+    assert on[shadow].mean() >= 0.90, f"8a를 켰는데 그림자 노면이 빠짐 ({on[shadow].mean():.3f})"
+    assert on[part["grass"]].mean() <= 0.05 and on[part["building"]].mean() <= 0.05, "8a를 켜자 색이 다른 풀·건물이 들어옴"
+
+
+def test_road_mask_v2_hood():
+    """v2 8b(보완 4-2): 띠 아래 30행을 매끈한 보닛(같은 회색, 결 없음)으로 덮으면 v1은 노면에 넣고, ROAD_HOOD_CUT을 켜면 뺀다.
+    보닛 위 노면은 그대로다. 매끈한 행이 아래 테두리에 붙어 있지 않으면(보닛 없음) 아무 행도 빼지 않는다."""
+    bgr, part = road_band()
+    img = bgr.copy()
+    img[210:] = 110
+    with config_values(ROAD_HOOD_CUT=False):
+        off = io_utils.road_mask(img) == 255
+    with config_values(ROAD_HOOD_CUT=True):
+        on = io_utils.road_mask(img) == 255
+        plain = io_utils.road_mask(bgr) == 255
+    above = part["road"].copy()
+    above[210:] = False
+    assert off[210:].mean() >= 0.90, f"v1이 보닛을 노면에 넣지 않음 ({off[210:].mean():.3f}): 시험 장면이 보닛을 만들지 못함"
+    assert on[210:].mean() <= 0.15 and on[above].mean() >= 0.95, (on[210:].mean(), on[above].mean())
+    with config_values(ROAD_HOOD_CUT=False):
+        assert np.array_equal(plain, io_utils.road_mask(bgr) == 255), "보닛이 없는 띠에서 8b가 행을 뺌"
+
+
+def test_road_mask_v2_edge_density():
+    """v2 8c(보완 4-2): 오른쪽 아래를 노면과 같은 평균 회색의 촘촘한 줄무늬(인도 블록·건물 벽 흉내)로 바꾸면 v1은 노면에 넣고,
+    ROAD_EDGE_DENSITY를 켜면 뺀다. 나머지 노면과 노면 안 포트홀은 남는다."""
+    bgr, part = road_band()
+    img = bgr.copy()
+    dense = np.zeros((240, 640), bool)
+    dense[120:, 560:] = True
+    stripe = ((np.arange(640) // 3) % 2 == 0)[None, :].repeat(240, 0)
+    img[dense & stripe] = 150
+    img[dense & ~stripe] = 85
+    with config_values(ROAD_EDGE_DENSITY=False):
+        off = io_utils.road_mask(img) == 255
+    with config_values(ROAD_EDGE_DENSITY=True):
+        on = io_utils.road_mask(img) == 255
+    rest = part["road"] & ~dense
+    assert off[dense].mean() >= 0.90, f"v1이 줄무늬를 노면에 넣지 않음 ({off[dense].mean():.3f}): 시험 장면이 맞지 않음"
+    assert on[dense].mean() <= 0.10, f"8c를 켰는데 촘촘한 줄무늬가 노면에 남음 ({on[dense].mean():.3f})"
+    assert on[rest].mean() >= 0.95 and on[part["pothole"]].mean() >= 0.95, (on[rest].mean(), on[part["pothole"]].mean())
+
+
 @todo("A WP1 v2 (Should): 차선이 노면을 가르는 영상 (Plan.md 3.3 (5) 차선)")
 def test_road_mask_v2_lane_split():
     """v2: 흰 차선이 띠 아래에서 위까지 노면을 갈라도 차선 건너편 노면과 차선을 마스크에 넣는다.
@@ -481,6 +537,8 @@ def test_new_tools_args():
     args = show_road_mask.parse_args([])
     assert args.set == "dev39" and args.out == show_road_mask.OUT_DIR, args
     assert show_road_mask.parse_args(["--set", "diag35"]).set == "diag35"
+    args = show_road_mask.parse_args(["--compare"])          # 보완 4-3: v1·v2 나란히, 기본 저장 폴더가 따로
+    assert args.compare is True and args.out == show_road_mask.COMPARE_DIR and show_road_mask.parse_args([]).compare is False, args
     args = shape_scatter.parse_args([])
     assert args.y == "both" and args.grid is False and args.limit is None and args.out == shape_scatter.OUT_DIR, args
     args = shape_scatter.parse_args(["--y", "dt_width", "--grid", "--limit", "20"])
