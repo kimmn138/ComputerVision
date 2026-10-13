@@ -8,7 +8,11 @@
   반올림 오차 ROUND_TOL 허용). 표의 운영점 행이 tau_points.csv config 행과 같은지 확인해 다르면 멈춘다.
 - 후보 정밀도 = 검출 성공 후보 ÷ 전체 후보. 검출 성공 = 후보 상자 중심이 같은 종류 정답 상자 안(evaluate_train의 ctr 판정).
   한 정답 상자 안의 후보 여러 개는 모두 성공으로 센다. 종류별 정밀도는 다른 종류 임계값을 +∞(후보 0개)로 둔 격자 행에서 낸다.
-- 재현율 = 그 종류 정답 상자 중 안에 후보 중심이 든 비율, 우연 수준을 보정한 재현율 = 재현율 − 우연 대조군 재현율."""
+- 재현율 = 그 종류 정답 상자 중 안에 후보 중심이 든 비율, 우연 수준을 보정한 재현율 = 재현율 − 우연 대조군 재현율.
+- (v5) 곡선에 정밀도·F1·F2 열(evaluate_train.TAU_SCORE_METRICS)이 있으면 종류별·전체 F1·F2(중심·IoU 0.3)와 영상 단위 정밀도·F1·F2를 더하고,
+  고정한 쪽 단면 전체에서 전체(중심) F1·F2가 가장 높은 행을 '참고'로 표시한다(운영점 규칙은 그대로). 열이 없는 옛 실행이면 NaN.
+- (v5) --scores 실행1,실행2: 저장된 train_detail.csv의 사진별 개수로 정밀도·F1·F2를 다시 계산해 table21_scores.csv에 쓴다
+  (시험셋을 다시 돌리지 않고 이미 잰 결과로. 정의는 evaluate_train.score_columns)."""
 import argparse
 import sys
 from pathlib import Path
@@ -18,6 +22,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import config as C  # noqa: E402
+from tools import evaluate_train as et  # noqa: E402
 
 REPORT_DIR = Path("results/report")
 BASIS_SOURCE = Path("docs/part_C.md")
@@ -55,16 +60,30 @@ def build(curve, kind, fixed, qs, op_tau):
     picks = [part.iloc[int(np.argmin(np.abs(part[f"q_{kind}"].to_numpy() - q)))] for q in qs]
     op = part[np.isclose(part[f"tau_{kind}"], op_tau, rtol=0, atol=1e-9) | (part[f"tau_{kind}"] == op_tau)]
     picks.append(op.iloc[0])
+    best = {}
+    for f in ("f1", "f2"):
+        if f"all_ctr_{f}" in part and part[f"all_ctr_{f}"].notna().any():
+            r = part.loc[part[f"all_ctr_{f}"].idxmax()]
+            picks.append(r)
+            best.setdefault(r[f"tau_{kind}"], []).append(f"전체(중심) {f.upper()} 최고")
     rows = []
-    for r in sorted({id(p): p for p in picks}.values(), key=lambda p: p[f"q_{kind}"]):
+    for r in sorted({r[f"tau_{kind}"]: r for r in picks}.values(), key=lambda p: p[f"q_{kind}"]):
         k_pred, k_fp, k_prec = kind_precision(curve, kind, r[f"tau_{kind}"])
-        rows.append({"임계값": r[f"tau_{kind}"], "분위": r[f"q_{kind}"], "운영점": "◀ 운영점" if r[f"tau_{kind}"] == op_tau else "",
+        get = lambda col: r[col] if col in r else np.nan
+        mark = (["◀ 운영점"] if r[f"tau_{kind}"] == op_tau else []) + best.get(r[f"tau_{kind}"], [])
+        rows.append({"임계값": r[f"tau_{kind}"], "분위": r[f"q_{kind}"], "운영점": " · ".join(mark),
                      "후보/영상(전체)": r.pred_per_image, "후보 정밀도(전체)": 1 - r.fp_per_image / r.pred_per_image if r.pred_per_image > 0 else np.nan,
                      f"{kind} 후보/영상": k_pred, f"{kind} 후보 정밀도": k_prec,
                      f"{kind} 재현율": r[f"{kind}_ctr_recall"], f"{kind} 우연 보정 재현율": r[f"{kind}_ctr_recall_net"],
                      "민감도": r.sensitivity, "특이도": r.specificity, "균형 정확도": r.balanced, "정답률": r.accuracy,
-                     "영상당 오검출": r.fp_per_image})
-    table = pd.DataFrame(rows).drop_duplicates(subset=["임계값"])
+                     "영상당 오검출": r.fp_per_image,
+                     f"{kind} F1(중심)": get(f"{kind}_ctr_f1"), f"{kind} F2(중심)": get(f"{kind}_ctr_f2"),
+                     f"{kind} 정밀도(IoU)": get(f"{kind}_iou_precision"), f"{kind} 재현율(IoU)": get(f"{kind}_iou_recall"),
+                     f"{kind} F1(IoU)": get(f"{kind}_iou_f1"), f"{kind} F2(IoU)": get(f"{kind}_iou_f2"),
+                     "전체 F1(중심)": get("all_ctr_f1"), "전체 F2(중심)": get("all_ctr_f2"),
+                     "전체 F1(IoU)": get("all_iou_f1"), "전체 F2(IoU)": get("all_iou_f2"),
+                     "영상 정밀도": get("image_precision"), "영상 F1": get("image_f1"), "영상 F2": get("image_f2")})
+    table = pd.DataFrame(rows)
     return table, part
 
 
@@ -112,12 +131,54 @@ def copy_basis(source=BASIS_SOURCE, out=REPORT_DIR / "table20_threshold_basis.md
     return out
 
 
+SCORE_LABELS = {"sensitivity": "민감도", "specificity": "특이도", "balanced": "균형 정확도", "accuracy": "정답률", "fp_per_image": "영상당 오검출",
+                **{f"{k}_{c}_{m}": f"{n} {mm}({cc})" for k, n in (("crack", "균열"), ("pothole", "포트홀"), ("all", "전체"))
+                   for c, cc in (("ctr", "중심"), ("iou", "IoU")) for m, mm in (("precision", "정밀도"), ("recall", "재현율"),
+                                                                             ("f1", "F1"), ("f2", "F2"))},
+                "image_tp": "영상 TP", "image_fp": "영상 FP", "image_fn": "영상 FN", "image_tn": "영상 TN",
+                "image_precision": "영상 정밀도", "image_f1": "영상 F1", "image_f2": "영상 F2"}
+
+
+def scores_table(runs):
+    """실행 폴더마다 train_detail.csv의 사진별 개수로 정밀도·F1·F2(evaluate_train.score_columns)를 다시 계산하고, train_summary.csv의
+    민감도·특이도 등과 나란히 둔 표(행 = 실행 × 전처리). 종류별 정밀도·재현율은 같은 개수로 낸다(요약 표와 같은 값)."""
+    rows = []
+    for run in runs:
+        folder = Path("results") / run
+        detail = pd.read_csv(folder / et.DETAIL_NAME, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+        summary = pd.read_csv(folder / et.SUMMARY_NAME, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+        for (params, mode), part in detail.groupby(["params", "preprocess"], sort=False):
+            records = part.to_dict("records")
+            out = {"실행": run, "분할": part["split"].iloc[0], "전처리": "적용" if mode == "on" else "미적용", "영상": len(records)}
+            srow = summary[(summary.params == params) & (summary.preprocess == mode)].iloc[0]
+            for key in ("sensitivity", "specificity", "balanced", "accuracy", "fp_per_image"):
+                out[SCORE_LABELS[key]] = float(srow[key])
+            for kind in et.KINDS:
+                for criterion in et.CRITERIA:
+                    c = {k: sum(int(float(r[f"{kind}_{criterion}_{k}"])) for r in records) for k in et.COUNT_KEYS}
+                    out[SCORE_LABELS[f"{kind}_{criterion}_precision"]] = et.ratio(c["tp"], c["tp"] + c["fp"])
+                    out[SCORE_LABELS[f"{kind}_{criterion}_recall"]] = et.ratio(c["found"], c["found"] + c["fn"])
+            out.update({SCORE_LABELS[k]: v for k, v in et.score_columns(records).items()})
+            rows.append(out)
+    return pd.DataFrame(rows)
+
+
 def main(argv=None):
     """운영점 실행의 tau_curve.csv에서 균열·포트홀 임계값 표와 그래프를 results/report/에 저장한다."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--run", default="e5_supp_dev", help="임계값별 성능 곡선이 있는 결과 폴더(results/ 아래)")
     parser.add_argument("--preprocess", default="off", choices=("off", "on"), help="전처리 미적용(off, 운영점을 정한 행) 또는 적용(on)")
+    parser.add_argument("--scores", help="정밀도·F1·F2를 다시 계산할 실행 폴더(쉼표로, 예: e5_supp_dev,test_supp) → table21_scores.csv")
     args = parser.parse_args(argv)
+    if args.scores:
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        table = scores_table([r.strip() for r in args.scores.split(",") if r.strip()])
+        table.to_csv(REPORT_DIR / "table21_scores.csv", index=False, encoding="utf-8-sig", float_format="%.4f")
+        pd.set_option("display.width", 250)
+        pd.set_option("display.max_columns", 80)
+        print(table.T.to_string(float_format=lambda v: f"{v:.4f}"))
+        print("저장:", REPORT_DIR / "table21_scores.csv")
+        return
     run = Path("results") / args.run
     curve = pd.read_csv(run / "tau_curve.csv", encoding="utf-8-sig")
     curve = curve[(curve.preprocess == args.preprocess) & (curve.params == "config")]

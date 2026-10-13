@@ -519,13 +519,93 @@ def pick_figures(Cm):
     return chosen[:N_FIGURES]
 
 
+def candidate_texture(region, tex, road):
+    """후보 하나의 질감 비 = 후보 영역(윤곽 안쪽까지 채움) 7×7 지역 표준편차 중앙값 ÷ 바깥 고리(폭 ring_width, 노면 마스크 안) 중앙값.
+    tex·road는 ROI 좌표. 고리 픽셀이 RING_MIN_N보다 적거나 바깥 중앙값이 0이면 NaN."""
+    x, y, w, h = region["bbox"]
+    d = ring_width(w, h)
+    H, W = tex.shape
+    X0, Y0, X1, Y1 = max(0, x - d), max(0, y - d), min(W, x + w + d), min(H, y + h + d)
+    inside = np.zeros((Y1 - Y0, X1 - X0), np.uint8)
+    cv.drawContours(inside, [region["contour"]], -1, 255, -1, offset=(-X0, -Y0))
+    grown = cv.dilate(inside, cv.getStructuringElement(cv.MORPH_ELLIPSE, (2 * d + 1, 2 * d + 1))) > 0
+    ring = grown & (inside == 0) & road[Y0:Y1, X0:X1]
+    if np.count_nonzero(ring) < RING_MIN_N or not inside.any():
+        return np.nan
+    out = float(np.median(tex[Y0:Y1, X0:X1][ring]))
+    return float(np.median(tex[Y0:Y1, X0:X1][inside > 0])) / out if out > 0 else np.nan
+
+
+def measure_candidates(items):
+    """(2') 실제 포트홀 후보(점수 임계값을 끈 dark 검출, 전처리 미적용, 노면 밖 후보 제거 뒤)마다 질감 비와 포트홀 점수를 재고,
+    중심이 포트홀 정답 상자 안인지(검출 성공) 적는다. 비교용으로 포트홀 정답 안에 중심이 든 균열 후보(분류만 균열로 된 영역)도 남긴다.
+    → DataFrame(image, kind, hit_pothole, score, tex_ratio, area, circ_inv)"""
+    rows = []
+    backup = C.USE_SCORE_TAU
+    C.USE_SCORE_TAU = False
+    try:
+        for n, (name, path, gt_path, top0, bottom) in enumerate(items, start=1):
+            gt = evaluate.load_gt(str(gt_path)) or []
+            pot_gt = [(x, y, w, h) for x, y, w, h, k in gt if k == "pothole"]
+            out = pipeline.run_pipeline(io_utils.load_image(path), top0, bottom, False)
+            tex = pipeline.local_std(out["gray"], C.AUTO_BAND_TEX_KSIZE)
+            road = out["road"] > 0
+            for kind in ("pothole", "crack"):
+                for r in out[f"{kind}s"]:
+                    x, y, w, h = r["bbox"]
+                    hit = bool(evaluate.count_center_hits([(x, y + out["y0"], w, h)], pot_gt)["tp"]) if pot_gt else False
+                    if kind == "crack" and not hit:
+                        continue
+                    rows.append({"image": name, "kind": kind, "hit_pothole": hit, "score": r.get(f"score_{kind}", r["score"]),
+                                 "score_pothole": r.get("score_pothole", np.nan), "tex_ratio": candidate_texture(r, tex, road),
+                                 "area": r["area"], "circ_inv": r["circ_inv"]})
+            if n % 100 == 0:
+                print(f"후보 {n}/{len(items)}")
+    finally:
+        C.USE_SCORE_TAU = backup
+    return pd.DataFrame(rows)
+
+
+def candidate_lines(df):
+    """(2') 요약: 포트홀 후보 중 검출 성공 vs 오검출의 질감 비·점수·점수 × 질감 비 AUC(표본 수와 함께)."""
+    pot = df[df.kind == "pothole"]
+    pos, neg = pot[pot.hit_pothole], pot[~pot.hit_pothole]
+    lines = [f"(2') 포트홀 후보 {len(pot)}개(점수 임계값 끔, 전처리 미적용): 검출 성공 {len(pos)}개, 오검출 {len(neg)}개"]
+    for col, label in (("tex_ratio", "질감 비"), ("score", "포트홀 점수")):
+        pv, nv = pos[col].to_numpy(float), neg[col].to_numpy(float)
+        pv, nv = pv[np.isfinite(pv)], nv[np.isfinite(nv)]
+        lines.append(f"  {label}: AUC {auc(pv, nv):.3f} (성공 {len(pv)}·오검출 {len(nv)}개), 중앙값 성공 {np.median(pv) if len(pv) else np.nan:.2f} / "
+                     f"오검출 {np.median(nv) if len(nv) else np.nan:.2f}")
+    prod = lambda f: (f.score * f.tex_ratio).to_numpy(float)
+    pv, nv = prod(pos), prod(neg)
+    lines.append(f"  점수 × 질감 비: AUC {auc(pv[np.isfinite(pv)], nv[np.isfinite(nv)]):.3f}")
+    cr = df[(df.kind == "crack") & df.hit_pothole]
+    allpos = pd.concat([pos, cr])
+    pv, nv = allpos.tex_ratio.to_numpy(float), neg.tex_ratio.to_numpy(float)
+    lines.append(f"  포트홀 정답 안의 모든 어두운 후보(균열로 분류된 {len(cr)}개 포함 {len(allpos)}개) vs 포트홀 오검출: 질감 비 AUC "
+                 f"{auc(pv[np.isfinite(pv)], nv[np.isfinite(nv)]):.3f}, 중앙값 {np.nanmedian(pv):.2f} / {np.nanmedian(nv):.2f}")
+    if len(pos):
+        lines.append("  검출 성공 포트홀 후보: " + ", ".join(f"{r.image}(점수 {r.score:.2f}, 질감 {r.tex_ratio:.2f})" for r in pos.itertuples()))
+    return lines
+
+
 def main(argv=None):
     """개발셋 652장과 39장을 재서 results/measure_v5/에 CSV·요약·확인 그림을 저장하고 요약을 출력한다."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--limit", type=int, default=0, help="셋마다 앞의 N장만(확인용, 0 = 전부)")
     parser.add_argument("--from-csv", action="store_true", help="측정은 건너뛰고 저장된 CSV로 요약·그림만 다시 만든다")
+    parser.add_argument("--candidates", action="store_true",
+                        help="(2') 개발셋 실제 포트홀 후보의 질감 비만 잰다 → B2_pothole_candidates.csv, summary_candidates.txt")
     args = parser.parse_args(argv)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if args.candidates:
+        items = dev_items()[:args.limit] if args.limit else dev_items()
+        df = measure_candidates(items)
+        df.to_csv(OUT_DIR / "B2_pothole_candidates.csv", index=False, encoding="utf-8-sig")
+        text = "\n".join(candidate_lines(df))
+        (OUT_DIR / "summary_candidates.txt").write_text(text + "\n", encoding="utf-8")
+        print(text)
+        return
     sets = {"dev": dev_items(), "39": own_items()}
     if args.limit:
         sets = {k: v[:args.limit] for k, v in sets.items()}

@@ -1415,6 +1415,36 @@ def tau_scene():
     return heights, gts, scored
 
 
+def test_scores_f1_f2():
+    """(v5) 정밀도·F1·F2를 손으로 센 값과 견준다. F_β = (1 + β²)PR / (β²P + R), 분모가 0이면 정밀도·재현율이 NaN이고 F도 NaN,
+    P = R = 0이면 F = 0. 영상 단위: TP = 손상 영상 검출 성공, FP = 무손상 영상에 후보 있음. 저장된 CSV처럼 문자열 행도 받는다.
+    τ 격자에서는 중심 기준 전체 정밀도 = 1 − 오검출/후보(tau_scene τ 없음: 후보 7, 오검출 4 → 3/7)."""
+    from tools import evaluate_train as et
+    check(abs(et.f_beta(0.5, 0.25, 1) - 1 / 3) < 1e-12 and abs(et.f_beta(0.5, 0.25, 2) - 0.625 / 2.25) < 1e-12,
+          "f_beta 값이 틀림")
+    check(et.f_beta(0.0, 0.0, 1) == 0.0 and math.isnan(et.f_beta(math.nan, 0.5, 1)), "f_beta 0·NaN 처리가 틀림")
+    zero = {f"{k}_{c}_{n}": "0" for k in et.KINDS for c in et.CRITERIA for n in et.COUNT_KEYS}
+    rows = [{**zero, "crack_ctr_tp": "2", "crack_ctr_fp": "1", "crack_ctr_found": "1", "crack_ctr_fn": "1",
+             "crack_iou_tp": "1", "crack_iou_fp": "2", "crack_iou_found": "1", "crack_iou_fn": "1",
+             "pothole_ctr_fn": "1", "pothole_iou_fn": "1", "has_damage": "True", "correct": "True"},
+            {**zero, "crack_ctr_fp": "3", "crack_iou_fp": "3", "has_damage": "False", "correct": "False"}]
+    s = et.score_columns(rows)
+    check(set(s) == set(et.SCORE_COLUMNS), f"score_columns 열이 SCORE_COLUMNS와 다름: {set(s) ^ set(et.SCORE_COLUMNS)}")
+    check(abs(s["crack_ctr_f1"] - et.f_beta(1 / 3, 1 / 2, 1)) < 1e-12 and math.isnan(s["pothole_ctr_f1"]),
+          f"종류별 F1이 틀림 ({s['crack_ctr_f1']}, {s['pothole_ctr_f1']})")
+    check(abs(s["all_ctr_precision"] - 1 / 3) < 1e-12 and abs(s["all_ctr_recall"] - 1 / 3) < 1e-12 and abs(s["all_ctr_f1"] - 1 / 3) < 1e-12,
+          f"전체(중심) 정밀도·재현율·F1이 틀림 ({s['all_ctr_precision']}, {s['all_ctr_recall']}, {s['all_ctr_f1']})")
+    check(abs(s["all_iou_precision"] - 1 / 6) < 1e-12 and abs(s["all_iou_recall"] - 1 / 3) < 1e-12, "전체(IoU) 정밀도·재현율이 틀림")
+    check((s["image_tp"], s["image_fp"], s["image_fn"], s["image_tn"]) == (1, 1, 0, 0) and abs(s["image_precision"] - 0.5) < 1e-12
+          and abs(s["image_f1"] - 2 / 3) < 1e-12, f"영상 단위 혼동 행렬·정밀도·F1이 틀림 ({s})")
+    heights, gts, scored = tau_scene()
+    none = et.tau_table(sorted(heights), heights, scored, gts, [-math.inf], [-math.inf], iou=True).iloc[0]
+    check(abs(none["all_ctr_precision"] - (1 - none["fp_per_image"] / none["pred_per_image"])) < 1e-12
+          and abs(none["all_ctr_precision"] - 3 / 7) < 1e-12, f"τ 격자 전체 정밀도가 1 − 오검출/후보와 다름 ({none['all_ctr_precision']})")
+    plain = et.tau_table(sorted(heights), heights, scored, gts, [-math.inf], [-math.inf]).iloc[0]
+    check(math.isnan(plain["all_iou_f1"]) and not math.isnan(none["all_iou_precision"]), "iou=False인데 IoU 열이 채워졌거나 iou=True인데 빔")
+
+
 def test_tau_grid_small():
     """τ 격자 지표를 손으로 센 값과 견준다(사진 다섯 장, tau_scene). 점수 ≥ τ인 후보만 남고(같으면 남음), 종류마다 자기 τ를 쓴다.
     민감도·특이도·정답률·균형 정확도는 영상 단위, 영상당 오검출·후보와 재현율은 후보 단위다(evaluate_train.summarize와 같은 정의)."""
