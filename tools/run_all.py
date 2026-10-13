@@ -1999,11 +1999,11 @@ def time_table(runs):
 
 
 def judge_table(runs):
-    """13번 상태 판정(보고서 6.2·6.4): 39장 최종 실행(자동 ROI F39a, roi.csv F39)의 켬 상태 지표로 다시 낸 판정에서
+    """13번 상태 판정(보고서 6.2·6.4): 39장 v6 최종 실행(자동 ROI F39aV, roi.csv F39V. 10/14부터, 그 전은 F39a·F39)의 켬 상태 지표로 다시 낸 판정에서
     같은 장소 정상·흔들림 쌍 가운데 흔들림 쪽만 샤프닝을 고른 쌍 수, 흐림(blur) 사진 가운데 샤프닝을 고른 장 수, own_18_pothole_dark가 고른 전처리.
     → DataFrame(item, auto, csv)"""
     items = {}
-    for col, sid in (("auto", "F39a"), ("csv", "F39")):
+    for col, sid in (("auto", "F39aV"), ("csv", "F39V")):
         if runs.get(sid) is None:
             continue
         judge = judgements(runs[sid]["metrics"], runs[sid].get("config"))
@@ -2513,7 +2513,7 @@ def time_lines(table):
 
 def judge_lines(table):
     """13번 상태 판정 줄(보고서 6.2·6.4): 자동 ROI(최종 시연과 같은 띠)와 roi.csv 기준."""
-    lines = ["## 13. 상태 판정 (보고서 6.2·6.4, 39장 최종 실행)", "",
+    lines = ["## 13. 상태 판정 (보고서 6.2·6.4, 39장 v6 최종 실행)", "",
              "39장 켬 행의 상태 지표로 다시 낸 판정. 자동 ROI는 기본 띠 + 자동 띠 + 결(최종 시연과 같은 띠), roi.csv는 사람이 정한 띠다. "
              "같은 장소 쌍은 own 번호가 같은 정상·흔들림 사진이다.", ""]
     if not len(table):
