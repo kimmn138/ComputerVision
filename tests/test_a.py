@@ -232,14 +232,15 @@ def test_road_mask_seed_cells():
 
 def test_road_mask_l_range_max():
     """v5 (3)①: ROAD_L_RANGE_MAX를 주면 노면 밝기 범위가 그 값을 넘지 않는다. 어두운 노면(밝기 −60)을 오른쪽에 두면
-    상한이 없을 때(범위 넓게, ROAD_L_K 20)는 잇고, 상한 30이면 뺀다."""
+    상한이 없을 때(범위 넓게, ROAD_L_K 20)는 잇고, 상한 30이면 뺀다. 상한은 ab_L 색 기준의 L 범위에만 걸리므로(mahal은 L 범위 식을 쓰지 않음)
+    10/13 V5a 채택으로 기본이 "mahal"이 된 뒤에도 ab_L을 명시해 이 장치를 시험한다."""
     bgr, part = road_band()
     dark = part["road"] & (np.arange(640)[None, :] >= 500)
     img = bgr.copy()
     img[dark] = (img[dark].astype(int) - 60).clip(0, 255).astype(np.uint8)
-    with config_values(ROAD_L_K=20, ROAD_L_RANGE_MAX=0):
+    with config_values(ROAD_COLOR_DIST="ab_L", ROAD_L_K=20, ROAD_L_RANGE_MAX=0):
         wide = io_utils.road_mask(img) == 255
-    with config_values(ROAD_L_K=20, ROAD_L_RANGE_MAX=30):
+    with config_values(ROAD_COLOR_DIST="ab_L", ROAD_L_K=20, ROAD_L_RANGE_MAX=30):
         capped = io_utils.road_mask(img) == 255
     assert wide[dark].mean() >= 0.90 and capped[dark].mean() <= 0.10, (wide[dark].mean(), capped[dark].mean())
 
