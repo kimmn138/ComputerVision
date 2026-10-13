@@ -277,6 +277,81 @@ def test_choose_steps_blur_ratio():
     assert analyze.choose_steps(good_quality(lap_var=C.BLUR_VAR_MAX / 2, blur_ratio=C.BLUR_RATIO_MAX * 2))["sharpen"] is True
 
 
+def motion_blur(gray, length, angle):
+    """길이 length px, 방향 angle도(0 = 가로)의 선 커널로 움직임 흐림을 넣은 새 영상(흔들림 흉내)."""
+    k = np.zeros((length, length), np.float32)
+    k[length // 2, :] = 1.0
+    rot = cv.getRotationMatrix2D(((length - 1) / 2, (length - 1) / 2), angle, 1.0)
+    k = cv.warpAffine(k, rot, (length, length))
+    return cv.filter2D(gray, -1, k / k.sum())
+
+
+def test_blur_dir_motion():
+    """방향별 흐림 비율(blur_dir = 방향별 기울기 제곱 평균의 최소 ÷ 최대, 보완 3-1): 방향이 고른 결은 1에 가깝고, 같은 결에 가로·세로
+    움직임 흐림(15px)을 넣으면 작아지며, 가우시안 흐림(E6 blur σ 2)은 모든 방향을 같이 뭉개 크게 바뀌지 않는다. 평평한 영상은 NaN.
+    (C가 메모리에서 이 합성으로 확인: 원본 0.99, 가우시안 0.97, 가로 15px 0.10, 세로 15px 0.10, 대각 15px 0.12)"""
+    rng = np.random.default_rng(0)
+    sharp = cv.GaussianBlur(rng.normal(120, 25, (240, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.0)
+    d = {name: analyze.measure_quality(g)["blur_dir"] for name, g in
+         (("sharp", sharp), ("gauss", cv.GaussianBlur(sharp, (0, 0), 2.0)),
+          ("motion0", motion_blur(sharp, 15, 0)), ("motion90", motion_blur(sharp, 15, 90)))}
+    assert all(isinstance(v, float) for v in d.values()), d
+    assert d["sharp"] > 0.8 and d["gauss"] > 0.8, f"방향이 고른 결·가우시안 흐림의 blur_dir이 작음 {d}"
+    assert d["motion0"] < 0.2 and d["motion90"] < 0.2, f"움직임 흐림의 blur_dir이 작아지지 않음 {d}"
+    assert np.isnan(analyze.measure_quality(np.full((50, 50), 100, np.uint8))["blur_dir"])
+
+
+def test_blur_dir_off_same():
+    """USE_BLUR_DIR가 꺼져 있으면 blur_dir이 아무리 작아도 고르는 단계가 그대로이고(v9와 같음), 켜면 blur_dir < BLUR_DIR_MIN일 때만
+    샤프닝을 더한다. blur_dir이 NaN이거나 키가 없으면 켜도 샤프닝하지 않는다."""
+    low, high = good_quality(blur_dir=0.01), good_quality(blur_dir=0.99)
+    with config_values(USE_BLUR_DIR=False):
+        assert analyze.choose_steps(low) == analyze.NO_STEPS
+    with config_values(USE_BLUR_DIR=True, BLUR_DIR_MIN=0.3):
+        assert analyze.choose_steps(low) == {**analyze.NO_STEPS, "sharpen": True}
+        assert analyze.choose_steps(high) == analyze.NO_STEPS
+        assert analyze.choose_steps(good_quality(blur_dir=float("nan"))) == analyze.NO_STEPS
+        assert analyze.choose_steps(good_quality()) == analyze.NO_STEPS
+
+
+def test_night_denoise_switch():
+    """야간 잡티 제거(보완 3-5): NIGHT_DENOISE가 꺼져 있으면 지금과 똑같고(가우시안), 켜면 '잡티 제거 + 밝게 하는 감마(< 1)'인 영상만
+    가우시안 대신 NLM을 쓴다. 잡티 제거만 고른 영상(감마 없음·어둡게 하는 감마)은 켜도 그대로다. 받은 영상은 바꾸지 않는다."""
+    rng = np.random.default_rng(5)
+    dark = (rng.normal(40, 10, (120, 200)).clip(0, 255)).astype(np.uint8)
+    cv.line(dark, (10, 60), (190, 60), 10, 3)
+    before = dark.copy()
+    night = {**analyze.NO_STEPS, "denoise": True, "tone": "gamma", "gamma": 0.5}
+    plain = {**analyze.NO_STEPS, "denoise": True}
+    bright = {**analyze.NO_STEPS, "denoise": True, "tone": "gamma", "gamma": 2.0}
+    with config_values(NIGHT_DENOISE=False):
+        off = {k: preprocess.preprocess(dark, s) for k, s in (("night", night), ("plain", plain), ("bright", bright))}
+    with config_values(NIGHT_DENOISE=True):
+        on = {k: preprocess.preprocess(dark, s) for k, s in (("night", night), ("plain", plain), ("bright", bright))}
+    table = np.clip(np.round((np.arange(256) / 255.0) ** 0.5 * 255), 0, 255).astype(np.uint8)
+    assert np.array_equal(off["night"], cv.LUT(cv.GaussianBlur(dark, C.GAUSS_KSIZE, C.GAUSS_SIGMA), table)), "끔인데 가우시안 + 감마가 아님"
+    assert not np.array_equal(on["night"], off["night"]), "켰는데 야간 영상의 결과가 같음(NLM을 쓰지 않음)"
+    assert on["night"].shape == dark.shape and on["night"].dtype == np.uint8
+    assert np.array_equal(on["plain"], off["plain"]) and np.array_equal(on["bright"], off["bright"]), "야간이 아닌 영상까지 바뀜"
+    assert np.array_equal(dark, before), "받은 영상을 바꿈"
+
+
+def test_noise_aggregate_texture():
+    """잡티 지표는 거친 골재 결(크기가 여러 가지인 알갱이, 잡음 없음)을 잡음으로 세지 않는다(보완 3-2). 같은 영상에 σ 2 × NOISE_SIGMA_MAX
+    잡음을 더하면 기준 위다. 결만 있는 깨끗한 사진에 가우시안을 고르면 균열까지 뿌예진다(own_19_none_normal의 사례)."""
+    rng = np.random.default_rng(7)
+    gray = np.full((240, 640), 120, np.float32)
+    for r, n in ((1, 6000), (2, 2500), (4, 600)):         # 골재 알갱이: 반지름 1·2·4px, 밝기 ±40
+        ys, xs, vs = rng.integers(0, 240, n), rng.integers(0, 640, n), rng.integers(-40, 41, n)
+        for y, x, v in zip(ys, xs, vs):
+            cv.circle(gray, (int(x), int(y)), r, float(120 + v), -1)
+    clean = cv.GaussianBlur(gray, (0, 0), 0.8).clip(0, 255).astype(np.uint8)
+    q = analyze.measure_quality(clean)["noise"]
+    assert q < C.NOISE_SIGMA_MAX, f"잡음 없는 골재 결의 잡티 {q:.2f}가 기준 {C.NOISE_SIGMA_MAX} 이상"
+    noisy = (clean.astype(np.float32) + rng.normal(0, 2 * C.NOISE_SIGMA_MAX, clean.shape)).clip(0, 255).astype(np.uint8)
+    assert analyze.measure_quality(noisy)["noise"] > C.NOISE_SIGMA_MAX, "잡음을 더했는데 잡티가 기준 이하"
+
+
 def test_blur_ratio_provided():
     """사람이 흐리다고 판정한 제공 3장만 blur_ratio < BLUR_RATIO_MAX이고, 나머지 10장은 흐림으로 잡히지 않는다(roi.csv 띠).
     사진이 없으면 건너뛴다. 같은 장소 5쌍(blur vs normal)은 시험이 아니라 E5의 상태 판정 검증으로 C가 보고한다."""
