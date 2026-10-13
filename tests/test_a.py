@@ -530,6 +530,26 @@ def test_show_preprocess_pick_image():
     assert sp.parse_args(["x.jpg"]).image == "x.jpg"
 
 
+def test_shape_grid_small():
+    """격자 탐색(보완 5-1): 손으로 만든 사진 3장(균열 정답·무손상·포트홀 정답)의 영역에서 조합마다 분류·τ 없음 지표가 손으로 센 값과 같다.
+    지금 값(4, 2.5, 0.6): 균열(ci 6) 맞힘, 무손상의 영역(ci 3.2)은 어느 종류도 아님, 포트홀(ci 2.2) 맞힘 → 민감도 1, 특이도 1.
+    (3.0, 2.0, 0.6): 무손상의 ci 3.2가 균열이 되어 특이도 0, 포트홀 ci 2.2는 상한 2.0 밖이라 놓쳐 민감도 0.5.
+    고르기는 fp2 민감도 → fp1 민감도 → 지금 값에 가까운 쪽."""
+    from tools import shape_scatter as ss
+    region = lambda ci, sol, c, box: {"circ_inv": ci, "solidity": sol, "contrast": c, "area": 100, "bbox": box}  # noqa: E731
+    regions = {"a.jpg": [region(6.0, 0.3, 5.0, (10, 10, 20, 20))], "b.jpg": [region(3.2, 0.8, 3.0, (300, 300, 20, 20))],
+               "c.jpg": [region(2.2, 0.9, 4.0, (205, 205, 20, 20))]}
+    gts = {"a.jpg": [(0, 0, 100, 100, "crack")], "b.jpg": [], "c.jpg": [(200, 200, 50, 50, "pothole")]}
+    heights = {n: 480 for n in regions}
+    with config_values(SCORE_FORMULA="margin"):
+        rows = ss.grid_rows(regions, gts, heights, [(4.0, 2.5, 0.6), (3.0, 2.0, 0.6)])
+    now, loose = rows
+    assert (now["none_sensitivity"], now["none_specificity"], now["none_fp_per_image"]) == (1.0, 1.0, 0.0), now
+    assert (loose["none_sensitivity"], loose["none_specificity"]) == (0.5, 0.0) and abs(loose["none_fp_per_image"] - 1 / 3) < 1e-9, loose
+    assert ss.pick_grid(rows) is now
+    assert all(c > p for c, p, _ in ss.grid_combos()), "격자에 균열 하한 ≤ 포트홀 상한인 조합이 있음"
+
+
 def test_new_tools_args():
     """A의 새 도구 뼈대(노면 마스크 확인 그림·형태 산점도)가 import되고, 인자 없이 기본값으로, 고른 값은 그대로 읽힌다."""
     from tools import shape_scatter, show_road_mask
