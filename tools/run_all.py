@@ -196,10 +196,18 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("SP", "sp_persp_dev", "5-3 원근: 최소 넓이를 행 위치로(위 20 → 아래 40)", {"DARK_AREA_PERSPECTIVE": True}, "S6c", "off", "rules"),
              ("S15", "s15_brightpot_dev", "5-4(15번) 밝은 자갈 포트홀(결 2배)", {"BRIGHT_POTHOLE": True}, "S6c", "off", "rules"),
              # 6단계 1번: 지금 config(마지막 채택 설정)의 τ 곡선. 판정 행(끔) fp2 점 τ를 config에 쓴다(et_tau_lines가 줄을 알려 줌)
-             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"))
+             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"),
+             # v5(10/13, docs/part_C.md 'v12 뒤 남은 문제'): 노면 마스크 (3)①. 비교 기준은 지금 config와 같은 S6c. 판정 행 끔 + 마스크 안 정답 95%
+             ("V3a", "v3a_seedcells_dev", "v5 (3)① 칸 시드", {"ROAD_SEED_MODE": "cells"}, "S6c", "off", "rules"),
+             ("V3b", "v3b_seedcells_cap64_dev", "v5 (3)① 칸 시드 + 밝기 범위 상한 64", {"ROAD_SEED_MODE": "cells", "ROAD_L_RANGE_MAX": 64},
+              "S6c", "off", "rules"),
+             ("V3c", "v3c_seedcells_cap96_dev", "v5 (3)① 칸 시드 + 밝기 범위 상한 96", {"ROAD_SEED_MODE": "cells", "ROAD_L_RANGE_MAX": 96},
+              "S6c", "off", "rules"),
+             ("V3d", "v3d_cap64_dev", "v5 (3)① 상자 시드 + 밝기 범위 상한 64(상한만의 효과)", {"ROAD_L_RANGE_MAX": 64}, "S6c", "off", "rules"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
+STAGE_V5_IDS = ("V3a", "V3b", "V3c", "V3d")   # v5(10/13) 노면 마스크 행: 4단계처럼 39장 참고와 마스크 안 정답(표 17)
 MASK_GT_MIN = 0.95                  # 4단계 채택 조건: 마스크 안 정답 비율이 이 값 이상 (v9 95.1%, 계획 7장 4단계 공통)
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
@@ -208,7 +216,7 @@ SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 �
                ("S9c_39", "s09c_split39", "2-3(9c) 덩어리·선 나누기 39장 자동 ROI(참고)", {"DARK_SPLIT_BLOB": True}),
                ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}),
                *[(f"{sid}_39", folder[:-4] + "_39", f"{label} 39장 자동 ROI(상태 판정 검증, 참고)", sets)
-                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS + STAGE5_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
+                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS + STAGE5_IDS + STAGE_V5_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
 # 3단계 행은 E6 인위 저하도 함께 돈다(계획 4.1): 상태 판정 적중률과 원본 기준 비율. 비교 기준(S13)도 같은 저하로 한 번 돈다
 SUPP_DEGRADE = ("blur", "dark", "bright", "noise", "night")
 SUPP_E6_IDS = ("S13",) + tuple(r[0] for r in SUPP_RUNS if r[0].startswith(STAGE3_PREFIXES))
@@ -1873,7 +1881,7 @@ def supp_mask_table(paths, states, out_dir):
     마스크 안 정답이 MASK_GT_MIN 이상인지. 값은 mask_gt_rows(그 실행의 config 기록으로 마스크를 다시 만듦)로 잰다. 채택은 표 14의
     규칙 1~3과 이 조건을 모두 넘을 때만이다(계획 7장 4단계 공통)."""
     rows = []
-    for sid in ("S6c",) + STAGE4_IDS:
+    for sid in ("S6c",) + STAGE4_IDS + STAGE_V5_IDS:
         exp, state = EXP[sid], states[sid]
         df = mask_gt_rows(paths, exp, state, out_dir)
         band, mask, widened = mask_gt_ratios(df)
