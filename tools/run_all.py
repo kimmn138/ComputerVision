@@ -246,7 +246,9 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              # 10/14 마지막 시도(ROI 상단 경계의 남은 원인): 비교 기준은 지금 채택 설정 ETW. V7c는 둘 다 채택될 때만 판정
              ("V7a", "v7a_texbelow_dev", "v5 V1d 질감 비를 바로 아래 구간과 비교", {"AUTO_BAND_TEX_REF": "below"}, "ETW", "off", "rules"),
              ("V7b", "v7b_lane_ga_dev", "v5 차선 건너기 (가) 지금 설정 위 다시", {"ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"),
-             ("V7c", "v7c_texbelow_lane_dev", "v5 V1d + 차선 (가)", {"AUTO_BAND_TEX_REF": "below", "ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"))
+             ("V7c", "v7c_texbelow_lane_dev", "v5 V1d + 차선 (가)", {"AUTO_BAND_TEX_REF": "below", "ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"),
+             # V1d 채택 뒤 운영점(ETW와 같은 방식, 새 폴더)
+             ("ETX", "e5_v7_tau_dev", "v5 운영점: V1d 채택 뒤 지금 config의 fp2 점", {}, "V7a", "off", "curve"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
@@ -302,7 +304,10 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "V1x": "V6a 전 설정 위 참고(규칙 2 못 넘음: 균형 정확도 같음). 판정은 V6a 위 V1y로",
                   "V1e": "V1x 위 참고(판정에 쓰지 않음)", "V1f": "V1x 위 참고(판정에 쓰지 않음)",
                   "V1y": "채택(V6a 위 V1c, 규칙 1~3 + 마스크 안 정답 95.43%). AUTO_BAND_SEED_FIXED True",
-                  "V1g": "미채택(규칙 1·마스크 안 정답 94.08% 못 넘음)", "V1h": "미채택(규칙 1·2·마스크 안 정답 94.13% 못 넘음)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+                  "V1g": "미채택(규칙 1·마스크 안 정답 94.40% 못 넘음, 측정 코드 수정 뒤 값)", "V1h": "미채택(규칙 1·2·마스크 안 정답 94.45% 못 넘음, 측정 코드 수정 뒤 값)",
+                  "V7a": "채택(10/14, V1d: 규칙 1~3 + 마스크 안 정답 95.76%). AUTO_BAND_TEX_REF below",
+                  "V7b": "미채택(규칙 1·3 못 넘음: fp1·fp2 민감도 하락, 우연 보정 균열 −1.10%p). ROAD_LANE_BRIDGE 끔 그대로",
+                  "V7c": "돌리지 않음(V7b 미채택)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False,
                    "ROAD_SEED_MODE": "box", "ROAD_L_RANGE_MAX": 0, "ROAD_COLOR_DIST": "ab_L", "ROAD_SEED_CHECK": False,
                    "AUTO_BAND_SEED_FIXED": False, "AUTO_BAND_TEX_REF": "start"}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
@@ -1179,7 +1184,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
     report = build_report(paths, human, command_line)
     print_report(report, stage)
-    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETV", "ETW")), None) if stage == "supp" else None
+    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETV", "ETW", "ETX")), None) if stage == "supp" else None
     tau_lines = et_tau_lines(paths, report["states"], tau_id) if tau_id else []
     if tau_lines:
         print(f"\n{tau_id} 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 최종 실행(ET → supp_final, ETV → final_v5)을 돌린다"
