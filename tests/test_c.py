@@ -1402,6 +1402,14 @@ def test_degrade():
           "degrade: 감마 방향이나 값이 틀림 (128 → dark 57, bright 181)")
     check(np.array_equal(et.degrade(bgr, "noise"), out["noise"]) and not np.array_equal(out["noise"], bgr),
           "degrade: noise가 seed 고정이 아니거나 잡음이 들어가지 않음")
+    night = et.degrade(bgr, "night")         # 보완 3-5(10/13): 야간 = 어두움 뒤 잡음. 같은 사진은 늘 같은 무늬
+    check(np.array_equal(night, et.degrade(et.degrade(bgr, "dark"), "noise")) and np.array_equal(night, et.degrade(bgr, "night"))
+          and np.array_equal(bgr, before), "degrade: night가 dark 뒤 noise가 아니거나 seed 고정이 아니거나 받은 영상을 바꿈")
+    none = {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}
+    rule = et.EXPECTED_STEPS["night"][1]
+    check(rule({**none, "denoise": True, "tone": "gamma", "gamma": 0.5}) and not rule({**none, "tone": "gamma", "gamma": 0.5})
+          and not rule({**none, "denoise": True}) and not rule({**none, "denoise": True, "tone": "gamma", "gamma": 2.0}),
+          "EXPECTED_STEPS night: 잡티 제거 + 밝게 하는 감마(< 1)일 때만 맞음이어야 함")
 
 
 def test_degrade_noise_per_photo():
@@ -1842,6 +1850,14 @@ def test_run_all_supp_plan():
     for sid in ("E3", "B1", "M1", "E3_39"):          # E4 전에 돈 단계는 config에 τ가 켜져도 실행 중에만 점수를 끔(처음과 같은 조건)
         _, pins = ra.command(ra.EXP[sid], ra.resolve(ra.EXP[sid], {"E0"}))
         check(pins.get("USE_SCORE_TAU") is False and pins.get("SCORE_FORMULA") == "none", f"run_all {sid}: 점수를 끄지 않음 ({pins})")
+    for e in exps:                      # 3단계(전처리·상태 판정): 판정 행 켬, E6 다섯 가지(night 포함)와 39장 검증 행이 함께 있다
+        if e["id"].startswith("S7") and e["tool"] == "train" and "degrade" not in e["opts"]:
+            check(e["judge_row"] == "on" and e["supp_base"] == "S13", f"run_all {e['id']}: 3단계 판정 행이 켬이 아니거나 기준이 S13이 아님")
+            kinds = {x["opts"].get("degrade") for x in exps if x["id"].startswith(e["id"] + "_e6_")}
+            check(kinds == set(ra.SUPP_DEGRADE) and "night" in kinds and e["id"] + "_39" in ra.EXP,
+                  f"run_all {e['id']}: E6 저하({kinds})나 39장 행이 빠짐")
+    check({e["opts"].get("degrade") for e in ra.EXPERIMENTS if e["stage"] in ("compare", "final") and e["opts"].get("degrade")}
+          == set(ra.V9_DEGRADE_KINDS), "run_all: 비교·최종 단계의 E6가 v9 다섯 가지가 아님(night는 보완 단계에서만)")
     e4 = ra.command(ra.EXP["E4s"], ra.resolve(ra.EXP["E4s"], {"E0"}))
     check("USE_SCORE_TAU" not in e4[1] and "--tau-curve" in e4[0], f"run_all E4s: config τ 그대로가 아님 ({e4})")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1931,7 +1947,7 @@ def test_run_all_report_empty():
                                                             "provided_vs_own", "degrade", "39_images"], 1)}
         expect |= {"table9_auto_band.csv", "table9_auto_band_country.csv", "table9_auto_band_39.csv", "table10_mask2.csv",
                    "table10_mask2_changes.csv", "table10_mask_gt.csv", "table11_tests.csv", "table12_time.csv", "table13_judge.csv",
-                   "table14_supp.csv", "table15_tau_points.csv"}
+                   "table14_supp.csv", "table15_tau_points.csv", "table16_supp_judge.csv"}
         check(expect | {"adoption.csv", "adoption_grid.csv", "summary.md", "accept.txt", "reject.txt"} == set(os.listdir(out)),
               f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
         text = (out / "summary.md").read_text(encoding="utf-8")

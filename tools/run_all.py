@@ -111,7 +111,8 @@ SEC_PHOTO39 = 1.15                  # run_experiment 사진 1장 (끔·켬 × TI
 SEC_PAIR_PHOTO = 1.5                # run_matching 쌍 사진 1장 (10장 15초)
 SEC_CHECK = 2                       # 약속 검사
 
-DEGRADE_NAMES = {"none": "저하 없음", "blur": "흐림", "dark": "어두움", "bright": "과노출", "noise": "잡음"}
+DEGRADE_NAMES = {"none": "저하 없음", "blur": "흐림", "dark": "어두움", "bright": "과노출", "noise": "잡음", "night": "야간(어두움 + 잡음)"}
+V9_DEGRADE_KINDS = ("none", "blur", "dark", "bright", "noise")   # 비교·최종 단계(v9)의 E6. night(10/13)는 보완 단계에서만 돈다
 NEEDS = {"dark": "dark 검출(B)", "mask": "노면 마스크(A)"}
 # 구현 여부의 신호: 각 파트가 기능을 구현하면 지우는 시험의 @todo (docs/tasks/A.md·B.md 4장의 통과 기준)
 SIGNALS = {"mask": ("tests/test_a.py", "test_road_mask_v1_synthetic"),
@@ -159,13 +160,22 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("S13", "s13_halo_dev", "2-2(13번) 밝은 줄 옆 테두리 메움(팽창 6px)", {"DARK_BRIGHT_DILATE": 6}, "S12", "off", "rules"),
              ("S9a", "s09a_stripe_dev", "2-2(9a) 밝은 표시 기준을 노면 중앙값으로", {"DARK_BRIGHT_REF": "road_median"}, "S13", "off", "rules"),
              ("S9c", "s09c_split_dev", "2-3(9c) 덩어리·선 나누기(원판 15px)", {"DARK_SPLIT_BLOB": True}, "S13", "off", "rules"),
-             ("S9b", "s09b_edge_dev", "2-4(9b) 경계 날카로움 점수 항", {"SCORE_USE_EDGE": True}, "S13", "off", "rules"))
+             ("S9b", "s09b_edge_dev", "2-4(9b) 경계 날카로움 점수 항", {"SCORE_USE_EDGE": True}, "S13", "off", "rules"),
+             # 3단계(전처리·상태 판정): 판정 행 켬(계획 4.1). 후보 값이 여럿이면 같은 비교 기준에 나란히 돌려 규칙 1~3을 넘는 값 가운데 고른다
+             ("S7a", "s07_blurdir20_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.20", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.2}, "S13", "on", "rules"),
+             ("S7b", "s07_blurdir25_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.25", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.25}, "S13", "on", "rules"),
+             ("S7c", "s07_blurdir30_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.30", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.3}, "S13", "on", "rules"))
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
                ("S13_39", "s13_halo39", "2-2(13번) 테두리 메움 39장 자동 ROI(참고)", {"DARK_BRIGHT_DILATE": 6}),
                ("S9a_39", "s09a_stripe39", "2-2(9a) 노면 중앙값 기준 39장 자동 ROI(참고)", {"DARK_BRIGHT_REF": "road_median"}),
                ("S9c_39", "s09c_split39", "2-3(9c) 덩어리·선 나누기 39장 자동 ROI(참고)", {"DARK_SPLIT_BLOB": True}),
-               ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}))   # 39장 참고 실행(채택 판단에 쓰지 않음)
+               ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}),
+               *[(f"{sid}_39", folder[:-4] + "_39", f"{label} 39장 자동 ROI(상태 판정 검증, 참고)", sets)
+                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith("S7")])   # 39장 참고 실행(채택 판단에 쓰지 않음)
+# 3단계 행은 E6 인위 저하도 함께 돈다(계획 4.1): 상태 판정 적중률과 원본 기준 비율. 비교 기준(S13)도 같은 저하로 한 번 돈다
+SUPP_DEGRADE = ("blur", "dark", "bright", "noise", "night")
+SUPP_E6_IDS = ("S13", "S7a", "S7b", "S7c")
 SUPP_IDS = tuple(r[0] for r in SUPP_RUNS)
 SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동작점(fp1·fp2) 민감도가 셋 중 가장 높음",
                   "S1b": "곡선 비교(고르지 않음)", "S1c": "곡선 비교(고르지 않음)",
@@ -201,7 +211,7 @@ EXPERIMENTS = [
     _exp("E3_39", "compare", "run39", "e3_dark_mask_auto", "E3 39장 자동 ROI (참고)", {**DARK, "mask": "on", "sigma_in_road": True},
          roi="auto", reference=True, follow_band=True),
     *[_exp(f"E6_{kind}", "compare", "train", f"e6_{kind}_dev", f"E6 1회 {DEGRADE_NAMES[kind]}", {"degrade": kind},
-           split="dev", follow_last=True) for kind in et.DEGRADE_KINDS],
+           split="dev", follow_last=True) for kind in V9_DEGRADE_KINDS],
     # 최종 단계 (config 그대로). 처리 시간을 보고서에 쓰는 39장 최종과 매칭을 앞에 둔다
     # (10/12 ratio 채택 뒤) 새 폴더에 쓴다. 예전 최종(남기기 center)은 final·final_auto·e0·e5_dev·e6_*_final_dev에 그대로 둔다
     _exp("F39", "final", "run39", "final_ratio", "39장 최종 설정(roi.csv)", roi="csv"),
@@ -210,7 +220,7 @@ EXPERIMENTS = [
     _exp("F39e0", "final", "run39", "e0_final_ratio", "39장 1차 설정", FIRST, roi="csv"),
     _exp("E5", "final", "train", "e5_ratio_dev", "E5 최종 설정 전처리 끔·켬", split="dev"),
     *[_exp(f"F6_{kind}", "final", "train", f"e6_{kind}_final_ratio_dev", f"E6 2회(최종) {DEGRADE_NAMES[kind]}", {"degrade": kind},
-           split="dev") for kind in et.DEGRADE_KINDS],
+           split="dev") for kind in V9_DEGRADE_KINDS],
     # 시험 단계: 1차 방법을 먼저(실패하면 test_once 전에 멈춤), 그다음 최종 설정을 한 번만
     _exp("T0", "test", "train", "e0_test", "시험셋 1차 방법", FIRST, split="test"),
     _exp("T", "test", "train", "test_once", "시험셋 최종 설정(띠 고정, 한 번만)", split="test", fixed_band=True),
@@ -233,6 +243,9 @@ EXPERIMENTS = [
            supp_base=base, judge_row=row, judge=judge) for sid, folder, label, sets, base, row, judge in SUPP_RUNS],
     *[_exp(sid, "supp", "run39", folder, label, {"sets": sets}, roi="auto", reference=True)
       for sid, folder, label, sets in SUPP39_RUNS],
+    *[_exp(f"{sid}_e6_{kind}", "supp", "train", f"{folder[:-4]}_e6{kind}_dev", f"{label} · E6 {DEGRADE_NAMES[kind]}",
+           {"sets": sets, "degrade": kind}, split="dev", reference=True)
+      for sid, folder, label, sets, *_ in SUPP_RUNS if sid in SUPP_E6_IDS for kind in SUPP_DEGRADE],
     # 시험셋 세 번째 재기 (10/12, ratio 채택 뒤): 최종 설정(config 그대로)으로 한 번만, 그다음 같은 코드로 재현 확인
     _exp("TR", "retest_ratio", "train", "test_ratio", "시험셋 최종 설정(자동 띠 + 결 + ratio, 한 번만)", split="test"),
     _exp("RR", "retest_ratio_repro", "train", "final_test_ratio", "시험셋 재현 확인(자동 띠 + 결 + ratio)", split="test"),
@@ -1046,7 +1059,7 @@ def judgements(metrics):
     keys = list(analyze.measure_quality(np.zeros((32, 32), np.uint8)))
     out = {}
     for _, row in metrics[metrics["preprocess"] == "on"].iterrows():
-        steps = analyze.choose_steps({key: float(row[key]) for key in keys})
+        steps = analyze.choose_steps({key: float(row[key]) if key in row.index else math.nan for key in keys})   # 키가 생기기 전 결과는 NaN
         same = analyze.steps_to_text(steps) == row["steps"]
         tag = row["condition"] if isinstance(row["condition"], str) else ""
         expect = et.EXPECTED_STEPS.get(tag) if tag in JUDGE_TAGS else None
@@ -1440,7 +1453,7 @@ def degrade_table(paths, states):
     1회는 E1~E3 가운데 마지막 잠정 채택 설정으로 돈다(settings_from). 처리 시간은 최종 단계(2회) 값만 넣는다(한 번 잰 값의 평균, 참고)."""
     rows = []
     for round_name, prefix in DEGRADE_ROUNDS:
-        for kind in et.DEGRADE_KINDS:
+        for kind in V9_DEGRADE_KINDS:
             exp, state = EXP[prefix + kind], states[prefix + kind]
             head = {"round": round_name, "settings_from": state["source"] if prefix == "E6_" else "config", "degrade": kind,
                     "folder": exp["name"], "status": state["status"]}
@@ -1702,6 +1715,45 @@ def supp_points_table(paths, states):
     return df[["stage_id", "label", "folder"] + [c for c in df.columns if c not in ("stage_id", "label", "folder")]]
 
 
+def supp_judge_table(paths, states, runs):
+    """16번 보완 3단계 상태 판정 표: 행마다(비교 기준 S13 포함) E6 저하 다섯 가지의 상태 판정 적중률과 원본 기준 비율(같은 사진의
+    저하 없는 원본에서 그 전처리를 고른 비율), 개발셋 원본(켬 행)에서 샤프닝을 고른 비율, 39장 자동 ROI 검증(같은 장소 5쌍 가운데 흔들림
+    쪽만 샤프닝한 쌍, 제공 13장 가운데 태그(흐림·어두움·과노출)에 맞는 전처리를 고른 장과 정상 태그에서 '없음'을 고른 장,
+    own_19_none_normal이 고른 전처리). 39장 판정은 그 실행의 sets를 잠시 config에 넣고 다시 낸다(judgements). 5쌍·13장은 검증에만 쓴다."""
+    rows = []
+    for sid in SUPP_E6_IDS:
+        exp, state = EXP[sid], states[sid]
+        sets = exp["opts"].get("sets") or {}
+        row = {"stage_id": sid, "label": exp["label"], "folder": exp["name"], "status": state["status"]}
+        for kind in SUPP_DEGRADE:
+            e6 = EXP[f"{sid}_e6_{kind}"]
+            summary = train_summary(paths, e6, states[e6["id"]])
+            on = (summary or {}).get("on") or {}
+            row[f"{kind}_hit"], row[f"{kind}_base"] = on.get("judge_hit_rate", math.nan), on.get("judge_base_rate", math.nan)
+        detail = read_csv(Path(paths["results"]) / exp["name"] / et.DETAIL_NAME) if state["done"] else None
+        if detail is not None:
+            steps = detail[detail["preprocess"] == "on"]["steps"].astype(str)
+            row["dev_sharpen_on"] = float(steps.str.contains("샤프닝").mean())
+        r39 = runs.get(f"{sid}_39")
+        if r39 is not None:
+            with patched(C, sets):
+                judge = judgements(r39["metrics"])
+            pairs = blur_pairs(judge)
+            row["pairs"] = f"{sum(1 for p in pairs if p[3])}/{len(pairs)} (" + ", ".join(f"{p[0]} {mark(p[3])}" for p in pairs) + ")"
+            meta = r39["metrics"][r39["metrics"]["preprocess"] == "on"].set_index("file")
+            provided = {f: j for f, j in judge.items() if meta.loc[f, "source"] == "provided"}
+            tagged = [j for j in provided.values() if j["expect"]]
+            normal = [j for j in provided.values() if j["condition"] == "normal"]
+            row["provided_tagged"] = f"{sum(1 for j in tagged if j['hit'])}/{len(tagged)}"
+            row["provided_normal_none"] = f"{sum(1 for j in normal if j['steps'] == '없음')}/{len(normal)}"
+            own19 = judge.get("own_19_none_normal.jpg")
+            row["own_19_none_normal"] = own19["steps"] if own19 else "-"
+        rows.append(row)
+    columns = (["stage_id", "label", "folder", "status"] + [f"{k}_{c}" for k in SUPP_DEGRADE for c in ("hit", "base")]
+               + ["dev_sharpen_on", "pairs", "provided_tagged", "provided_normal_none", "own_19_none_normal"])
+    return pd.DataFrame(rows, columns=columns)
+
+
 def keep_rule_changes(paths, states):
     """남기기 규칙 center(M0) → ratio(M1)로 영상 판정이 바뀐 사진(개발셋, 끔·켬)과, 그 사진에서 한쪽에만 남은 후보의 노면 안 비율.
     두 실행의 영상별 결과(correct)를 견주고, 바뀐 사진만 지금 config에서 남기기 규칙만 바꿔 다시 검출한다(사진 몇 장이라 짧다).
@@ -1878,7 +1930,8 @@ def build_report(paths, human=None, command_line="python tools/run_all.py tables
                        columns=["stage_id", "folder", "label", "gt_in_band", "gt_in_mask", "widened"]),
                    "table11_tests.csv": test_table(summaries, states), "table12_time.csv": time_table(runs),
                    "table13_judge.csv": judge_table(runs), "table14_supp.csv": supp_table(paths, states),
-                   "table15_tau_points.csv": supp_points_table(paths, states)})
+                   "table15_tau_points.csv": supp_points_table(paths, states),
+                   "table16_supp_judge.csv": supp_judge_table(paths, states, runs)})
     for name, table in tables.items():
         table.to_csv(out / name, encoding="utf-8-sig", index=False)
     for kind, file in DECISION_FILES.items():
@@ -2095,6 +2148,7 @@ def summary_lines(r):
     lines += time_lines(t["table12_time.csv"])
     lines += judge_lines(t["table13_judge.csv"])
     lines += supp_lines(t["table14_supp.csv"])
+    lines += supp_judge_lines(t["table16_supp_judge.csv"])
     if r["repro"]:
         lines += ["## 시험셋 재현 확인 (같은 코드로 다시 돌린 결과가 한 번만 잰 결과와 같은지)", ""] + [f"- {line}" for line in r["repro"]] + [""]
     return lines
@@ -2121,6 +2175,21 @@ def supp_lines(table):
     return lines + md_table(["단계", "이름", "판정 행", "τ 없음 민감도/특이도/오검출", "fp1 민감도/특이도", "fp2 민감도/특이도",
                              "rule1 τ 균열·포트홀", "rule1 민감도/특이도/균형/오검출", "rule1 우연 뺀 균열", "규칙 1", "규칙 2", "규칙 3",
                              "판정"], rows)
+
+
+def supp_judge_lines(table):
+    """16번 보완 3단계 상태 판정 줄: E6 저하별 적중률(원본 기준), 개발셋 원본 샤프닝 비율, 39장 검증."""
+    lines = ["## 16. 보완 3단계 상태 판정 (E6 개발셋 켬 행, 39장 자동 ROI 검증)", "",
+             "적중률 = 저하 사진에서 골라야 할 전처리를 고른 비율, 괄호 = 같은 사진의 저하 없는 원본에서 고른 비율. "
+             "5쌍·제공 13장은 값을 고르는 데 쓰지 않는 검증이다.", ""]
+    if not len(table):
+        return lines + ["아직 결과 없음", ""]
+    rows = [[r["stage_id"], r["label"]] + [f"{pct(r[f'{k}_hit'])} ({pct(r[f'{k}_base'])})" for k in SUPP_DEGRADE]
+            + [pct(r["dev_sharpen_on"])] + [r[c] if isinstance(r[c], str) else "-" for c in
+                                            ("pairs", "provided_tagged", "provided_normal_none", "own_19_none_normal")]
+            for _, r in table.iterrows()]
+    return lines + md_table(["단계", "이름"] + [DEGRADE_NAMES[k] for k in SUPP_DEGRADE]
+                            + ["개발셋 원본 샤프닝", "5쌍 흔들림만 샤프닝", "제공 태그 맞음", "제공 정상 '없음'", "own_19_none_normal"], rows)
 
 
 def band_lines(t):
