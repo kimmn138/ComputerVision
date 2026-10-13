@@ -48,6 +48,16 @@ BLUR_DIR_ANGLES = (0, 45, 90, 135)  # 도, 기울기 세기를 잴 방향. 0 = �
 NIGHT_DENOISE = False       # 3-5 켬·끔. True면 잡티 제거와 밝게 하는 감마(< 1)를 함께 고른 영상(야간)에 가우시안 대신 NLM
 NIGHT_DENOISE_H = 10        # 밝기 단계, NLM 세기 h. 잡음 σ와 비슷하게 잡는다(인위 저하 night의 잡음 σ 10, 계획 3-5)
 NIGHT_NLM_TEMPLATE, NIGHT_NLM_SEARCH = 7, 21    # px, NLM 비교 조각·찾는 창 크기(OpenCV 기본값)
+# 아래는 10/13 보완 4-2 노면 마스크 v2(C가 A 동의로 넣음, Plan.md 3.3 (5)). 세 스위치를 모두 끄면 v1과 같다
+ROAD_SHADOW_L_K = 0         # 배, 8a 그림자·햇빛(0 = 끔). 색 거리가 ROAD_SHADOW_CHROMA보다 가까우면 밝기 범위를 이 배수로 넓힘
+ROAD_SHADOW_CHROMA = 5      # Lab a·b 거리, 8a에서 밝기를 넓혀 줄 '색이 아주 가까운' 기준(ROAD_CHROMA_MAX 10의 절반)
+ROAD_HOOD_CUT = False       # 8b 켬·끔. True면 아래 테두리부터 결이 씨앗보다 매끈한 행(보닛·와이퍼)을 뺌
+ROAD_HOOD_TEX_KSIZE = 7     # px, 8b 결 = 이 창의 흑백 국소 표준편차 (Plan.md 3.3 (5) 7×7)
+ROAD_HOOD_TEX_RATIO = 0.5   # 배, 8b 행의 결 중앙값이 씨앗 결 중앙값 × 이 값보다 작으면 매끈한 행
+ROAD_EDGE_DENSITY = False   # 8c 켬·끔. True면 창 안 Canny 에지 밀도가 씨앗의 상위 분위보다 큰 픽셀(건물·인도·비탈)을 노면 후보에서 뺌
+ROAD_EDGE_KSIZE = 15        # px, 8c 에지 밀도를 잴 창 (Plan.md 3.3 (5) 15×15)
+ROAD_EDGE_QUANTILE = 0.95   # 분위, 8c 씨앗 영역 에지 밀도의 이 분위보다 크면 노면 아님 (Plan.md 95백분위)
+ROAD_EDGE_CANNY = (50, 150) # Canny 낮은·높은 문턱, 8c 에지 (B 구역 CANNY_LOW·HIGH와 같은 값, 구역을 넘지 않으려고 따로 둠)
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
