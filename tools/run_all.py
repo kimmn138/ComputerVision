@@ -326,7 +326,8 @@ COUNTRY_RUNS = (("E0", "1차"), ("E3", "띠 고정(E3)"), ("B1", "자동 띠(결
                 ("E5", "최종(자동 띠 + 결 + ratio)"),
                 ("T0", "1차"), ("T", "띠 고정"), ("TA", "자동 띠 + 결(center)"), ("TR", "최종(자동 띠 + 결 + ratio)"))
 RUNS39 = (("F39e0", "1차 설정"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI, 자동 띠 + 결 + ratio)"),
-          ("E1_39", "E1 자동 ROI(참고)"), ("E3_39", "E3 자동 ROI(참고, 띠 고정)"), ("B1_39", "자동 띠(결 없음) 자동 ROI(참고)"))
+          ("E1_39", "E1 자동 ROI(참고)"), ("E3_39", "E3 자동 ROI(참고, 띠 고정)"), ("B1_39", "자동 띠(결 없음) 자동 ROI(참고)"),
+          ("F39e0S", "1차 설정(보완 최종 실행)"), ("F39S", "보완 최종(roi.csv)"), ("F39aS", "보완 최종(자동 ROI)"))
 # 9번 자동 띠 비교: (단계, 이름). 개발셋은 전처리 끔(채택 규칙의 조건), 39장은 자동 ROI 끔·켬
 BAND_DEV = (("E3", "띠 고정(E3)"), ("B1", "자동 띠"), ("M0", "자동 띠 + 결"))      # 모두 남기기 center (ratio는 10번 표)
 BAND_39 = (("E3_39", "띠 고정(E3)"), ("B1_39", "자동 띠"), ("M0_39", "자동 띠 + 결"))
@@ -336,7 +337,8 @@ TEST_RUNS = (("T", "띠 고정", "E3(dark + 노면 마스크) + 띠 고정 0.5 +
              ("TA", "자동 띠", "E3 + 자동 띠 + 결 1.5 + 남기기 center"),
              ("TR", "자동 띠 + ratio(최종)", "E3 + 자동 띠 + 결 1.5 + 남기기 ratio"),
              ("TS", "보완 최종(네 번째)", "TR + 점수 τ(E4, ET) + 국소 σ + 밝은 줄 옆 테두리 메움 + 잡티 0.05 (docs/part_C.md 보완 결과)"))
-IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"))
+IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"),
+              ("supp_final", "F39S"), ("supp_auto", "F39aS"))     # 보완 최종(roi.csv·자동 ROI) 열은 8번 표 끝에 더함
 GROUP39 = ["n_images", "n_gt", "n_damage", "n_none", "sensitivity_off", "sensitivity_on", "specificity_off", "specificity_on",
            "accuracy_off", "accuracy_on", "baseline_none"]
 SOURCE39 = GROUP39 + ["n_crack_off", "n_crack_on", "n_pothole_off", "n_pothole_on", "edges_off", "edges_on"]
@@ -350,7 +352,7 @@ PRE_TRAIN = [("에지 수", "edges_mean"), ("해리스 코너 수", "harris_mean
              ("균열 면적 (픽셀)", "area_crack_mean"), ("포트홀 후보 수", "pred_pothole_mean"), ("포트홀 면적 (픽셀)", "area_pothole_mean")]
 MATCH_ITEMS = [("SIFT 특징점 수(기준 A)", "kp_ref"), ("SIFT 특징점 수(대상)", "kp_target"), ("good 매칭 점 수", "good"),
                ("inlier 수", "inliers"), ("inlier 비율", "inlier_ratio")]
-DEGRADE_ROUNDS = (("1회(비교)", "E6_"), ("2회(최종 설정)", "F6_"))
+DEGRADE_ROUNDS = (("1회(비교)", "E6_"), ("2회(최종 설정)", "F6_"), ("3회(보완 최종)", "F6S_"))   # 3회는 night까지(보완 6단계)
 DEGRADE_COLS = ["sensitivity", "specificity", "accuracy", "baseline_none", "balanced", "fp_per_image",
                 "crack_ctr_recall", "crack_ctr_recall_net", "pothole_ctr_recall", "pothole_ctr_recall_net",
                 "edges_mean", "harris_mean", "pred_crack_mean", "pred_pothole_mean", "area_crack_mean", "area_pothole_mean",
@@ -1143,9 +1145,11 @@ def run39(paths, exp, state):
     if not state["done"]:
         return None
     folder = Path(paths["results"]) / exp["name"]
-    return {key: read_csv(folder / file) for key, file in (("metrics", "metrics.csv"), ("image", "table_by_image.csv"),
-                                                          ("source", "table_by_source.csv"),
-                                                          ("condition", "table_by_condition.csv"))}
+    out = {key: read_csv(folder / file) for key, file in (("metrics", "metrics.csv"), ("image", "table_by_image.csv"),
+                                                         ("source", "table_by_source.csv"),
+                                                         ("condition", "table_by_condition.csv"))}
+    out["config"] = config_from_used(folder / CONFIG_FILE["run39"])    # 상태 판정을 그 실행의 config로 다시 내려고(judgements)
+    return out
 
 
 def gt_status(metrics):
@@ -1155,10 +1159,14 @@ def gt_status(metrics):
     return "완료" if has == len(off) else f"미완 (정답 {has}/{len(off)}장)"
 
 
-def judgements(metrics):
+def judgements(metrics, config=None):
     """39장 켬 행의 상태 지표로 상태 판정(analyze.choose_steps)을 다시 내어, 사람 태그(condition)에 맞는 전처리를 골랐는지 본다.
-    다시 낸 전처리 글이 실행 때 적힌 steps와 다르면(그 사이 코드가 바뀜) 적중 칸을 비운다.
+    다시 낸 전처리 글이 실행 때 적힌 steps와 다르면(그 사이 코드가 바뀜) 적중 칸을 비운다. config(그 실행의 config_used 값 dict)를 주면
+    판정하는 동안만 그 값으로 바꿔, 뒤에 config가 바뀌어도(예: 보완 3-2 잡티 분위) 예전 실행의 판정을 그때 값으로 다시 낸다.
     → {사진: {"steps": 고른 전처리 글, "expect": 골라야 할 전처리(태그가 blur·dark·bright·noise일 때), "hit", "sharpen"}}"""
+    if config:
+        with patched(C, {k: v for k, v in config.items() if hasattr(C, k)}):
+            return judgements(metrics)
     keys = list(analyze.measure_quality(np.zeros((32, 32), np.uint8)))
     out = {}
     for _, row in metrics[metrics["preprocess"] == "on"].iterrows():
@@ -1472,7 +1480,7 @@ def condition_table(runs, labels):
         data = runs[sid]
         if data is None:
             continue
-        judge, status = judgements(data["metrics"]), gt_status(data["metrics"])
+        judge, status = judgements(data["metrics"], data.get("config")), gt_status(data["metrics"])
         for _, r in data["condition"].iterrows():
             cond = r["condition"]
             picked = [j for j in judge.values() if cond == "all" or j["condition"] == cond]
@@ -1492,7 +1500,8 @@ def preprocess_table(paths, states, runs):
     처리 시간은 최종 단계 39장(TIME_REPEAT번 중앙값)의 값만 쓰고, 맨 끝에 처리 시간 합(전처리 + 검출 + 노면 마스크 + 자동 띠 경계)을 둔다.
     자동 띠는 기본 띠를 쓰는 사진에만 쓰므로 roi.csv 줄의 띠 경계 시간은 0이다. 학습 데이터의 시간은 한 번 잰 값이라 넣지 않는다."""
     rows = []
-    for sid, name in (("F39", "39장 최종(roi.csv)"), ("F39a", "39장 최종(자동 ROI, 자동 띠 + 결 + ratio)")):
+    for sid, name in (("F39", "39장 최종(roi.csv)"), ("F39a", "39장 최종(자동 ROI, 자동 띠 + 결 + ratio)"),
+                      ("F39S", "39장 보완 최종(roi.csv)"), ("F39aS", "39장 보완 최종(자동 ROI)")):
         data = runs[sid]
         if data is None:
             continue
@@ -1504,10 +1513,10 @@ def preprocess_table(paths, states, runs):
         total = {mode: sum(value[mode][m] for m in TIME39) for mode in ("off", "on")}
         rows.append({"data": name, "folder": EXP[sid]["name"], "item": "처리 시간 합 ms (전처리+검출+노면+띠 경계)",
                      "off": total["off"], "on": total["on"], "diff": total["on"] - total["off"]})
-    for sid in ("E5", "TR"):
+    for sid, word in (("E5", "최종"), ("TR", "최종"), ("E5S", "보완 최종"), ("TS", "보완 최종")):
         summary = train_summary(paths, EXP[sid], states[sid])
         if summary and {"off", "on"} <= set(summary):
-            rows += [{"data": f"{DATA_NAMES[EXP[sid]['split']]} 최종", "folder": EXP[sid]["name"], "item": item,
+            rows += [{"data": f"{DATA_NAMES[EXP[sid]['split']]} {word}", "folder": EXP[sid]["name"], "item": item,
                       "off": summary["off"][c], "on": summary["on"][c], "diff": summary["on"][c] - summary["off"][c]}
                      for item, c in PRE_TRAIN]
     return pd.DataFrame(rows, columns=["data", "folder", "item", "off", "on", "diff"])
@@ -1515,25 +1524,27 @@ def preprocess_table(paths, states, runs):
 
 def matching_table(paths, states, runs):
     """5번 특징점·매칭 전·후 표: 해리스 코너 수(39장·개발셋 영상 평균)와 쌍 사진마다 SIFT 특징점 수·good 매칭 점 수·inlier 수,
-    맨 끝에 쌍 평균. inlier 비율은 천장(0.97 이상)이라 점의 수를 중심으로 본다(Plan.md 1.4·3.7 5번)."""
+    맨 끝에 쌍 평균. inlier 비율은 천장(0.97 이상)이라 점의 수를 중심으로 본다(Plan.md 1.4·3.7 5번).
+    보완 최종 실행(F39S·E5S·FMS)의 같은 행을 대상 이름 앞에 '[보완 최종]'을 붙여 뒤에 더한다(보완 6단계)."""
     rows = []
-    if runs["F39"] is not None:
-        whole = runs["F39"]["source"][runs["F39"]["source"]["source"] == "all"].iloc[0]
-        rows.append({"item": "해리스 코너 수", "target": "39장 영상 평균", "off": whole["harris_off"], "on": whole["harris_on"],
-                     "diff": whole["harris_diff"]})
-    summary = train_summary(paths, EXP["E5"], states["E5"])
-    if summary and {"off", "on"} <= set(summary):
-        off, on = summary["off"]["harris_mean"], summary["on"]["harris_mean"]
-        rows.append({"item": "해리스 코너 수", "target": "개발셋 영상 평균", "off": off, "on": on, "diff": on - off})
-    match = read_csv(Path(paths["results"]) / EXP["FM"]["name"] / "matching.csv") if states["FM"]["done"] else None
-    if match is not None and len(match):
-        for (pair, target), g in match.groupby(["pair", "target"], sort=True):
-            off, on = g[g["preprocess"] == "off"].iloc[0], g[g["preprocess"] == "on"].iloc[0]
-            rows += [{"item": item, "target": f"쌍 {pair} {target} ({off['condition']})", "off": off[c], "on": on[c],
-                      "diff": on[c] - off[c]} for item, c in MATCH_ITEMS]
-        mean = {mode: match[match["preprocess"] == mode] for mode in ("off", "on")}
-        rows += [{"item": item, "target": "쌍 평균", "off": mean["off"][c].mean(), "on": mean["on"][c].mean(),
-                  "diff": mean["on"][c].mean() - mean["off"][c].mean()} for item, c in MATCH_ITEMS]
+    for f39, e5, fm, tag in (("F39", "E5", "FM", ""), ("F39S", "E5S", "FMS", "[보완 최종] ")):
+        if runs[f39] is not None:
+            whole = runs[f39]["source"][runs[f39]["source"]["source"] == "all"].iloc[0]
+            rows.append({"item": "해리스 코너 수", "target": f"{tag}39장 영상 평균", "off": whole["harris_off"], "on": whole["harris_on"],
+                         "diff": whole["harris_diff"]})
+        summary = train_summary(paths, EXP[e5], states[e5])
+        if summary and {"off", "on"} <= set(summary):
+            off, on = summary["off"]["harris_mean"], summary["on"]["harris_mean"]
+            rows.append({"item": "해리스 코너 수", "target": f"{tag}개발셋 영상 평균", "off": off, "on": on, "diff": on - off})
+        match = read_csv(Path(paths["results"]) / EXP[fm]["name"] / "matching.csv") if states[fm]["done"] else None
+        if match is not None and len(match):
+            for (pair, target), g in match.groupby(["pair", "target"], sort=True):
+                off, on = g[g["preprocess"] == "off"].iloc[0], g[g["preprocess"] == "on"].iloc[0]
+                rows += [{"item": item, "target": f"{tag}쌍 {pair} {target} ({off['condition']})", "off": off[c], "on": on[c],
+                          "diff": on[c] - off[c]} for item, c in MATCH_ITEMS]
+            mean = {mode: match[match["preprocess"] == mode] for mode in ("off", "on")}
+            rows += [{"item": item, "target": f"{tag}쌍 평균", "off": mean["off"][c].mean(), "on": mean["on"][c].mean(),
+                      "diff": mean["on"][c].mean() - mean["off"][c].mean()} for item, c in MATCH_ITEMS]
     return pd.DataFrame(rows, columns=["item", "target", "off", "on", "diff"])
 
 
@@ -1556,7 +1567,7 @@ def degrade_table(paths, states):
     1회는 E1~E3 가운데 마지막 잠정 채택 설정으로 돈다(settings_from). 처리 시간은 최종 단계(2회) 값만 넣는다(한 번 잰 값의 평균, 참고)."""
     rows = []
     for round_name, prefix in DEGRADE_ROUNDS:
-        for kind in V9_DEGRADE_KINDS:
+        for kind in V9_DEGRADE_KINDS + (("night",) if prefix == "F6S_" else ()):
             exp, state = EXP[prefix + kind], states[prefix + kind]
             head = {"round": round_name, "settings_from": state["source"] if prefix == "E6_" else "config", "degrade": kind,
                     "folder": exp["name"], "status": state["status"]}
@@ -1565,7 +1576,7 @@ def degrade_table(paths, states):
                 rows.append({**head, "preprocess": ""})
                 continue
             for mode in ("off", "on"):
-                times = {c: summary[mode].get(c) for c in TIME_MEANS} if prefix == "F6_" else {}
+                times = {c: summary[mode].get(c) for c in TIME_MEANS} if prefix in ("F6_", "F6S_") else {}
                 rows.append({**head, "preprocess": mode, **{c: summary[mode].get(c) for c in DEGRADE_COLS}, **times})
     return pd.DataFrame(rows, columns=["round", "settings_from", "degrade", "folder", "status", "preprocess"] + DEGRADE_COLS + TIME_MEANS)
 
@@ -1953,7 +1964,7 @@ def judge_table(runs):
     for col, sid in (("auto", "F39a"), ("csv", "F39")):
         if runs.get(sid) is None:
             continue
-        judge = judgements(runs[sid]["metrics"])
+        judge = judgements(runs[sid]["metrics"], runs[sid].get("config"))
         pairs = blur_pairs(judge)
         blur = [j for j in judge.values() if j["condition"] == "blur"]
         items.setdefault("같은 장소 쌍: 흔들림 쪽만 샤프닝", {})[col] = (
@@ -1970,11 +1981,12 @@ def image_table(runs):
     포트홀은 이 표로 사례를 본다."""
     columns = (["file", "source", "condition", "gt", "has_damage", "steps", "judge_expect", "judge_hit"]
                + [f"{prefix}_correct_{mode}" for prefix, _ in IMAGE_RUNS for mode in ("off", "on")]
-               + ["final_hit_same_on", "final_hit_any_on", "final_n_crack_on", "final_n_pothole_on"])
+               + ["final_hit_same_on", "final_hit_any_on", "final_n_crack_on", "final_n_pothole_on",
+                  "supp_auto_n_crack_off", "supp_auto_n_crack_on", "supp_auto_n_pothole_off", "supp_auto_n_pothole_on"])
     base = next((runs[sid] for _, sid in sorted(IMAGE_RUNS, key=lambda p: p[0] != "final") if runs[sid] is not None), None)
     if base is None:
         return pd.DataFrame(columns=columns)
-    judge = judgements(base["metrics"])
+    judge = judgements(base["metrics"], base.get("config"))
     tables = {prefix: runs[sid]["image"].set_index("file") if runs[sid] is not None else None for prefix, sid in IMAGE_RUNS}
     rows = []
     for _, r in base["image"].iterrows():
@@ -1989,6 +2001,9 @@ def image_table(runs):
         if final is not None and f in final.index:
             row.update({"final_hit_same_on": final.loc[f, "hit_same_on"], "final_hit_any_on": final.loc[f, "hit_any_on"],
                         "final_n_crack_on": final.loc[f, "n_crack_on"], "final_n_pothole_on": final.loc[f, "n_pothole_on"]})
+        supp = tables["supp_auto"]
+        if supp is not None and f in supp.index:
+            row.update({f"supp_auto_n_{k}_{m}": supp.loc[f, f"n_{k}_{m}"] for k in ("crack", "pothole") for m in ("off", "on")})
         rows.append(row)
     return pd.DataFrame(rows, columns=columns)
 
@@ -2478,9 +2493,17 @@ def condition_lines(table, runs):
             for _, c in table.iterrows() if str(c["method"]).startswith("최종(roi.csv)")]
     if not rows:
         return lines + ["아직 결과 없음 (최종 단계 뒤)", ""]
-    lines += md_table(["조건", "장수", "정답 있는", "민감도 끔/켬", "특이도 끔/켬", "정답률 끔/켬 (기준선)", "고른 전처리",
-                       "맞는 전처리를 고른 수", "정답"], rows)
-    pairs = blur_pairs(judgements(runs["F39"]["metrics"])) if runs["F39"] is not None else []
+    head = ["조건", "장수", "정답 있는", "민감도 끔/켬", "특이도 끔/켬", "정답률 끔/켬 (기준선)", "고른 전처리", "맞는 전처리를 고른 수", "정답"]
+    lines += md_table(head, rows)
+    for method in ("보완 최종(roi.csv)", "보완 최종(자동 ROI)"):     # 보완 6단계 최종 실행(같은 열)
+        extra = [[c["condition"], int(c["n_images"]), int(c["n_gt"]), f"{pct(c['sensitivity_off'])} / {pct(c['sensitivity_on'])}",
+                  f"{pct(c['specificity_off'])} / {pct(c['specificity_on'])}",
+                  f"{pct(c['accuracy_off'])} / {pct(c['accuracy_on'])} ({pct(c['baseline_none'])})",
+                  c["steps_chosen"], f"{c['judge_expect']} {c['judge_hit']}".strip() or "-", c["gt_status"]]
+                 for _, c in table.iterrows() if str(c["method"]).startswith(method)]
+        if extra:
+            lines += [f"### {method}", ""] + md_table(head, extra)
+    pairs = blur_pairs(judgements(runs["F39"]["metrics"], runs["F39"].get("config"))) if runs["F39"] is not None else []
     if pairs:
         ok = sum(1 for p in pairs if p[3])
         lines += [f"E5 상태 판정 검증: 같은 장소 정상·흔들림 {len(pairs)}쌍 가운데 흔들림 쪽만 흐림(샤프닝)으로 잡은 쌍 {ok}쌍", ""]
@@ -2499,9 +2522,11 @@ def image_lines(table, gt_note):
              i["steps"], f"{i['judge_expect']} {mark(i['judge_hit'])}" if i["judge_expect"] else "-",
              f"{mark(i['first_correct_off'])} / {mark(i['first_correct_on'])}",
              f"{mark(i['final_correct_off'])} / {mark(i['final_correct_on'])}",
-             f"{mark(i['auto_correct_off'])} / {mark(i['auto_correct_on'])}"] for _, i in table.iterrows()]
+             f"{mark(i['auto_correct_off'])} / {mark(i['auto_correct_on'])}",
+             f"{mark(i['supp_final_correct_off'])} / {mark(i['supp_final_correct_on'])}",
+             f"{mark(i['supp_auto_correct_off'])} / {mark(i['supp_auto_correct_on'])}"] for _, i in table.iterrows()]
     return lines + md_table(["사진", "조건", "정답", "손상", "고른 전처리", "맞는 전처리?", "1차 끔/켬", "최종 끔/켬",
-                             "자동 ROI 끔/켬"], rows)
+                             "자동 ROI 끔/켬", "보완 최종 끔/켬", "보완 자동 ROI 끔/켬"], rows)
 
 
 def print_report(report, stage):
