@@ -1733,7 +1733,7 @@ def supp_judge_table(paths, states, runs):
         for kind in SUPP_DEGRADE:
             e6 = EXP[f"{sid}_e6_{kind}"]
             summary = train_summary(paths, e6, states[e6["id"]])
-            on = (summary or {}).get("on") or {}
+            on = summary["on"] if summary and "on" in summary else {}       # 행은 Series라 or로 묻지 않는다
             row[f"{kind}_hit"], row[f"{kind}_base"] = on.get("judge_hit_rate", math.nan), on.get("judge_base_rate", math.nan)
         detail = read_csv(Path(paths["results"]) / exp["name"] / et.DETAIL_NAME) if state["done"] else None
         if detail is not None:
