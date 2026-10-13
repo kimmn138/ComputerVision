@@ -323,10 +323,17 @@ def extract_dark_regions(gray, road=None):
             rest = cv.bitwise_and(mask, cv.bitwise_not(cv.dilate(blob, cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3)))))
             mask = cv.bitwise_or(blob, rest)
     count, labels, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
-    keep = stats[:, cv.CC_STAT_AREA] >= C.DARK_MIN_AREA
+    min_area = np.full(count, float(C.DARK_MIN_AREA))
+    if C.DARK_AREA_PERSPECTIVE:
+        # (보완 5-3) 원근: 영역 중심이 띠 위쪽(먼 곳)일수록 최소 넓이를 DARK_MIN_AREA_TOP까지 선형으로 줄여 먼 곳의 작은 균열 조각을 남긴다
+        cy = (stats[:, cv.CC_STAT_TOP] + stats[:, cv.CC_STAT_HEIGHT] / 2.0) / max(h - 1, 1)
+        min_area = C.DARK_MIN_AREA_TOP + (C.DARK_MIN_AREA - C.DARK_MIN_AREA_TOP) * np.clip(cy, 0.0, 1.0)
+    keep = stats[:, cv.CC_STAT_AREA] >= min_area
     keep[0] = False
     mask = keep[labels].astype(np.uint8) * 255
-    regions = describe_regions(mask, C.DARK_MIN_AREA, gray)
+    regions = describe_regions(mask, min(C.DARK_MIN_AREA, C.DARK_MIN_AREA_TOP) if C.DARK_AREA_PERSPECTIVE else C.DARK_MIN_AREA, gray)
+    if C.SCORE_USE_HESSIAN:                             # (보완 5-2) 헤시안 선 강조: 띠 전체에서 한 번 계산
+        ridge_num, ridge_den = _ridge_map(gray)
     if C.SCORE_USE_EDGE:                                # (보완 2-4, 9b) 경계 날카로움을 잴 기울기 크기(밝은 표시를 메운 g2 기준)
         g2f = g2.astype(np.float32)
         gradient = np.hypot(cv.Sobel(g2f, cv.CV_32F, 1, 0, ksize=3), cv.Sobel(g2f, cv.CV_32F, 0, 1, ksize=3)) / 8.0
@@ -359,7 +366,68 @@ def extract_dark_regions(gray, road=None):
             region["edge"] = float(gradient[y0:y1, x0:x1][ring].mean() / depth) if ring.any() and depth > 0 else 0.0
             term = min(1.0, region["edge"] / C.SCORE_EDGE_REF)
             region["score_crack"], region["score_pothole"] = region["score_crack"] * term, region["score_pothole"] * term
+        if C.SCORE_USE_HESSIAN:
+            # (보완 5-2) 영역 안 선 강조 = Σ max(λ1 − |λ2|, 0) ÷ Σ(|λ1| + |λ2|). 가는 어두운 선(골짜기)은 1에 가깝고 둥근 덩어리는 작다.
+            # 균열 점수에만 곱한다(포트홀은 덩어리라 깎이면 안 됨)
+            den = float(ridge_den[y:y + rh, x:x + rw][component].sum())
+            region["ridge"] = float(ridge_num[y:y + rh, x:x + rw][component].sum()) / den if den > 0 else 0.0
+            region["score_crack"] = region["score_crack"] * region["ridge"]
     return regions, mask
+
+
+def _ridge_map(gray):
+    """헤시안(밝기의 2차 미분 행렬) 고윳값으로 '어두운 선' 모양을 픽셀마다 잰다(Frangi 1998의 단순형, 보완 5-2).
+    가우시안(HESSIAN_SIGMA) 뒤 Sobel 2차 미분 Ixx·Iyy·Ixy로 고윳값 λ1 ≥ λ2를 닫힌 식으로 구한다. 어두운 선을 가로지르는 방향은
+    λ1이 크고 선을 따라가는 방향은 λ2 ≈ 0이다. → (분자 max(λ1 − |λ2|, 0) (λ1 > 0일 때), 분모 |λ1| + |λ2|) float32 두 장."""
+    g = cv.GaussianBlur(gray.astype(np.float32), (0, 0), C.HESSIAN_SIGMA)
+    ixx = cv.Sobel(g, cv.CV_32F, 2, 0, ksize=3)
+    iyy = cv.Sobel(g, cv.CV_32F, 0, 2, ksize=3)
+    ixy = cv.Sobel(g, cv.CV_32F, 1, 1, ksize=3)
+    root = np.sqrt((ixx - iyy) ** 2 + 4.0 * ixy ** 2)
+    l1, l2 = (ixx + iyy + root) / 2.0, (ixx + iyy - root) / 2.0
+    num = np.where(l1 > 0, np.maximum(l1 - np.abs(l2), 0.0), 0.0).astype(np.float32)
+    return num, (np.abs(l1) + np.abs(l2)).astype(np.float32)
+
+
+def _bright_gravel_regions(gray, road, existing):
+    """밝은 자갈 포트홀 후보(보완 5-4): 자갈이 차 있어 어둡지 않은 포트홀(own_18)은 결(국소 표준편차)이 노면보다 크게 거칠다.
+    결(BRIGHT_POT_TEX_KSIZE 창) > 노면 결 중앙값 × BRIGHT_POT_TEX_RATIO인 픽셀을 열림·닫힘으로 덩어리로 만들고, 포트홀 모양(비원형도 ≤
+    POT_MAX_CIRC_INV, solidity ≥ POT_MIN_SOLIDITY, 넓이 ≥ POT_MIN_AREA)이며 이미 있는 후보의 상자 안에 중심이 들지 않는 것만 돌려준다.
+    contrast는 어두운 영역과 같은 자리에 '결 비율'(영역 결 평균 ÷ 노면 결 중앙값)을 넣고, 점수는 region_scores로 매긴다."""
+    g = gray.astype(np.float32)
+    k = (C.BRIGHT_POT_TEX_KSIZE, C.BRIGHT_POT_TEX_KSIZE)
+    mean = cv.boxFilter(g, -1, k, borderType=cv.BORDER_REFLECT)
+    std = np.sqrt(np.maximum(cv.boxFilter(g * g, -1, k, borderType=cv.BORDER_REFLECT) - mean * mean, 0.0))
+    on_road = np.asarray(road) > 0 if road is not None else np.ones(gray.shape, bool)
+    if not on_road.any():
+        return []
+    ref = float(np.median(std[on_road]))
+    if ref <= 0:
+        return []
+    mask = ((std > C.BRIGHT_POT_TEX_RATIO * ref) & on_road).astype(np.uint8) * 255
+    mask = cv.morphologyEx(mask, cv.MORPH_OPEN, cv.getStructuringElement(cv.MORPH_ELLIPSE, (C.POT_OPEN_KSIZE, C.POT_OPEN_KSIZE)))
+    mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_ELLIPSE, (C.DARK_CLOSE_KSIZE, C.DARK_CLOSE_KSIZE)))
+
+    def inside(box, region):
+        x, y, w, h = box
+        rx, ry, rw, rh = region["bbox"]
+        cx, cy = rx + rw / 2, ry + rh / 2
+        return x <= cx <= x + w and y <= cy <= y + h
+
+    out = []
+    for r in describe_regions(mask, C.POT_MIN_AREA, gray):
+        if not (r["circ_inv"] <= C.POT_MAX_CIRC_INV and r["solidity"] >= C.POT_MIN_SOLIDITY):
+            continue
+        if any(inside(e["bbox"], r) for e in existing):
+            continue
+        x, y, w, h = r["bbox"]
+        fill = np.zeros((h, w), np.uint8)
+        cv.drawContours(fill, [r["contour"]], -1, 255, -1, offset=(-x, -y))
+        r["contrast"] = float(std[y:y + h, x:x + w][fill > 0].mean() / ref)
+        r["score_crack"], r["score_pothole"] = region_scores(r, cv.arcLength(r["contour"], True))
+        r["bright_gravel"] = True
+        out.append(r)
+    return out
 
 def detect_cracks(gray, road=None):
     """가늘고 긴 어두운 선을 균열 후보로 찾는다. (후보 list, 캐니 에지 uint8 0/255)를 돌려준다.
@@ -419,11 +487,14 @@ def detect_potholes(gray, road=None):
 
         regions, mask = extract_dark_regions(gray, road)
         
-        candidates = _keep_by_score([
+        shaped = [
             r for r in regions
             if r["circ_inv"] <= C.POT_MAX_CIRC_INV
             and r["solidity"] >= C.POT_MIN_SOLIDITY
-        ], "pothole")
+        ]
+        if C.BRIGHT_POTHOLE:                            # (보완 5-4) 어둡지 않은 자갈 포트홀을 결로 더함
+            shaped = shaped + _bright_gravel_regions(gray, road, shaped)
+        candidates = _keep_by_score(shaped, "pothole")
         return candidates, mask
     
     sigma_small, sigma_large = C.DOG_SIGMAS
