@@ -23,7 +23,7 @@ SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0    # 언샤프 마스크: 결과 = 입�
 USE_CLAHE = False           # True면 평활화 대신 CLAHE
 CLAHE_CLIP, CLAHE_TILE = 2.0, (8, 8)
 NOISE_BLOCK = 16            # px, 잡티는 이 크기 블록마다 재서
-NOISE_FLAT_QUANTILE = 0.1   # 가장 평평한 하위 10% 블록 값을 씀. 전체로 재면 결·경계를 잡티로 세어 깨끗한 사진도 흐려짐(제공 사진 13장: 깨끗 최대 1.5, σ3 잡음 2.7 이상)
+NOISE_FLAT_QUANTILE = 0.05  # 가장 평평한 하위 5% 블록 값을 씀(10/13 보완 3-2 채택, v9 0.1). 전체로 재면 결·경계를 잡티로 세어 깨끗한 사진도 흐려짐. 개발셋 켬 규칙 1~3 통과(part_C)
 NOISE_SAT_MAX = 0.05        # 비율, 0·255 픽셀이 5%보다 많은 블록은 잡티가 잘려 낮게 나오므로 뺌
 # 아래 7개는 10/10 기반 작업(C)이 Plan.md 값으로 넣은 출발값. A가 WP1·WP4에서 확정하고 docs/part_A.md에 적는다
 ROAD_BLUR_SIGMA = 3         # px, 노면 마스크: 색을 재기 전 가우시안 σ. 골재 결·잡티가 색 거리를 흔들지 않게 (Plan.md 1.5 예비 측정 값)
