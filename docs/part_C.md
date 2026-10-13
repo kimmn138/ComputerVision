@@ -743,6 +743,35 @@ V5a 채택 뒤 config(점수 임계값은 아직 S6c 설정의 값, 전처리 �
 
 - final_v5·retest_v5는 config 대조를 E5V(e5_v5_dev, 지금은 V5a 때 멈춘 미완성 폴더)로 한다. final_v5를 다시 돌리면 덮어쓰므로 그대로 쓴다.
 
+### 10/14 결정 2 (사용자): 포트홀 색 차이 경로 만들지 않음, 운영점은 fp2 유지
+
+**포트홀 색 차이 경로: 만들지 않는다.** 상한 측정(3번 단계 1): 개발셋 ROI 안 포트홀 정답 100개 중 ΔE 영역이 생긴 상자 0개(근거 문턱 95·99백분위), 문턱을 70·90백분위까지 낮춰도 22개이고 그때 정답 밖 ΔE 영역이 영상당 5.41개, 포트홀 상자 안 픽셀 ΔE 중앙값 2.80 vs 일반 노면 2.87, 39장 0/12.
+
+**보고서용 결론: 밝기로도 색으로도 포트홀을 주변 노면과 가를 수 없었다.**
+- 밝기: 지금 검출기(배경보다 어두운 영역)로 포트홀 정답 안에 영역이 하나라도 생기는 상자가 개발셋 34%(34/100)뿐이다. 생긴 영역도 가장자리 조각이라 균열 영역과 특징이 겹친다(포트홀 vs 균열 AUC 0.35~0.65).
+- 색: 주변 노면 대표 색과의 ΔE로 찾으면 0%(0/100). 문턱을 크게 낮춰 22%를 찾을 때는 정답 밖 영역이 영상당 5.41개다. 포트홀 상자 안 ΔE가 일반 노면과 같다(중앙값 2.80 vs 2.87, 측정 B 상자 단위 ΔE AUC 0.534).
+- 둘을 합쳐도 상한은 34%이고, 운영점(영상당 오검출 2개 이하)에서 포트홀 재현율은 0%다. 39장(직접 촬영 포함)에서는 어두운 영역 상한이 72.7%(8/11)로 높지만, 개발셋에서 정한 규칙으로는 0/12다.
+
+**운영점: 균열·포트홀로 나누지 않고 지금 방식(fp2: 영상당 오검출 2개 이하에서 민감도 최대)을 유지한다.**
+- 이유: 포트홀은 어느 임계값에서도 재현율이 0이라, 나누면 포트홀 몫(0.5개)이 쓰이지 않고 균열 오검출 상한만 1.5로 줄어 균열 재현율이 낮아진다(새 노면: 균열 재현율 32.2% → 27.4%). 계획서 목표(영상당 오검출 2개 이하)와도 맞는다.
+- 준비한 split 행(evaluate_train crack_op·pothole_op·split)과 run_all TAU_CONFIG_POINT는 그대로 두고 config 점은 "fp2"로 둔다.
+- 보고는 균열·포트홀을 따로 한다: 종류별 재현율, 후보 정밀도, F1, 영상당 오검출(아래 v6 최종 표).
+
+### 최종 코드 동결(v6): 5c73ff7 (10/14)
+
+운영점 ETY(`python tools/run_all.py supp --only ETY --yes` → `results/e6_road6_tau_dev/`, ET와 같은 방식, 노면 A2rA3B1B2 위): 판정 행(전처리 미적용) fp2 점 → config B 구역(B 동의) SCORE_TAU_CRACK 0.304508·SCORE_TAU_POTHOLE 7.822985(보완 최종 0.255937·5.136871). 전체 시험 통과 뒤 커밋 5c73ff7을 최종 동결 커밋으로 한다(docs/tasks/supplement.md). 이후 버그 수정만 한다.
+
+**배한원(A)·서민영(B) 파일을 바꾼 내역 (10/14, 동의 받음)**
+
+| 파트 | 파일 | 바꾼 것 | 커밋 |
+|---|---|---|---|
+| A | src/io_utils.py, tests/test_a.py | v5 노면 변경(칸 시드·밝기 범위 상한·마할라노비스·시드 검사·road_mask_seeded) 되돌림 | 77322da |
+| A | src/io_utils.py | road_mask 노면 스위치 4개: A2r 시드 거르기(`_not_road_seed`: 사진 안 상대 채도·밝은 표시·노란 선), A3 밝기 허용 폭 상한, B1 큰·아래쪽 덩어리 남기기, B2 노면 위 차선을 노면으로(`_lane_on_road`). 모두 끄면 보완 최종과 691장 같음 | c259512 |
+| A | tests/test_a.py | test_road_mask_10_14_switches 추가, test_road_mask_v2_lane_split의 @todo 해제(이제 통과) | c259512 |
+| A 구역 | src/config.py | v5 스위치 삭제(2a01eaa), ROAD_SEED_FILTER True·ROAD_SEED_CHROMA_REL 8.3·ROAD_SEED_REF_BOX·ROAD_SEED_KEEP_MIN 0.25·ROAD_L_RANGE_MAX 107.9·ROAD_KEEP_BLOBS True·ROAD_BLOB_SMALL/BIG/BOTTOM 0.005/0.05/0.25·ROAD_LANE_AS_ROAD True·ROAD_LANE_MIN_AREA/ELONG/RING/RING_ROAD/EDGE 30/3.0/9/0.5/6 추가 | 2a01eaa, b1164a3 |
+| B 구역 | src/config.py | SCORE_TAU_CRACK −∞ → 0.255937 → 0.304508, SCORE_TAU_POTHOLE 2.792216 → 5.136871 → 7.822985 | 2a01eaa, 5c73ff7 |
+| B | src/detect.py, tests/test_b.py | 바꾸지 않음(포트홀 새 분류·점수 미채택). margin 포트홀 점수식의 '두 여유가 음수면 양수' 문제는 알림만 | - |
+
 ## 보완 결과 (10/12~10/14)
 
 계획: `docs/tasks/supplement.md`. 항목마다 판정, 규칙 1(`fp1`·`fp2` 민감도), 규칙 2(`rule1` 점 균형 정확도), 규칙 3(`rule1` 점 우연 뺀 균열 재현율), 판정이 바뀐 사진, 시간 상자를 적는다(계획 4.3). 보고서는 이 메모로 단계마다 미리 고친다.
