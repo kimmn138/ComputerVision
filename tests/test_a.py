@@ -230,6 +230,28 @@ def test_road_mask_seed_cells():
             raise AssertionError("ROAD_SEED_MODE가 잘못된 값인데 ValueError가 나지 않음")
 
 
+def test_road_mask_seed_check():
+    """v5 V6a: ROAD_SEED_CHECK를 켜도 시드 상자가 노면 한 가지인 띠(v1 합성)는 끔과 픽셀 하나까지 같고, 시드 상자 오른쪽 절반이 풀(색이 다른 면)인
+    띠는 검사에 걸려 칸 시드로 바뀌어 노면을 칠한다(칸 시드 결과와 같음). 시드를 밖에서 주는 road_mask_seeded(None)는 road_mask와 같다."""
+    bgr, part = road_band()
+    img = bgr.copy()
+    patch = np.zeros((240, 640), bool)
+    patch[:200, 320:460] = True
+    rng = np.random.default_rng(1)
+    img[patch] = (np.array([45, 140, 70]) + rng.normal(0, 8, (patch.sum(), 3))).clip(0, 255).astype(np.uint8)
+    road = part["road"] & ~patch
+    with config_values(ROAD_SEED_CHECK=False):
+        off_plain, off_img = io_utils.road_mask(bgr), io_utils.road_mask(img)
+    with config_values(ROAD_SEED_CHECK=True):
+        on_plain, on_img = io_utils.road_mask(bgr), io_utils.road_mask(img)
+        seeded = io_utils.road_mask_seeded(bgr, None)
+    with config_values(ROAD_SEED_MODE="cells"):
+        cells_img = io_utils.road_mask(img)
+    assert np.array_equal(off_plain, on_plain) and np.array_equal(seeded, on_plain), "시드 검사를 통과한 띠가 끔과 다름"
+    assert (off_img == 255)[road].mean() <= 0.5, f"검사 끔인데 오염된 시드로 노면을 칠함 ({(off_img == 255)[road].mean():.3f}): 장면이 맞지 않음"
+    assert np.array_equal(on_img, cells_img) and (on_img == 255)[road].mean() >= 0.90, "오염된 시드가 검사에 걸려 칸 시드로 바뀌지 않음"
+
+
 def test_road_mask_l_range_max():
     """v5 (3)①: ROAD_L_RANGE_MAX를 주면 노면 밝기 범위가 그 값을 넘지 않는다. 어두운 노면(밝기 −60)을 오른쪽에 두면
     상한이 없을 때(범위 넓게, ROAD_L_K 20)는 잇고, 상한 30이면 뺀다. 상한은 ab_L 색 기준의 L 범위에만 걸리므로(mahal은 L 범위 식을 쓰지 않음)

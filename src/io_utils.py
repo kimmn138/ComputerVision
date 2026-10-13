@@ -156,8 +156,30 @@ def _mahal_candidate(L, a, b, seed_L, seed_a, seed_b, seed_inlier):
     return d2 < C.ROAD_MAHAL_D2
 
 
+def _seed_contaminated(L, a, b, seed_box):
+    """(v5 V6a) 시드 상자가 노면 한 가지로 보이지 않는지 검사한다 → bool. 시드 상자를 2×2로 나눠 칸마다 흐린 Lab의 a·b 중앙값을 내고,
+    어느 두 칸이라도 a·b 거리가 ROAD_CHROMA_MAX(노면 색 기준과 같은 거리) 이상이면 참(오염). 풀밭·차체·보도처럼 색이 다른 면이 시드의
+    일부를 덮은 경우다. 밝기 차이는 같은 노면의 그늘·햇빛에서도 생기므로 보지 않는다(개발셋에서 밝기 차이로만 걸리는 사진은 측정 C 오염이 아닌
+    경우가 더 많았음: 60장 중 43장, part_C V6a)."""
+    x0, y0, x1, y1 = seed_box
+    xm, ym = (x0 + x1) // 2, (y0 + y1) // 2
+    parts = [(slice(ya, yb), slice(xa, xb)) for ya, yb in ((y0, ym), (ym, y1)) for xa, xb in ((x0, xm), (xm, x1)) if yb > ya and xb > xa]
+    if len(parts) < 2:
+        return False
+    med = np.array([[np.median(a[p]), np.median(b[p])] for p in parts])
+    chroma = np.sqrt((med[:, None, 0] - med[None, :, 0]) ** 2 + (med[:, None, 1] - med[None, :, 1]) ** 2)
+    return bool((chroma >= C.ROAD_CHROMA_MAX).any())
+
+
 def road_mask(bgr_roi):
-    """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다."""
+    """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다. 시드는 config A 구역의 ROAD_SEED_BOX(노면 띠 비율) 자리다.
+    계산은 road_mask_seeded(bgr_roi, None)과 같다."""
+    return road_mask_seeded(bgr_roi, None)
+
+
+def road_mask_seeded(bgr_roi, seed_box=None):
+    """road_mask와 같은 계산을 하되 시드 상자를 밖에서 정할 수 있다(v5 V1c: ROI가 넓어져도 시드를 원래 아래쪽 ROI 자리에 둠).
+    seed_box = (x0, y0, x1, y1) 픽셀(영상 안으로 자름) 또는 None(ROAD_SEED_BOX 비율). 약속 표 밖의 함수이고, 입력은 바꾸지 않는다."""
 
     # 입력 영상을 직접 수정하지 않도록 복사한다.
     img = bgr_roi.copy()
@@ -186,6 +208,8 @@ def road_mask(bgr_roi):
     y0 = int(h * y0_ratio)
     x1 = int(w * x1_ratio)
     y1 = int(h * y1_ratio)
+    if seed_box is not None:                    # (v5 V1c) 밖에서 정한 시드 상자(픽셀)
+        x0, y0, x1, y1 = (int(v) for v in seed_box)
 
     # 인덱스 안전 처리
     x0 = max(0, min(x0, w - 1))
@@ -198,6 +222,9 @@ def road_mask(bgr_roi):
     if C.ROAD_SEED_MODE == "box":
         seed_region = np.zeros((h, w), bool)
         seed_region[y0:y1, x0:x1] = True
+        # (v5 V6a) 시드 검사: 상자 시드가 노면 한 가지로 보이지 않을 때만 칸 시드로 바꾼다. 검사를 통과한 사진은 그 전과 같다
+        if C.ROAD_SEED_CHECK and _seed_contaminated(L, a, b, (x0, y0, x1, y1)):
+            seed_region = _seed_cells(L, a, b, (x0, y0, x1, y1))
     elif C.ROAD_SEED_MODE == "cells":
         seed_region = _seed_cells(L, a, b, (x0, y0, x1, y1))
     else:
