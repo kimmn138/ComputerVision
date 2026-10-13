@@ -114,7 +114,7 @@ def run_pipeline(bgr, top, bottom, use_preprocess):
         t_band_ms = round((time.perf_counter() - t_band) * 1000, 2)
     roi, y0 = io_utils.crop_roi(small, top, bottom)
     t_road = time.perf_counter()
-    if C.AUTO_BAND_SEED_FIXED:                          # (v5 V1c) ROI가 넓어져도 시드는 받은 top의 ROI 자리
+    if C.AUTO_BAND_SEED_FIXED and top != top0:          # (v5 V1c) ROI가 넓어졌으면 시드는 받은 top의 ROI 자리(넓어지지 않았으면 같은 상자라 road_mask)
         road = io_utils.road_mask_seeded(roi, fixed_seed_box(small.shape[1], small.shape[0], top0, bottom, y0))
     else:
         road = io_utils.road_mask(roi)
