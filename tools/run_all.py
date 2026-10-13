@@ -209,7 +209,9 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("SP", "sp_persp_dev", "5-3 원근: 최소 넓이를 행 위치로(위 20 → 아래 40)", {"DARK_AREA_PERSPECTIVE": True}, "S6c", "off", "rules"),
              ("S15", "s15_brightpot_dev", "5-4(15번) 밝은 자갈 포트홀(결 2배)", {"BRIGHT_POTHOLE": True}, "S6c", "off", "rules"),
              # 6단계 1번: 지금 config(마지막 채택 설정)의 τ 곡선. 판정 행(끔) fp2 점 τ를 config에 쓴다(et_tau_lines가 줄을 알려 줌)
-             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"))
+             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"),
+             # 10/14 v6: 노면 A2rA3B1B2(config A 구역) 뒤 운영점을 ET와 같은 방식(fp2, 새 폴더)으로. 판정 행(끔) fp2 점 τ를 config B 구역에 쓴다
+             ("ETY", "e6_road6_tau_dev", "v6 운영점: 노면 A2rA3B1B2 뒤 지금 config의 fp2 점", {}, "S6c", "off", "curve"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
@@ -1132,7 +1134,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
     report = build_report(paths, human, command_line)
     print_report(report, stage)
-    tau_id = next((e["id"] for e, _, _ in done if e["id"] == "ET"), None) if stage == "supp" else None
+    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETY")), None) if stage == "supp" else None
     tau_lines = et_tau_lines(paths, report["states"], tau_id) if tau_id else []
     if tau_lines:
         print(f"\n{tau_id} 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 최종 실행(supp_final 또는 final_v5)을 돌린다"
