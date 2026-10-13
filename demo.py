@@ -42,7 +42,7 @@ DIALOG_TYPES = [("사진", "*.jpg *.jpeg *.png *.bmp *.heic *.heif"), ("모든 �
 HEIC_EXTS = (".heic", ".heif")  # 아이폰 기본 형식. 이 OpenCV는 읽지 못함
 # 아래 띠에 적을 상태 판정 값의 이름(한글, 한글을 못 쓸 때의 영문). measure_quality에 키가 늘면 키 이름 그대로 붙는다
 QUALITY_NAMES = {"mean": ("평균", "mean"), "std": ("표준편차", "std"), "lap_var": ("라플라시안 분산", "lap_var"),
-                 "noise": ("잡티", "noise"), "blur_ratio": ("재흐림 비율", "blur_ratio")}
+                 "noise": ("잡티", "noise"), "blur_ratio": ("재흐림 비율", "blur_ratio"), "blur_dir": ("방향 비율", "blur_dir")}
 
 
 def parse_args(argv=None):
@@ -306,6 +306,29 @@ def show(img):
     cv.destroyAllWindows()
 
 
+def tau_rejected(bgr, top, bottom, use_preprocess, out):
+    """점수 문턱 τ에 걸러진 후보: 같은 설정에서 τ만 끄고(USE_SCORE_TAU) 다시 검출한 후보 가운데 out(τ 켬)에 없는 것(상자로 견줌).
+    → (균열 list, 포트홀 list). τ가 꺼져 있으면 걸러진 후보가 없으므로 빈 list 둘. 시연 그림에만 쓰고 결과 숫자는 out 그대로다."""
+    if not C.USE_SCORE_TAU:
+        return [], []
+    backup = rx.apply_overrides({"USE_SCORE_TAU": False})
+    try:
+        everything = pipeline.run_pipeline(bgr, top, bottom, use_preprocess)
+    finally:
+        rx.restore_overrides(backup)
+    kept = {kind: {r["bbox"] for r in out[kind]} for kind in ("cracks", "potholes")}
+    return tuple([r for r in everything[kind] if r["bbox"] not in kept[kind]] for kind in ("cracks", "potholes"))
+
+
+def draw_panel(out, rejected=None):
+    """시연 패널 한 장: 노면 마스크(반투명 초록) → (DRAW_TAU_REJECTED면) τ에 걸러진 후보 옅은 점선 → 남은 후보 윤곽과 노면 시작선.
+    rejected가 None이면 지금까지의 그림과 같다."""
+    base = visualize.draw_road(out["small"], out["road"], out["y0"])
+    if rejected is not None:
+        base = visualize.draw_rejected(base, rejected[0], rejected[1], out["y0"])
+    return visualize.draw_candidates(base, out["cracks"], out["potholes"], out["y0"])
+
+
 def demo_one(path, args, show_fn=None, warn=None):
     """사진 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
     (--save면 창 대신 그림 파일로 저장). --mask·--detect·--auto-band·--band-texture는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다.
@@ -351,8 +374,8 @@ def demo_one(path, args, show_fn=None, warn=None):
         with pd.option_context("display.width", 200, "display.max_columns", None):
             print(report_table(outs[False]["row"], outs[True]["row"]))
 
-        drawn = [visualize.draw_candidates(visualize.draw_road(o["small"], o["road"], o["y0"]), o["cracks"], o["potholes"], o["y0"])
-                 for o in outs.values()]
+        rejected = {use: tau_rejected(bgr, top, bottom, use, outs[use]) for use in outs} if C.DRAW_TAU_REJECTED else {}
+        drawn = [draw_panel(o, rejected.get(use)) for use, o in outs.items()]
         view = build_view(drawn[0], drawn[1], make_labels(steps_text, unicode_ok), screen_size(), unicode_ok, footer)
     finally:
         rx.restore_overrides(backup)
