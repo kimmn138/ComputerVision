@@ -157,3 +157,7 @@ AUTO_BAND_TEX_RATIO = 1.5           # 배, 구간 결 중앙값 ÷ 시작 띠 �
 ROAD_KEEP_RATIO_MIN = 0.5           # 비율, ROAD_KEEP_RULE = "ratio"일 때 후보 영역 픽셀 중 노면 안 비율이 이 값 이상이면 남김. 경계가 비스듬해 상자 중심만 노면에 떨어지는 바깥 후보(Japan_000107 켬: 노면 안 8%)를 거름 (Plan.md 3.3 (7))
 AUTO_BAND_TEX_PERSPECTIVE = False   # 보완 4-4(14번) 켬·끔. True면 위로 한 구간 갈 때마다 결 비율의 아래 한계(1/AUTO_BAND_TEX_RATIO)에 AUTO_BAND_TEX_DECAY를 곱함. 원근 때문에 먼 노면은 결이 매끈해 보이므로. 위 한계(나무·건물)는 그대로
 AUTO_BAND_TEX_DECAY = 0.8          # 배, 4-4 한 구간(AUTO_BAND_STEP)마다 아래 한계에 곱하는 값(계획 7장 4-4 출발값)
+DRAW_TAU_REJECTED = False           # 보완 6단계 켬·끔. True면 시연 그림(demo)에 점수 문턱 τ로 걸러진 후보를 옅은 점선으로 함께 그림. 평가 숫자(row·요약)에는 쓰이지 않음
+REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상과 섞는 비율(0 = 안 보임, 1 = 진한 색)
+REJECTED_DASH = 4                  # px, 걸러진 후보 점선의 한 칸 길이(대각 줄무늬 주기의 절반)
+REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께(시연 창은 화면에 맞춰 줄어들어 1px는 거의 안 보임)
