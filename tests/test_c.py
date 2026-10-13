@@ -1042,6 +1042,34 @@ def test_auto_band_seed_fixed():
           == {k: v for k, v in on["row"].items() if not k.startswith("t_")}, "AUTO_BAND_SEED_FIXED: ROI가 넓어지지 않았는데 결과가 달라짐")
 
 
+def test_auto_band_tex_below():
+    """(v5 V1d) AUTO_BAND_TEX_REF "below": 노면 질감이 위로 갈수록 조금씩 매끈해지면(구간 σ 12 → 10 → 8 → 6.5 → 5.3) 바로 아래 구간과의 비(0.8 안팎)는
+    범위 안이라 계속 넓히고, 맨 위에서 갑자기 거칠어지는 곳(σ 25, 숲)에서 멈춘다. "start"(시작 ROI와 비교)는 시작 ROI 대비 매끈해진 곳에서 더 일찍 멈춘다.
+    노면 마스크는 전부 노면으로 바꿔 끼워 질감 조건만 본다. 잘못된 값은 ValueError."""
+    H, W = 500, 640
+    rng = np.random.default_rng(5)
+    sig = np.full(H, 12.0)
+    for (a, b), s_ in (((0.0, 0.1), 25.0), ((0.1, 0.2), 5.3), ((0.2, 0.3), 5.3), ((0.3, 0.4), 6.5), ((0.4, 0.5), 8.0), ((0.5, 0.6), 10.0)):
+        sig[int(H * a):int(H * b)] = s_
+    gray = (128 + rng.normal(0, 1, (H, W)) * sig[:, None]).clip(0, 255).astype(np.uint8)
+    bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+    full = lambda img, *a: np.full(img.shape[:2], 255, np.uint8)   # noqa: E731
+    with patched(io_utils, "road_mask", full), patched(io_utils, "road_mask_seeded", full), patched(C, "AUTO_BAND_USE_TEXTURE", True), \
+            patched(C, "AUTO_BAND_ROAD_MIN", 0.95), patched(C, "AUTO_BAND_TEX_RATIO", 1.5), patched(C, "AUTO_BAND_TEX_PERSPECTIVE", False):
+        with patched(C, "AUTO_BAND_TEX_REF", "start"):
+            start = pipeline.auto_band_top(bgr, 0.5)
+        with patched(C, "AUTO_BAND_TEX_REF", "below"):
+            below = pipeline.auto_band_top(bgr, 0.5)
+        with patched(C, "AUTO_BAND_TEX_REF", "nope"):
+            try:
+                pipeline.auto_band_top(bgr, 0.5)
+                bad = False
+            except ValueError:
+                bad = True
+    check(below == 0.1 and start > below, f"AUTO_BAND_TEX_REF: below는 숲 앞(0.1)까지, start는 더 일찍 멈춰야 함 (start {start}, below {below})")
+    check(bad, "AUTO_BAND_TEX_REF: 잘못된 값인데 ValueError가 나지 않음")
+
+
 def test_auto_band_switch_off():
     """AUTO_BAND_TOP이 꺼져 있으면 사진 전체 노면 마스크를 계산하지 않고 받은 top 그대로 자른다(지금 결과 그대로).
     결과의 top은 받은 값, t_band_ms는 0.0이고, 켰을 때 경계가 그대로이면(가짜 auto_band_top) 결과가 끈 것과 같다."""

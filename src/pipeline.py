@@ -32,6 +32,8 @@ def auto_band_top(small, top):
     AUTO_BAND_ROAD_MIN 이상이면 그 구간까지 넓히고, 모자란 구간이 나오면 멈춘다. 0.0까지 넓어질 수 있고 좁히지는 않는다.
     AUTO_BAND_USE_TEXTURE가 켜져 있으면 결도 본다: 구간 노면 픽셀의 결(local_std) 중앙값 ÷ 시작 띠(top 아래) 노면 픽셀의 결 중앙값이
     1/AUTO_BAND_TEX_RATIO ~ AUTO_BAND_TEX_RATIO 밖이면 멈춘다. 노면 마스크가 색만 보고 칠한 흐린 하늘(매끈함)·나무(거침)를 거르려고다.
+    AUTO_BAND_TEX_REF가 "below"면 기준을 시작 ROI 대신 바로 아래 구간(직전에 받아들인 구간, 첫 단계는 시작 ROI의 맨 위 구간)의 노면 질감으로 한다
+    (v5 V1d: 원근 때문에 조금씩 매끈해지는 노면은 통과하고, 노면에서 숲·건물로 갑자기 바뀌는 곳에서 멈추게). 아래 구간에 노면 픽셀이 없으면 시작 ROI 기준.
     AUTO_BAND_TEX_PERSPECTIVE가 켜져 있으면 위로 k번째 구간의 아래 한계를 (1/AUTO_BAND_TEX_RATIO) × AUTO_BAND_TEX_DECAY^k로 낮춘다
     (원근 때문에 먼 노면의 결이 매끈해 보이는 만큼 봐줌, 보완 4-4). 위 한계는 그대로다.
     시작 띠에 노면 픽셀이 없거나 결이 0이면 견줄 기준이 없어 넓히지 않는다.
@@ -56,7 +58,14 @@ def auto_band_top(small, top):
         if seg.size == 0 or np.count_nonzero(seg) < C.AUTO_BAND_ROAD_MIN * seg.size:
             break
         if C.AUTO_BAND_USE_TEXTURE:
-            ratio = float(np.median(tex[int(h * nxt):int(h * cur)][seg])) / ref_tex
+            base = ref_tex
+            if C.AUTO_BAND_TEX_REF == "below":              # (v5 V1d) 바로 아래 구간(직전에 받아들인 구간)의 노면 질감과 비교
+                lo = min(1.0, round(cur + C.AUTO_BAND_STEP, 6))
+                below = tex[int(h * cur):int(h * lo)][road[int(h * cur):int(h * lo)]]
+                base = float(np.median(below)) if below.size and float(np.median(below)) > 0 else ref_tex
+            elif C.AUTO_BAND_TEX_REF != "start":
+                raise ValueError(f"AUTO_BAND_TEX_REF는 'start' 또는 'below'여야 함 ({C.AUTO_BAND_TEX_REF!r})")
+            ratio = float(np.median(tex[int(h * nxt):int(h * cur)][seg])) / base
             low = 1 / C.AUTO_BAND_TEX_RATIO
             if C.AUTO_BAND_TEX_PERSPECTIVE:
                 low *= C.AUTO_BAND_TEX_DECAY ** (step + 1)

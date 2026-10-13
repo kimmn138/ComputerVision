@@ -242,11 +242,15 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("V1h", "v1h_v6a_seedfixed_roadmin85_dev", "v5 V6a 위 V1c + 노면 비율 0.85", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.85},
               "V1y", "off", "rules"),
              # V6a·V1c 채택 뒤 운영점(ETV와 같은 방식, 새 폴더)
-             ("ETW", "e5_v6_tau_dev", "v5 운영점: V6a·V1c 채택 뒤 지금 config의 fp2 점", {}, "V1y", "off", "curve"))
+             ("ETW", "e5_v6_tau_dev", "v5 운영점: V6a·V1c 채택 뒤 지금 config의 fp2 점", {}, "V1y", "off", "curve"),
+             # 10/14 마지막 시도(ROI 상단 경계의 남은 원인): 비교 기준은 지금 채택 설정 ETW. V7c는 둘 다 채택될 때만 판정
+             ("V7a", "v7a_texbelow_dev", "v5 V1d 질감 비를 바로 아래 구간과 비교", {"AUTO_BAND_TEX_REF": "below"}, "ETW", "off", "rules"),
+             ("V7b", "v7b_lane_ga_dev", "v5 차선 건너기 (가) 지금 설정 위 다시", {"ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"),
+             ("V7c", "v7c_texbelow_lane_dev", "v5 V1d + 차선 (가)", {"AUTO_BAND_TEX_REF": "below", "ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
-STAGE_V5_IDS = ("V3a", "V3b", "V3c", "V3d", "V5a", "V5b", "V1a", "V1b", "V1c", "V1d", "V6a", "V1x", "V1e", "V1f", "V1y", "V1g", "V1h")   # v5(10/13) 노면 마스크 행: 4단계처럼 39장 참고와 마스크 안 정답(표 17)
+STAGE_V5_IDS = ("V3a", "V3b", "V3c", "V3d", "V5a", "V5b", "V1a", "V1b", "V1c", "V1d", "V6a", "V1x", "V1e", "V1f", "V1y", "V1g", "V1h", "V7a", "V7b", "V7c")   # v5(10/13) 노면 마스크 행: 4단계처럼 39장 참고와 마스크 안 정답(표 17)
 MASK_GT_MIN = 0.95                  # 4단계 채택 조건: 마스크 안 정답 비율이 이 값 이상 (v9 95.1%, 계획 7장 4단계 공통)
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
@@ -301,7 +305,7 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "V1g": "미채택(규칙 1·마스크 안 정답 94.08% 못 넘음)", "V1h": "미채택(규칙 1·2·마스크 안 정답 94.13% 못 넘음)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False,
                    "ROAD_SEED_MODE": "box", "ROAD_L_RANGE_MAX": 0, "ROAD_COLOR_DIST": "ab_L", "ROAD_SEED_CHECK": False,
-                   "AUTO_BAND_SEED_FIXED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
+                   "AUTO_BAND_SEED_FIXED": False, "AUTO_BAND_TEX_REF": "start"}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
     # 비교 단계 (개발셋). 이 순서로 돌고, adopt 단계는 끝날 때마다 잠정 판정해 뒤 단계 설정에 반영한다
