@@ -68,7 +68,7 @@ ROAD_COLOR_DIST = "mahal"   # 노면 색 기준: "ab_L" = a·b 거리 < ROAD_CHR
 ROAD_MAHAL_D2 = 11.34       # 마할라노비스 거리², χ²(자유도 3) 99% 점. 시드 노면 색이 정규분포라면 노면 픽셀의 99%가 들어옴
 ROAD_MAHAL_SIGMA_MIN = (2.4, 3.0, 3.0)  # (L, a, b) 표준편차 하한(Lab 0~255 단위). √11.34 = 3.37배가 기존 기준의 최소 범위 L ±8(= 4 × 2)·a·b 10과 맞게
 # 아래는 10/13 밤 v5 V6a 시드 검사(C가 A 동의로 넣음). 끄면 그 전과 같다
-ROAD_SEED_CHECK = False     # V6a 켬·끔. True면 상자 시드를 2×2로 나눈 칸끼리 a·b 거리가 ROAD_CHROMA_MAX 이상일 때(색이 다른 면이 섞임)만 그 사진에서 칸 시드로 바꿈. 개발셋 92장이 걸림
+ROAD_SEED_CHECK = True      # V6a 켬·끔. 10/13 밤 채택(규칙 1~3 + 마스크 안 정답 96.10%, part_C). True면 상자 시드를 2×2로 나눈 칸끼리 a·b 거리가 ROAD_CHROMA_MAX 이상일 때(색이 다른 면이 섞임)만 그 사진에서 칸 시드로 바꿈. 개발셋 92장이 걸림
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
