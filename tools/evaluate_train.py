@@ -149,7 +149,7 @@ DIAG35 = (
 # 640px 컬러 사진에 띠를 자르기 전에 넣고, 값은 config C 구역의 DEGRADE_*를 쓴다.
 # ---------------------------------------------------------
 
-DEGRADE_KINDS = ("none", "blur", "dark", "bright", "noise")
+DEGRADE_KINDS = ("none", "blur", "dark", "bright", "noise", "night")   # night는 보완 3단계(10/13)에 더함: 어두움 뒤 잡음
 
 # 저하마다 상태 판정이 골라야 할 전처리: (표에 쓸 이름, 고른 steps가 맞는지 보는 함수)
 EXPECTED_STEPS = {
@@ -157,6 +157,8 @@ EXPECTED_STEPS = {
     "dark": ("밝게 하는 감마(< 1)", lambda steps: steps["tone"] == "gamma" and steps["gamma"] < 1),
     "bright": ("어둡게 하는 감마(> 1)", lambda steps: steps["tone"] == "gamma" and steps["gamma"] > 1),
     "noise": ("잡티 제거(가우시안)", lambda steps: bool(steps["denoise"])),
+    "night": ("잡티 제거 + 밝게 하는 감마(< 1)",
+              lambda steps: bool(steps["denoise"]) and steps["tone"] == "gamma" and steps["gamma"] < 1),
 }
 
 
@@ -326,7 +328,7 @@ def parse_args(argv=None):
         "--degrade",
         choices=DEGRADE_KINDS,
         default="none",
-        help="인위 저하(E6): 640px 컬러에 띠를 자르기 전 화질을 떨어뜨림. none(기본)·blur·dark·bright·noise, 값은 config C 구역 DEGRADE_*",
+        help="인위 저하(E6): 640px 컬러에 띠를 자르기 전 화질을 떨어뜨림. none(기본)·blur·dark·bright·noise·night(dark 뒤 noise), 값은 config C 구역 DEGRADE_*",
     )
 
     parser.add_argument(
@@ -449,7 +451,8 @@ def degrade(bgr, kind):
     """640px 컬러 사진에 일부러 화질 저하를 넣은 새 영상을 돌려준다(인위 저하 E6). 받은 영상은 바꾸지 않고 크기·형식(BGR uint8)은 같다.
     띠를 자르기 전에 넣어 상태 판정과 전처리가 사진 전체의 저하를 보게 한다. 값은 config C 구역 DEGRADE_*:
     none = 그대로(복사본), blur = 가우시안 σ DEGRADE_BLUR_SIGMA, dark = 0~1 밝기^DEGRADE_DARK_GAMMA(어두워짐),
-    bright = 0~1 밝기^DEGRADE_BRIGHT_GAMMA(밝아짐, 과노출 흉내), noise = 채널마다 가우시안 잡음 σ DEGRADE_NOISE_SIGMA.
+    bright = 0~1 밝기^DEGRADE_BRIGHT_GAMMA(밝아짐, 과노출 흉내), noise = 채널마다 가우시안 잡음 σ DEGRADE_NOISE_SIGMA,
+    night = dark 뒤 noise(야간 흉내: 어두운 사진에 센서 잡음, 보완 3-5).
     잡음은 함수 안에서 seed = DEGRADE_SEED + 사진 바이트의 crc32로 난수 생성기를 새로 만든다. 같은 사진은 언제 불러도 같고
     (같은 입력이면 같은 출력), 사진마다 무늬가 달라 모든 사진에 같은 흠집 난 렌즈를 끼운 꼴이 되지 않는다.
     파이썬 hash()는 실행마다 값이 달라져 쓰지 않는다."""
@@ -462,6 +465,9 @@ def degrade(bgr, kind):
     if kind in ("dark", "bright"):
         gamma = C.DEGRADE_DARK_GAMMA if kind == "dark" else C.DEGRADE_BRIGHT_GAMMA
         return cv.LUT(bgr, gamma_lut(gamma))
+
+    if kind == "night":
+        return degrade(degrade(bgr, "dark"), "noise")
 
     if kind == "noise":
         rng = np.random.default_rng(C.DEGRADE_SEED + zlib.crc32(np.ascontiguousarray(bgr).tobytes()))
@@ -479,6 +485,7 @@ def degrade_text(kind):
         "dark": f"0~1 밝기^{C.DEGRADE_DARK_GAMMA}",
         "bright": f"0~1 밝기^{C.DEGRADE_BRIGHT_GAMMA}",
         "noise": f"채널마다 가우시안 잡음 σ {C.DEGRADE_NOISE_SIGMA}, seed {C.DEGRADE_SEED} + 사진 바이트 crc32",
+        "night": f"0~1 밝기^{C.DEGRADE_DARK_GAMMA} 뒤 채널마다 가우시안 잡음 σ {C.DEGRADE_NOISE_SIGMA}(seed는 noise와 같은 방식)",
     }
 
     return texts[kind]
