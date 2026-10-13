@@ -164,7 +164,12 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              # 3단계(전처리·상태 판정): 판정 행 켬(계획 4.1). 후보 값이 여럿이면 같은 비교 기준에 나란히 돌려 규칙 1~3을 넘는 값 가운데 고른다
              ("S7a", "s07_blurdir20_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.20", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.2}, "S13", "on", "rules"),
              ("S7b", "s07_blurdir25_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.25", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.25}, "S13", "on", "rules"),
-             ("S7c", "s07_blurdir30_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.30", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.3}, "S13", "on", "rules"))
+             ("S7c", "s07_blurdir30_dev", "3-1(7번) 방향 흐림 BLUR_DIR_MIN 0.30", {"USE_BLUR_DIR": True, "BLUR_DIR_MIN": 0.3}, "S13", "on", "rules"),
+             # 3-1은 되돌림(10/13) → 3-2의 비교 기준은 S13. 잡티(S6c)는 밝기 값이 채택되지 않을 때 그대로 쓰고, 채택되면 그 위에서 다시 돈다
+             ("S6a", "s06_bright150_dev", "3-2(6번) 과노출 기준 BRIGHT_MEAN_MIN 150", {"BRIGHT_MEAN_MIN": 150}, "S13", "on", "rules"),
+             ("S6b", "s06_bright160_dev", "3-2(6번) 과노출 기준 BRIGHT_MEAN_MIN 160", {"BRIGHT_MEAN_MIN": 160}, "S13", "on", "rules"),
+             ("S6c", "s06_noiseq05_dev", "3-2(6번) 잡티 평평한 블록 NOISE_FLAT_QUANTILE 0.05", {"NOISE_FLAT_QUANTILE": 0.05}, "S13", "on", "rules"))
+STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
                ("S13_39", "s13_halo39", "2-2(13번) 테두리 메움 39장 자동 ROI(참고)", {"DARK_BRIGHT_DILATE": 6}),
@@ -172,10 +177,10 @@ SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 �
                ("S9c_39", "s09c_split39", "2-3(9c) 덩어리·선 나누기 39장 자동 ROI(참고)", {"DARK_SPLIT_BLOB": True}),
                ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}),
                *[(f"{sid}_39", folder[:-4] + "_39", f"{label} 39장 자동 ROI(상태 판정 검증, 참고)", sets)
-                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith("S7")])   # 39장 참고 실행(채택 판단에 쓰지 않음)
+                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES)])   # 39장 참고 실행(채택 판단에 쓰지 않음)
 # 3단계 행은 E6 인위 저하도 함께 돈다(계획 4.1): 상태 판정 적중률과 원본 기준 비율. 비교 기준(S13)도 같은 저하로 한 번 돈다
 SUPP_DEGRADE = ("blur", "dark", "bright", "noise", "night")
-SUPP_E6_IDS = ("S13", "S7a", "S7b", "S7c")
+SUPP_E6_IDS = ("S13",) + tuple(r[0] for r in SUPP_RUNS if r[0].startswith(STAGE3_PREFIXES))
 SUPP_IDS = tuple(r[0] for r in SUPP_RUNS)
 SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동작점(fp1·fp2) 민감도가 셋 중 가장 높음",
                   "S1b": "곡선 비교(고르지 않음)", "S1c": "곡선 비교(고르지 않음)",

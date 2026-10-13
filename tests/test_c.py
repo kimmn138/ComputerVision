@@ -1851,8 +1851,8 @@ def test_run_all_supp_plan():
         _, pins = ra.command(ra.EXP[sid], ra.resolve(ra.EXP[sid], {"E0"}))
         check(pins.get("USE_SCORE_TAU") is False and pins.get("SCORE_FORMULA") == "none", f"run_all {sid}: 점수를 끄지 않음 ({pins})")
     for e in exps:                      # 3단계(전처리·상태 판정): 판정 행 켬, E6 다섯 가지(night 포함)와 39장 검증 행이 함께 있다
-        if e["id"].startswith("S7") and e["tool"] == "train" and "degrade" not in e["opts"]:
-            check(e["judge_row"] == "on" and e["supp_base"] == "S13", f"run_all {e['id']}: 3단계 판정 행이 켬이 아니거나 기준이 S13이 아님")
+        if e["id"].startswith(ra.STAGE3_PREFIXES) and e["tool"] == "train" and "degrade" not in e["opts"]:
+            check(e["judge_row"] == "on" and e["supp_base"] in ra.SUPP_IDS, f"run_all {e['id']}: 3단계 판정 행이 켬이 아니거나 기준이 없음")
             kinds = {x["opts"].get("degrade") for x in exps if x["id"].startswith(e["id"] + "_e6_")}
             check(kinds == set(ra.SUPP_DEGRADE) and "night" in kinds and e["id"] + "_39" in ra.EXP,
                   f"run_all {e['id']}: E6 저하({kinds})나 39장 행이 빠짐")
