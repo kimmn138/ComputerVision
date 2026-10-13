@@ -116,6 +116,14 @@ DARK_SPLIT_KSIZE = 15       # px, 덩어리를 남길 원판 지름. 균열 폭(
 SCORE_USE_EDGE = False      # 보완 2-4(9b) 켬·끔. True면 점수에 경계 날카로움 항 min(1, edge / SCORE_EDGE_REF)를 곱함. 그림자 경계는 흐리고 포트홀·균열 경계는 날카로움(Plan.md 3.4)
 SCORE_EDGE_REF = 0.06       # 경계 날카로움(경계 고리 평균 기울기 ÷ 안쪽 평균 어둡기)의 기준. 합성 원(깊이 70)에서 가장자리 흐림 σ 0·1·2·4·8·15px일 때 0.39·0.10·0.06·0.045·0.032·0.026(10/13 측정) → σ 2px까지는 깎지 않고 σ 15px 그림자는 약 0.43배
 DARK_BRIGHT_REF = "coarse"  # 보완 2-2(9a). "coarse" = 지금(거친 배경 Bc와 비교·Bc로 메움), "road_median" = 노면 밝기 중앙값 하나와 비교·그 값으로 메움(억제 창보다 넓은 흰 줄무늬)
+# 아래는 10/13 보완 5단계(C가 B 동의로 넣음, docs/tasks/supplement.md 5-2~5-4). 스위치를 모두 끄면 그 전과 같다
+SCORE_USE_HESSIAN = False   # 5-2 켬·끔. True면 균열 점수에 영역 안 헤시안 선 강조(0~1)를 곱함(가는 어두운 선 > 둥근 골재 무늬)
+HESSIAN_SIGMA = 1.5         # px, 5-2 2차 미분 전에 거는 가우시안 σ(계획 출발값, 균열 폭 3~5px의 절반쯤)
+DARK_AREA_PERSPECTIVE = False   # 5-3 켬·끔. True면 최소 넓이를 영역 중심의 행 위치로 선형으로 줄임(띠 맨 위 DARK_MIN_AREA_TOP, 맨 아래 DARK_MIN_AREA)
+DARK_MIN_AREA_TOP = 20      # 픽셀 수, 5-3 띠 맨 위 행의 최소 넓이(계획 출발값 = DARK_MIN_AREA 40의 절반)
+BRIGHT_POTHOLE = False      # 5-4 켬·끔. True면 결(국소 표준편차)이 노면의 BRIGHT_POT_TEX_RATIO배 넘는 포트홀 모양 덩어리를 포트홀 후보로 더함(own_18 자갈 포트홀)
+BRIGHT_POT_TEX_RATIO = 2.0  # 배, 5-4 결 비율 문턱(계획 출발값)
+BRIGHT_POT_TEX_KSIZE = 7    # px, 5-4 결을 잴 창(노면 마스크·자동 띠와 같은 7×7)
 
 # ===== C: 정량 측정 =====
 HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
