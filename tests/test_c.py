@@ -1007,6 +1007,29 @@ def test_auto_band_cloudy_sky():
     check(tex.shape == (20, 20) and float(tex.max()) < 1e-3, f"local_std: 평평한 영상의 결이 0이 아님 ({float(tex.max())})")
 
 
+def perspective_scene():
+    """원근 합성 480×640: 아래 절반은 결이 있는 회색 노면(잡음 σ 12), 그 위는 0.1(48행)씩 올라갈 때마다 결이 0.7배로 줄어드는 같은 회색 노면.
+    먼 노면이 원근 때문에 매끈해 보이는 것을 흉내 낸다(보완 4-4)."""
+    rng = np.random.default_rng(8)
+    parts = [rng.normal(0, 12 * 0.7 ** k, (48, 640)) for k in range(5, 0, -1)]   # 0.0~0.1(k=5) … 0.4~0.5(k=1)
+    parts.append(rng.normal(0, 12, (240, 640)))                                   # 아래 절반(시작 띠)
+    gray = cv.GaussianBlur((115 + np.vstack(parts)).clip(0, 255).astype(np.uint8), (0, 0), 1.2)
+    return cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+
+
+def test_auto_band_perspective():
+    """보완 4-4: AUTO_BAND_TEX_PERSPECTIVE를 켜면 위로 한 구간마다 결 비율의 아래 한계에 AUTO_BAND_TEX_DECAY를 곱해, 결이 0.7배씩 줄어드는
+    원근 합성 노면에서 끈 것보다 더 위까지 넓힌다. 흐린 하늘(결 σ 1)은 켜도 0.5에 머문다(위 한계·하늘 거르기는 그대로). 끄면 지금과 같다."""
+    small = io_utils.resize_width(perspective_scene())
+    with patched(C, "AUTO_BAND_TEX_PERSPECTIVE", False):
+        off = pipeline.auto_band_top(small, 0.5)
+    with patched(C, "AUTO_BAND_TEX_PERSPECTIVE", True):
+        on = pipeline.auto_band_top(small, 0.5)
+        sky = pipeline.auto_band_top(io_utils.resize_width(cloudy_scene()), 0.5)
+    check(on < off <= 0.5, f"auto_band_top: 원근 보정을 켰는데 더 넓어지지 않음 (끔 {off}, 켬 {on})")
+    check(sky == 0.5, f"auto_band_top: 원근 보정을 켰더니 흐린 하늘까지 넓어짐 ({sky})")
+
+
 def test_auto_band_csv_rule():
     """자동 띠 높이는 기본 띠를 쓰는 사진에만: run_experiment.main을 노면만 찍힌 합성 사진 2장(roi.csv에 있는 직접 촬영 1장(0.5),
     없는 제공 1장)으로 돌리면, 자동 띠를 켰을 때 roi.csv 사진은 0.5 그대로(240행)이고 기본 띠 사진만 맨 위까지(480행) 넓어진다.
@@ -1856,6 +1879,9 @@ def test_run_all_supp_plan():
             kinds = {x["opts"].get("degrade") for x in exps if x["id"].startswith(e["id"] + "_e6_")}
             check(kinds == set(ra.SUPP_DEGRADE) and "night" in kinds and e["id"] + "_39" in ra.EXP,
                   f"run_all {e['id']}: E6 저하({kinds})나 39장 행이 빠짐")
+    for sid in ra.STAGE4_IDS:           # 4단계(노면 마스크·띠): 판정 행 끔, 39장 참고 행이 있다
+        check(ra.EXP[sid]["judge_row"] == "off" and ra.EXP[sid]["judge"] == "rules" and sid + "_39" in ra.EXP,
+              f"run_all {sid}: 4단계 행이 끔 판정·규칙 판정이 아니거나 39장 행이 없음")
     check({e["opts"].get("degrade") for e in ra.EXPERIMENTS if e["stage"] in ("compare", "final") and e["opts"].get("degrade")}
           == set(ra.V9_DEGRADE_KINDS), "run_all: 비교·최종 단계의 E6가 v9 다섯 가지가 아님(night는 보완 단계에서만)")
     e4 = ra.command(ra.EXP["E4s"], ra.resolve(ra.EXP["E4s"], {"E0"}))
@@ -1947,7 +1973,7 @@ def test_run_all_report_empty():
                                                             "provided_vs_own", "degrade", "39_images"], 1)}
         expect |= {"table9_auto_band.csv", "table9_auto_band_country.csv", "table9_auto_band_39.csv", "table10_mask2.csv",
                    "table10_mask2_changes.csv", "table10_mask_gt.csv", "table11_tests.csv", "table12_time.csv", "table13_judge.csv",
-                   "table14_supp.csv", "table15_tau_points.csv", "table16_supp_judge.csv"}
+                   "table14_supp.csv", "table15_tau_points.csv", "table16_supp_judge.csv", "table17_supp_mask.csv"}
         check(expect | {"adoption.csv", "adoption_grid.csv", "summary.md", "accept.txt", "reject.txt"} == set(os.listdir(out)),
               f"build_report: 표 파일이 빠짐 ({os.listdir(out)})")
         text = (out / "summary.md").read_text(encoding="utf-8")

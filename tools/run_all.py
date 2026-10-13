@@ -174,8 +174,18 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("S3b", "s03_gamma15_dev", "3-3(3번) 감마 상한 GAMMA_RANGE (0.4, 1.5)", {"GAMMA_RANGE": (0.4, 1.5)}, "S6c", "on", "rules"),
              # 3-3은 되돌림 → 3-4·3-5의 비교 기준은 S6c. 3-5(S5)는 3-4가 채택되지 않을 때 그대로 쓰고, 채택되면 그 위에서 다시 돈다
              ("S4", "s04_clahe_dev", "3-4(4번) 평활화 대신 CLAHE", {"USE_CLAHE": True}, "S6c", "on", "rules"),
-             ("S5", "s05_night_dev", "3-5(5번) 야간(잡티 제거 + 밝게 하는 감마) NLM", {"NIGHT_DENOISE": True}, "S6c", "on", "rules"))
+             ("S5", "s05_night_dev", "3-5(5번) 야간(잡티 제거 + 밝게 하는 감마) NLM", {"NIGHT_DENOISE": True}, "S6c", "on", "rules"),
+             # 4단계(노면 마스크·띠): 판정 행 끔, 규칙 1~3 + 마스크 안 정답 95% 이상(표 17). 3단계 끝 설정(S6c)에 하나씩 나란히 돌린다
+             ("S8da", "s08d_lane_ga_dev", "4-1(8d) 차선 (가) 밝은 줄을 노면으로", {"ROAD_LANE_BRIDGE": True}, "S6c", "off", "rules"),
+             ("S8db", "s08d_lane_na_dev", "4-1(8d) 차선 (나) 연결 전 닫힘", {"ROAD_CLOSE_BEFORE_SEED": True}, "S6c", "off", "rules"),
+             ("S8a1", "s08a_shadow15_dev", "4-2(8a) 그림자·햇빛 밝기 범위 1.5배", {"ROAD_SHADOW_L_K": 1.5}, "S6c", "off", "rules"),
+             ("S8a2", "s08a_shadow20_dev", "4-2(8a) 그림자·햇빛 밝기 범위 2배", {"ROAD_SHADOW_L_K": 2}, "S6c", "off", "rules"),
+             ("S8b", "s08b_hood_dev", "4-2(8b) 보닛·와이퍼 행 빼기", {"ROAD_HOOD_CUT": True}, "S6c", "off", "rules"),
+             ("S8c", "s08c_edge_dev", "4-2(8c) 에지 밀도로 건물·인도 빼기", {"ROAD_EDGE_DENSITY": True}, "S6c", "off", "rules"),
+             ("S14", "s14_bandpersp_dev", "4-4(14번) 띠 높이 결 조건 원근 보정(0.8)", {"AUTO_BAND_TEX_PERSPECTIVE": True}, "S6c", "off", "rules"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
+STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
+MASK_GT_MIN = 0.95                  # 4단계 채택 조건: 마스크 안 정답 비율이 이 값 이상 (v9 95.1%, 계획 7장 4단계 공통)
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
                ("S13_39", "s13_halo39", "2-2(13번) 테두리 메움 39장 자동 ROI(참고)", {"DARK_BRIGHT_DILATE": 6}),
@@ -183,7 +193,7 @@ SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 �
                ("S9c_39", "s09c_split39", "2-3(9c) 덩어리·선 나누기 39장 자동 ROI(참고)", {"DARK_SPLIT_BLOB": True}),
                ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}),
                *[(f"{sid}_39", folder[:-4] + "_39", f"{label} 39장 자동 ROI(상태 판정 검증, 참고)", sets)
-                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES)])   # 39장 참고 실행(채택 판단에 쓰지 않음)
+                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
 # 3단계 행은 E6 인위 저하도 함께 돈다(계획 4.1): 상태 판정 적중률과 원본 기준 비율. 비교 기준(S13)도 같은 저하로 한 번 돈다
 SUPP_DEGRADE = ("blur", "dark", "bright", "noise", "night")
 SUPP_E6_IDS = ("S13",) + tuple(r[0] for r in SUPP_RUNS if r[0].startswith(STAGE3_PREFIXES))
@@ -1772,6 +1782,25 @@ def supp_judge_table(paths, states, runs):
     return pd.DataFrame(rows, columns=columns)
 
 
+def supp_mask_table(paths, states, out_dir):
+    """17번 보완 4단계 노면 마스크 표(개발셋): 비교 기준(S6c)과 4단계 행마다 띠 안 정답·마스크 안 정답·넓어진 사진 비율과 국가별 넓어진 비율,
+    마스크 안 정답이 MASK_GT_MIN 이상인지. 값은 mask_gt_rows(그 실행의 config 기록으로 마스크를 다시 만듦)로 잰다. 채택은 표 14의
+    규칙 1~3과 이 조건을 모두 넘을 때만이다(계획 7장 4단계 공통)."""
+    rows = []
+    for sid in ("S6c",) + STAGE4_IDS:
+        exp, state = EXP[sid], states[sid]
+        df = mask_gt_rows(paths, exp, state, out_dir)
+        band, mask, widened = mask_gt_ratios(df)
+        row = {"stage_id": sid, "label": exp["label"], "folder": exp["name"], "status": state["status"],
+               "gt_in_band": band, "gt_in_mask": mask, "widened": widened,
+               "mask_ok": None if pd.isna(mask) else bool(round(float(mask), 6) >= MASK_GT_MIN)}
+        if df is not None and len(df):
+            for source, part in df.groupby("source"):
+                row[f"widened_{source}"] = float(part["widened"].astype(bool).mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def keep_rule_changes(paths, states):
     """남기기 규칙 center(M0) → ratio(M1)로 영상 판정이 바뀐 사진(개발셋, 끔·켬)과, 그 사진에서 한쪽에만 남은 후보의 노면 안 비율.
     두 실행의 영상별 결과(correct)를 견주고, 바뀐 사진만 지금 config에서 남기기 규칙만 바꿔 다시 검출한다(사진 몇 장이라 짧다).
@@ -1949,7 +1978,8 @@ def build_report(paths, human=None, command_line="python tools/run_all.py tables
                    "table11_tests.csv": test_table(summaries, states), "table12_time.csv": time_table(runs),
                    "table13_judge.csv": judge_table(runs), "table14_supp.csv": supp_table(paths, states),
                    "table15_tau_points.csv": supp_points_table(paths, states),
-                   "table16_supp_judge.csv": supp_judge_table(paths, states, runs)})
+                   "table16_supp_judge.csv": supp_judge_table(paths, states, runs),
+                   "table17_supp_mask.csv": supp_mask_table(paths, states, out)})
     for name, table in tables.items():
         table.to_csv(out / name, encoding="utf-8-sig", index=False)
     for kind, file in DECISION_FILES.items():
@@ -2167,6 +2197,7 @@ def summary_lines(r):
     lines += judge_lines(t["table13_judge.csv"])
     lines += supp_lines(t["table14_supp.csv"])
     lines += supp_judge_lines(t["table16_supp_judge.csv"])
+    lines += supp_mask_lines(t["table17_supp_mask.csv"])
     if r["repro"]:
         lines += ["## 시험셋 재현 확인 (같은 코드로 다시 돌린 결과가 한 번만 잰 결과와 같은지)", ""] + [f"- {line}" for line in r["repro"]] + [""]
     return lines
@@ -2208,6 +2239,17 @@ def supp_judge_lines(table):
             for _, r in table.iterrows()]
     return lines + md_table(["단계", "이름"] + [DEGRADE_NAMES[k] for k in SUPP_DEGRADE]
                             + ["개발셋 원본 샤프닝", "5쌍 흔들림만 샤프닝", "제공 태그 맞음", "제공 정상 '없음'", "own_19_none_normal"], rows)
+
+
+def supp_mask_lines(table):
+    """17번 보완 4단계 노면 마스크 줄: 띠 안 정답, 마스크 안 정답(95% 조건), 넓어진 사진."""
+    lines = ["## 17. 보완 4단계 노면 마스크 (개발셋, 마스크 안 정답 = 띠 안 정답 중 상자 중심이 노면 안)", "",
+             f"채택은 14번 표의 규칙 1~3과 마스크 안 정답 {MASK_GT_MIN:.0%} 이상을 모두 넘을 때만이다.", ""]
+    if not len(table):
+        return lines + ["아직 결과 없음", ""]
+    rows = [[r["stage_id"], r["label"], pct(r["gt_in_band"]), pct(r["gt_in_mask"]),
+             "-" if pd.isna(r["mask_ok"]) else ("예" if r["mask_ok"] else "아니오"), pct(r["widened"])] for _, r in table.iterrows()]
+    return lines + md_table(["단계", "이름", "띠 안 정답", "마스크 안 정답", f"{MASK_GT_MIN:.0%} 이상", "넓어진 사진"], rows)
 
 
 def band_lines(t):
