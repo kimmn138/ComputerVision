@@ -2570,7 +2570,7 @@ def image_lines(table, gt_note):
              f"{mark(i['v5_final_correct_off'])} / {mark(i['v5_final_correct_on'])}",
              f"{mark(i['v5_auto_correct_off'])} / {mark(i['v5_auto_correct_on'])}"] for _, i in table.iterrows()]
     return lines + md_table(["사진", "조건", "정답", "손상", "고른 전처리", "맞는 전처리?", "1차 끔/켬", "최종 끔/켬",
-                             "자동 ROI 끔/켬", "보완 최종 끔/켬", "보완 자동 ROI 끔/켬", "v6 최종 끔/켬", "v5 자동 ROI 끔/켬"], rows)
+                             "자동 ROI 끔/켬", "보완 최종 끔/켬", "보완 자동 ROI 끔/켬", "v6 최종 끔/켬", "v6 자동 ROI 끔/켬"], rows)
 
 
 def print_report(report, stage):
