@@ -28,6 +28,24 @@ def draw_candidates(bgr, cracks, potholes, y0):
     return out
 
 
+def draw_rejected(bgr, cracks, potholes, y0):
+    """점수 문턱 τ에 걸러진 후보의 윤곽을 640px 컬러 영상의 복사본에 옅은 점선으로 그린다(받은 영상은 바꾸지 않음, 보완 6단계).
+    발표에서 '후보는 만들지만 문턱에서 걸러진다'를 보여 주려는 그림이고 평가 숫자에는 쓰지 않는다. 윤곽을 1px 마스크로 그린 뒤
+    (x + y) // REJECTED_DASH가 짝수인 픽셀만 남겨 점선을 만들고, 색(균열 빨강·포트홀 파랑)과 REJECTED_ALPHA로 섞는다. 후보가 없으면 그대로."""
+    out = bgr.copy()
+    h, w = out.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    dash = ((xx + yy) // max(1, C.REJECTED_DASH)) % 2 == 0
+    for regions, color in ((cracks, CRACK_COLOR), (potholes, POTHOLE_COLOR)):
+        if not regions:
+            continue
+        line = np.zeros((h, w), np.uint8)
+        cv.drawContours(line, [r["contour"] for r in regions], -1, 255, C.REJECTED_THICKNESS, offset=(0, y0))
+        on = (line > 0) & dash
+        out[on] = np.round((1 - C.REJECTED_ALPHA) * out[on] + C.REJECTED_ALPHA * np.array(color, np.float64)).astype(np.uint8)
+    return out
+
+
 def draw_road(bgr, road, y0):
     """노면 마스크를 640px 컬러 영상의 복사본에 반투명 초록으로 칠해, 노면으로 본 곳이 맞는지 눈으로 확인하게 한다(받은 영상은 바꾸지 않음).
     road는 노면 띠 좌표 uint8 (H, W) 0/255라 y0만큼 내려 칠하고, road 높이만큼만 칠한다(roi_bottom이 1보다 작으면 띠 아래는 그대로).
