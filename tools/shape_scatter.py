@@ -34,7 +34,9 @@ sys.path.insert(
 )
 
 from src import config as C
-from src import io_utils, pipeline
+from src import detect, io_utils, pipeline
+from src.evaluate import load_gt
+from tools import evaluate_train as et
 from tools.convert_json_gt import convert_box
 from tools.evaluate_train import assign_split
 
@@ -48,6 +50,12 @@ CLASS_MAP = {
     "alligator crack": "D20",
     "pothole": "D40",
 }
+
+# --grid(보완 5-1): 분류 문턱 격자. 지금 값(4, 2.5, 0.6)을 가운데 두고 양쪽으로 한 칸 이상. 균열 하한 > 포트홀 상한인 조합만 쓴다
+GRID_CRACK_MIN = (3.0, 3.5, 4.0, 4.5, 5.0)     # CRACK_MIN_CIRC_INV 후보
+GRID_POT_MAX = (2.0, 2.5, 3.0)                 # POT_MAX_CIRC_INV 후보
+GRID_POT_SOL = (0.5, 0.6, 0.7)                 # POT_MIN_SOLIDITY 후보
+GRID_KEYS = ("CRACK_MIN_CIRC_INV", "POT_MAX_CIRC_INV", "POT_MIN_SOLIDITY")
 
 PLOT_CLASSES = (
     "D00",
@@ -257,6 +265,82 @@ def collect_candidates(image_paths):
     return rows
 
 
+def collect_dark_regions(image_paths):
+    """--grid용: 개발셋 사진마다 분류 전 어두운 영역을 모두 모은다(전처리 끔, 채택 규칙의 판정 행). run_pipeline과 같은 띠·노면 마스크·
+    노면 밖 후보 제거(USE_ROAD_MASK·ROAD_KEEP_RULE)를 쓰고, 형태 분류(균열·포트홀 문턱)와 점수 문턱 τ만 적용하지 않는다.
+    → ({사진: [영역(contour 뺌, bbox는 640px 전체 좌표)]}, {사진: 정답}, {사진: 640px 높이})"""
+    roi_table = io_utils.load_roi_table(et.ROI_PATH)
+    regions, gts, heights = {}, {}, {}
+    for index, image_path in enumerate(image_paths, start=1):
+        gt = load_gt(str(Path(C.TRAIN_GT_DIR) / f"{image_path.stem}.csv"))
+        if gt is None:
+            continue
+        bgr = io_utils.load_image(str(image_path))
+        roi = roi_table.get(image_path.name, {"top": C.ROI_TOP_DEFAULT, "bottom": C.ROI_BOTTOM_DEFAULT})
+        out = pipeline.run_pipeline(bgr, roi["top"], roi["bottom"], False)
+        found, _ = detect.extract_dark_regions(out["proc"], out["road"] if C.USE_ROAD_MASK else None)
+        if C.USE_ROAD_MASK:
+            found = pipeline.keep_on_road(found, out["road"])
+        regions[image_path.name] = [{k: v for k, v in r.items() if k != "contour"} | {"bbox": (r["bbox"][0], r["bbox"][1] + out["y0"],
+                                    r["bbox"][2], r["bbox"][3])} for r in found]
+        gts[image_path.name] = gt
+        heights[image_path.name] = out["small"].shape[0]
+        if index % 50 == 0:
+            print(f"[{index}/{len(image_paths)}] 영역 모음")
+    return regions, gts, heights
+
+
+def grid_combos():
+    """격자 조합(균열 하한, 포트홀 상한, 포트홀 solidity 하한) 가운데 균열 하한 > 포트홀 상한인 것(한 영역이 두 종류가 되지 않게)."""
+    return [(c, p, q) for c in GRID_CRACK_MIN for p in GRID_POT_MAX for q in GRID_POT_SOL if c > p]
+
+
+def scored_for(regions, combo):
+    """한 격자 조합으로 영역을 분류하고 점수(config의 SCORE_FORMULA, margin은 문턱에서의 여유라 조합마다 다시 계산)를 매긴다.
+    → {사진: {"crack": [(상자, 점수)], "pothole": [...]}} (evaluate_train.tau_curve가 받는 모양)"""
+    backup = {k: getattr(C, k) for k in GRID_KEYS}
+    try:
+        for k, v in zip(GRID_KEYS, combo):
+            setattr(C, k, v)
+        out = {}
+        for name, found in regions.items():
+            out[name] = {"crack": [], "pothole": []}
+            for r in found:
+                crack, pothole = detect.region_scores(r, float("nan"))
+                if r["circ_inv"] >= C.CRACK_MIN_CIRC_INV:
+                    out[name]["crack"].append((r["bbox"], crack))
+                if r["circ_inv"] <= C.POT_MAX_CIRC_INV and r["solidity"] >= C.POT_MIN_SOLIDITY:
+                    out[name]["pothole"].append((r["bbox"], pothole))
+        return out
+    finally:
+        for k, v in backup.items():
+            setattr(C, k, v)
+
+
+def grid_rows(regions, gts, heights, combos):
+    """격자 조합마다 τ 곡선(evaluate_train.tau_curve, 채택 규칙과 같은 정의)을 메모리에서 내고 동작점(τ 없음·fp1·fp2)의 지표를 모은다.
+    → [dict] (조합 값, none·fp1·fp2의 민감도·특이도·균형 정확도·영상당 오검출, fp2의 τ·우연 뺀 균열 재현율)"""
+    names = sorted(regions)
+    rows = []
+    for combo in combos:
+        points = et.tau_points(et.tau_curve(names, heights, scored_for(regions, combo), gts))
+        row = dict(zip(GRID_KEYS, combo))
+        for point in ("none", "fp1", "fp2"):
+            for col in ("sensitivity", "specificity", "accuracy", "balanced", "fp_per_image"):
+                row[f"{point}_{col}"] = float(points[point][col])
+        row.update({"fp2_tau_crack": float(points["fp2"]["tau_crack"]), "fp2_tau_pothole": float(points["fp2"]["tau_pothole"]),
+                    "fp2_crack_net": float(points["fp2"]["crack_ctr_recall_net"])})
+        rows.append(row)
+    return rows
+
+
+def pick_grid(rows):
+    """3단계와 같은 고르기: fp2 민감도가 가장 높은 조합, 같으면 fp1 민감도, 그다음 지금 config 값에 가까운 쪽(각 문턱의 상대 차이 합)."""
+    def distance(r):
+        return sum(abs(r[k] - getattr(C, k)) / getattr(C, k) for k in GRID_KEYS)
+    return sorted(rows, key=lambda r: (-round(r["fp2_sensitivity"], 6), -round(r["fp1_sensitivity"], 6), distance(r)))[0]
+
+
 def save_candidates(path, rows):
     """후보별 형태 특징을 CSV로 저장한다."""
 
@@ -372,12 +456,6 @@ def main(argv=None):
 
     args = parse_args(argv)
 
-    if args.grid:
-        print(
-            "안내: --grid는 S3 항목이므로 "
-            "현재 M6에서는 산점도만 생성합니다."
-        )
-
     image_dir = Path(
         C.TRAIN_IMAGE_DIR
     )
@@ -416,6 +494,23 @@ def main(argv=None):
         "개발셋 영상 수 =",
         len(image_paths)
     )
+
+    if args.grid:                       # 보완 5-1: 분류 문턱 격자 탐색(산점도는 그리지 않음)
+        if C.DETECT_MODE != "dark":
+            raise RuntimeError("--grid는 DETECT_MODE 'dark'에서만 쓴다(분류 문턱이 dark 방식의 것)")
+        regions, gts, heights = collect_dark_regions(image_paths)
+        rows = grid_rows(regions, gts, heights, grid_combos())
+        best = pick_grid(rows)
+        grid_path = os.path.join(args.out, "grid.csv")
+        with open(grid_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0]) + ["picked"])
+            writer.writeheader()
+            writer.writerows([{**r, "picked": r is best} for r in rows])
+        print("격자 =", grid_path, f"({len(rows)}개 조합)")
+        print("고른 값 =", ", ".join(f"{k} {best[k]}" for k in GRID_KEYS),
+              f"(fp2 민감도 {best['fp2_sensitivity']:.4f}, fp1 {best['fp1_sensitivity']:.4f})")
+        print("지금 값 =", ", ".join(f"{k} {getattr(C, k)}" for k in GRID_KEYS))
+        return
 
     rows = collect_candidates(
         image_paths
