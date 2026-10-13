@@ -110,6 +110,15 @@ TAU_METRICS = ["sensitivity", "specificity", "accuracy", "baseline_none", "balan
                "crack_ctr_recall", "crack_ctr_recall_chance", "crack_ctr_recall_net",
                "pothole_ctr_recall", "pothole_ctr_recall_chance", "pothole_ctr_recall_net"]
 TAU_COUNTS = ["n_images", "n_damage", "n_none"]
+# (v5, 10/13) 정밀도·F1·F2 열. 판정 기준은 바꾸지 않고 열만 더한다(docs/part_C.md '평가 지표 추가'). F_β = (1 + β²)PR / (β²P + R)
+F_BETAS = {"f1": 1.0, "f2": 2.0}           # F2는 재현율을 정밀도보다 무겁게(β = 2)
+IMAGE_COUNT_COLUMNS = ["image_tp", "image_fp", "image_fn", "image_tn"]
+SCORE_COLUMNS = ([f"all_{criterion}_{m}" for criterion in CRITERIA for m in ("precision", "recall")]
+                 + [f"{kind}_{criterion}_{f}" for criterion in CRITERIA for kind in (*KINDS, "all") for f in F_BETAS]
+                 + IMAGE_COUNT_COLUMNS + ["image_precision", "image_f1", "image_f2"])
+# τ 곡선의 같은 열(+ 종류별 정밀도·IoU 재현율): 중심 기준은 늘 내고, IoU 기준은 τ마다 일대일 매칭을 다시 해야 해 tau_table(iou=True)일 때만 낸다
+TAU_SCORE_METRICS = ([f"{kind}_ctr_precision" for kind in KINDS] + [f"{kind}_iou_{m}" for kind in KINDS for m in ("precision", "recall")]
+                     + [c for c in SCORE_COLUMNS if c not in IMAGE_COUNT_COLUMNS])
 TAU_FP_POINTS = {"fp1": 1.0, "fp2": 2.0}   # 영상당 오검출 1개·2개 동작점(채택 규칙 1, Plan.md 3.10)
 TAU_RULE1_FP = 2.0                         # rule1 점(채택 규칙 2·3을 재는 곳) = fp2 점: 영상당 오검출 2개 이하에서 민감도 최대(10/13 사용자 결정)
 TAU_POINT_NAMES = ("none", "fp1", "fp2", "rule1", "config")
@@ -692,12 +701,14 @@ def tau_levels(scores):
     return levels, np.concatenate([[0.0], np.arange(1, 101) / 100, [1.01]])
 
 
-def tau_table(names, heights, scored, gts, tau_crack, tau_pothole):
+def tau_table(names, heights, scored, gts, tau_crack, tau_pothole, iou=False):
     """점수 문턱 격자(균열 τ × 포트홀 τ)마다 영상 단위·후보 단위 지표를 다시 센다. 파이프라인은 다시 돌리지 않는다.
     scored: {사진: {종류: [(상자, 점수)]}}(τ로 거르기 전 모든 후보, 640px 좌표). 점수 ≥ τ인 후보만 남는다(NaN 점수는 τ = −∞에서만 남음).
     정의는 summarize와 같다: 손상 영상은 같은 종류 후보 중심이 정답 안이면 맞힘, 무손상 영상은 후보가 0개면 맞힘, 영상당 오검출은
     중심이 같은 종류 정답 밖인 후보, 재현율은 정답 상자 기준, 우연 대조군은 chance_found와 같은 짝(높이 묶음 안 이름순 다음 사진).
-    중심 판정은 evaluate.count_center_hits를 그대로 써서 요약 표와 같은 경계(상자 경계 포함)를 쓴다. → 행 = 균열 τ 바깥 순서의 DataFrame"""
+    중심 판정은 evaluate.count_center_hits를 그대로 써서 요약 표와 같은 경계(상자 경계 포함)를 쓴다. → 행 = 균열 τ 바깥 순서의 DataFrame
+    (v5) 기존 열 뒤에 정밀도·F1·F2(TAU_SCORE_METRICS, 정의는 score_columns)를 더한다. 중심 기준 정밀도 = 남은 후보 중 중심이 같은 종류
+    정답 안인 비율. iou=True면 종류·τ마다 evaluate.count_matches(IoU ≥ IOU_THRESH, 일대일)를 다시 해 IoU 기준 열도 채우고, 아니면 NaN."""
     names = sorted(names)
     tc, tp = np.asarray(tau_crack, float), np.asarray(tau_pothole, float)
     taus = {"crack": tc, "pothole": tp}
@@ -777,14 +788,83 @@ def tau_table(names, heights, scored, gts, tau_crack, tau_pothole):
         columns[f"{kind}_ctr_recall"] = spread(found)
         columns[f"{kind}_ctr_recall_chance"] = spread(chance)
         columns[f"{kind}_ctr_recall_net"] = spread(found - chance)
+    columns.update(tau_score_columns(names, cands, truths, taus, gt_max, fp_scores, all_scores, good_damage, n_none - good_none,
+                                     sens, iou))
     return pd.DataFrame(columns)
 
 
-def tau_curve(names, heights, scored, gts):
+def tau_score_columns(names, cands, truths, taus, gt_max, fp_scores, all_scores, img_tp, img_fp, sens, iou):
+    """(v5) tau_table의 격자마다 정밀도·F1·F2 열(TAU_SCORE_METRICS). 종류별 개수는 그 종류 τ에만 달려 있어 1차원으로 센 뒤 격자로 펼친다.
+    cands: {사진: {종류: [(상자, 점수)]}}(NaN 점수는 −∞), truths: {사진: {종류: [상자]}}, gt_max: 정답마다 안에 든 후보 최고 점수,
+    img_tp·img_fp·sens: 격자 (균열 τ, 포트홀 τ) 배열. iou가 거짓이면 IoU 기준 열은 NaN."""
+    tc, tp_ = taus["crack"], taus["pothole"]
+    shape = (len(tc), len(tp_))
+
+    def grid(values, kind):
+        values = np.asarray(values, float)
+        return np.broadcast_to(values[:, None] if kind == "crack" else values[None, :], shape)
+
+    def div(a, b):
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.where(b > 0, a / np.where(b > 0, b, 1), np.nan)
+
+    def fb(p, r, beta):
+        d = beta * beta * p + r
+        with np.errstate(invalid="ignore", divide="ignore"):
+            value = np.where(d > 0, (1 + beta * beta) * p * r / np.where(d > 0, d, 1), 0.0)
+        return np.where(np.isnan(p) | np.isnan(r), np.nan, value)
+
+    def at_least(values, tau):
+        ordered = np.sort(np.asarray(values, float))
+        return len(ordered) - np.searchsorted(ordered, tau, side="left")
+
+    counts = {}
+    for kind in KINDS:
+        n_pred, n_fp = at_least(all_scores[kind], taus[kind]), at_least(fp_scores[kind], taus[kind])
+        n_gt = len(gt_max[kind])
+        with np.errstate(invalid="ignore"):
+            n_found = (np.asarray(gt_max[kind], float)[:, None] >= taus[kind][None, :]).sum(0) if n_gt else np.zeros(len(taus[kind]))
+        counts[("ctr", kind)] = {"tp": grid(n_pred - n_fp, kind), "fp": grid(n_fp, kind),
+                                 "found": grid(n_found, kind), "fn": grid(n_gt - n_found, kind)}
+        if iou:
+            sums = np.zeros((len(taus[kind]), len(COUNT_KEYS)))
+            for t, tau in enumerate(taus[kind]):
+                for name in names:
+                    kept = [b for b, s in cands[name][kind] if s >= tau]
+                    c = count_matches(kept, truths[name][kind], C.IOU_THRESH)
+                    sums[t] += [c[key] for key in COUNT_KEYS]
+            counts[("iou", kind)] = {key: grid(sums[:, i], kind) for i, key in enumerate(COUNT_KEYS)}
+
+    columns = {}
+    empty = np.full(shape[0] * shape[1], np.nan)
+    for criterion in CRITERIA:
+        if (criterion, "crack") not in counts:
+            for column in TAU_SCORE_METRICS:
+                if f"_{criterion}_" in column:
+                    columns[column] = empty
+            continue
+        total = {key: counts[(criterion, "crack")][key] + counts[(criterion, "pothole")][key] for key in COUNT_KEYS}
+        for kind in (*KINDS, "all"):
+            c = total if kind == "all" else counts[(criterion, kind)]
+            p, r = div(c["tp"], c["tp"] + c["fp"]), div(c["found"], c["found"] + c["fn"])
+            columns[f"{kind}_{criterion}_precision"] = p.ravel()
+            if kind == "all" or criterion == "iou":
+                columns[f"{kind}_{criterion}_recall"] = r.ravel()
+            for name, beta in F_BETAS.items():
+                columns[f"{kind}_{criterion}_{name}"] = fb(p, r, beta).ravel()
+    img_tp, img_fp = np.asarray(img_tp, float), np.asarray(img_fp, float)
+    p_img = div(img_tp, img_tp + img_fp)
+    columns["image_precision"] = p_img.ravel()
+    for name, beta in F_BETAS.items():
+        columns[f"image_{name}"] = fb(p_img, np.asarray(sens, float), beta).ravel()
+    return {column: columns[column] for column in TAU_SCORE_METRICS}
+
+
+def tau_curve(names, heights, scored, gts, iou=False):
     """τ 격자 전체(종류마다 tau_levels 102개 → 102 × 102점)의 지표와 분위(q_crack·q_pothole), 파레토 표시.
     pareto = 영상당 오검출이 같거나 적은 점들 가운데 민감도가 가장 높은 점(곡선의 바깥 경계)."""
     levels = {kind: tau_levels([s for name in names for _, s in scored[name][kind]]) for kind in KINDS}
-    table = tau_table(names, heights, scored, gts, levels["crack"][0], levels["pothole"][0])
+    table = tau_table(names, heights, scored, gts, levels["crack"][0], levels["pothole"][0], iou=iou)
     table.insert(2, "q_crack", np.repeat(levels["crack"][1], len(levels["pothole"][1])))
     table.insert(3, "q_pothole", np.tile(levels["pothole"][1], len(levels["crack"][1])))
     sens = np.nan_to_num(table["sensitivity"].to_numpy(), nan=-1.0)
@@ -931,6 +1011,53 @@ def ratio(numerator, denominator):
     return numerator / denominator if denominator else np.nan
 
 
+def f_beta(precision, recall, beta):
+    """F_β = (1 + β²)PR / (β²P + R). 정밀도·재현율이 NaN(분모 0)이면 NaN, 둘 다 0이면 0."""
+    if np.isnan(precision) or np.isnan(recall):
+        return np.nan
+    denominator = beta * beta * precision + recall
+    return (1 + beta * beta) * precision * recall / denominator if denominator > 0 else 0.0
+
+
+def score_columns(rows):
+    """영상별 행(종류·기준별 tp·fp·found·fn, has_damage, correct)에서 정밀도·F1·F2 열(SCORE_COLUMNS)을 낸다(v5, 10/13).
+    후보 단위: 정밀도 = tp ÷ (tp + fp)(검출 성공 후보 ÷ 전체 후보), 재현율 = found ÷ (found + fn). 'all'은 두 종류 개수를 더해 낸다.
+    중심 기준(ctr)은 한 정답 안의 후보 여럿을 모두 성공으로 세고, IoU 기준(iou)은 정답 하나에 후보 하나(IoU ≥ IOU_THRESH)다.
+    영상 단위 혼동 행렬: TP = 손상 영상 검출 성공, FN = 손상 영상 검출 실패, FP = 무손상 영상에 후보 있음, TN = 무손상 영상에 후보 없음.
+    영상 정밀도 = TP ÷ (TP + FP), 재현율 = 민감도. 저장된 train_detail.csv 행(문자열)도 받는다. → {열: 값(float, 개수는 int)}"""
+    def num(r, key):
+        return int(float(r[key]))
+
+    def flag(r, key):
+        v = r[key]
+        return bool(v) if isinstance(v, (bool, np.bool_)) else str(v) == "True"
+
+    out = {}
+    for criterion in CRITERIA:
+        total = {key: 0 for key in COUNT_KEYS}
+        for kind in (*KINDS, "all"):
+            if kind == "all":
+                counts = total
+            else:
+                counts = {key: sum(num(r, f"{kind}_{criterion}_{key}") for r in rows) for key in COUNT_KEYS}
+                total = {key: total[key] + counts[key] for key in COUNT_KEYS}
+            precision = ratio(counts["tp"], counts["tp"] + counts["fp"])
+            recall = ratio(counts["found"], counts["found"] + counts["fn"])
+            if kind == "all":
+                out[f"all_{criterion}_precision"], out[f"all_{criterion}_recall"] = precision, recall
+            for name, beta in F_BETAS.items():
+                out[f"{kind}_{criterion}_{name}"] = f_beta(precision, recall, beta)
+    pairs = [(flag(r, "has_damage"), flag(r, "correct")) for r in rows]
+    tp = sum(1 for d, c in pairs if d and c)
+    fn = sum(1 for d, c in pairs if d and not c)
+    tn = sum(1 for d, c in pairs if not d and c)
+    fp = sum(1 for d, c in pairs if not d and not c)
+    precision, recall = ratio(tp, tp + fp), ratio(tp, tp + fn)
+    out.update({"image_tp": tp, "image_fp": fp, "image_fn": fn, "image_tn": tn, "image_precision": precision,
+                **{f"image_{name}": f_beta(precision, recall, beta) for name, beta in F_BETAS.items()}})
+    return out
+
+
 def summarize(keys, rows, preds, gts):
     """영상별 행 묶음 하나(한 파라미터 세트·전처리 조건, 또는 그중 한 국가)를 요약 한 줄로 만든다.
     종류·기준별 개수와 정밀도·재현율(영상별 비율의 평균이 아니라 합계로), 영상 단위 지표, 영상당 후보·오검출, 우연 대조군.
@@ -998,6 +1125,10 @@ def summarize(keys, rows, preds, gts):
     row["judge_hit_rate"] = metric_text(ratio(sum(r["judge_hit"] for r in judged), len(judged)))
     row["judge_base_rate"] = metric_text(ratio(sum(r["judge_base"] for r in judged), len(judged)))
 
+    # (v5) 정밀도·F1·F2. 기존 열 뒤에만 더한다
+    for key, value in score_columns(rows).items():
+        row[key] = value if key in IMAGE_COUNT_COLUMNS else metric_text(value)
+
     return row
 
 
@@ -1012,7 +1143,7 @@ def summary_fieldnames(extra=()):
             columns += [f"{prefix}_{key}" for key in COUNT_KEYS]
             columns += [f"{prefix}_precision", f"{prefix}_recall"]
 
-    return columns + IMAGE_COLUMNS + CHANCE_COLUMNS + MEAN_COLUMNS + JUDGE_COLUMNS
+    return columns + IMAGE_COLUMNS + CHANCE_COLUMNS + MEAN_COLUMNS + JUDGE_COLUMNS + SCORE_COLUMNS
 
 
 def save_csv(path, rows, fieldnames):
@@ -1322,8 +1453,8 @@ def write_tau_outputs(out_dir, param_sets, degrade_kind, detail_rows, summary_ro
         for mode, _ in MODES:
             key = (params["name"], mode)
             names = [r["image"] for r in detail_rows if (r["params"], r["preprocess"]) == key]
-            curve = tau_curve(names, heights, scored[key], gts)
-            config = tau_table(names, heights, scored[key], gts, [tau_c], [tau_p]).iloc[0].to_dict() if use_tau else None
+            curve = tau_curve(names, heights, scored[key], gts, iou=True)
+            config = tau_table(names, heights, scored[key], gts, [tau_c], [tau_p], iou=True).iloc[0].to_dict() if use_tau else None
             found = tau_points(curve, config)
             if config is None:
                 found["config"] = {**found["none"], "note": "USE_SCORE_TAU 끔(τ 없음과 같음)"}
@@ -1334,10 +1465,16 @@ def write_tau_outputs(out_dir, param_sets, degrade_kind, detail_rows, summary_ro
                     image_rows += [{**keys, "point": point, **r} for r in
                                    tau_image_rows(names, scored[key], gts, found[point]["tau_crack"], found[point]["tau_pothole"])]
             curve_rows += tau_rows(keys, curve.to_dict("records"),
-                                   ["tau_crack", "tau_pothole", "q_crack", "q_pothole"] + TAU_COUNTS + TAU_METRICS + ["pareto"])
+                                   ["tau_crack", "tau_pothole", "q_crack", "q_pothole"] + TAU_COUNTS + TAU_METRICS + ["pareto"]
+                                   + TAU_SCORE_METRICS)
             point_rows += tau_rows(keys, [{**found[p], "point": p} for p in TAU_POINT_NAMES],
-                                   ["point", "tau_crack", "tau_pothole"] + TAU_COUNTS + TAU_METRICS + ["note"])
+                                   ["point", "tau_crack", "tau_pothole"] + TAU_COUNTS + TAU_METRICS + ["note"] + TAU_SCORE_METRICS)
             summary = next(r for r in summary_rows if (r["params"], r["preprocess"]) == key)
+            point = found["config"] if use_tau else found["none"]    # 실행에 쓴 τ 점 = 요약 표와 같은 후보
+            same = [m for m in TAU_SCORE_METRICS if m in summary]
+            differ = [m for m in same if metric_text(float(point[m])) != summary[m]]
+            print(f"정밀도·F1·F2 확인 ({params['name']}, {mode}): 실행 τ 점이 요약 표와 "
+                  + (f"{len(same)}열 모두 같음" if not differ else f"다름 → {differ}"))
             if not use_tau:
                 differ = [m for m in TAU_METRICS if metric_text(float(found["none"][m])) != summary[m]]
                 print(f"τ 곡선 확인 ({params['name']}, {mode}): τ 없음 점이 요약 표와 "
