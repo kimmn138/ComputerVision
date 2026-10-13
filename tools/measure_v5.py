@@ -655,6 +655,70 @@ def iou_lines(cands, gts):
     return lines
 
 
+def diag_roi(items):
+    """ROI 상단 경계 진단(10/13 밤): 사진마다 지금 config로 사진 전체 노면 마스크를 만들어 사진 전체 노면 비율, 첫 확장 구간의 노면 비율·질감 비와
+    걸린 조건, 사진 전체 마스크의 시드 영역(ROAD_SEED_BOX를 사진 전체에 적용한 위치)과 그 안의 색(Lab 중앙값, 밝은 표시·높은 채도 비율,
+    마스크 안 비율), 첫 구간에서 마스크 밖 픽셀이 밝은 표시인 비율, ROI 위 정답 수를 잰다. 확인 그림(사진 + 시드 영역 + 첫 구간 + 정답, 사진 전체
+    노면 마스크)을 results/measure_v5/diag_<사진>.png로 저장한다. → DataFrame"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams["font.family"] = C.FONT_BY_PLATFORM.get(sys.platform, C.FONT_DEFAULT)
+    rows = []
+    for name, path, gt_path, top0, bottom in items:
+        small = io_utils.resize_width(io_utils.load_image(path))
+        H, W = small.shape[:2]
+        gt = evaluate.load_gt(str(gt_path)) or []
+        road = io_utils.road_mask(small) > 0
+        tex = pipeline.local_std(cv.cvtColor(small, cv.COLOR_BGR2GRAY), C.AUTO_BAND_TEX_KSIZE)
+        tr = band_trace(small, top0, road, tex)
+        top = pipeline.auto_band_top(small, top0) if C.AUTO_BAND_TOP else top0
+        sx0, sy0, sx1, sy1 = _seed_box(W, H)
+        lab8 = cv.cvtColor(cv.GaussianBlur(small, (0, 0), C.ROAD_BLUR_SIGMA), cv.COLOR_BGR2LAB).astype(np.float32)
+        seed = (slice(sy0, sy1), slice(sx0, sx1))
+        gray = cv.cvtColor(small, cv.COLOR_BGR2GRAY)
+        bright = bright_fill(gray, dilate=False)
+        chroma = np.sqrt((lab8[:, :, 1] - 128) ** 2 + (lab8[:, :, 2] - 128) ** 2)
+        y_seg0, y_seg1 = int(H * max(0.0, round(top0 - C.AUTO_BAND_STEP, 6))), int(H * top0)
+        seg_off = ~road[y_seg0:y_seg1]
+        why = ("노면 비율" if not tr["road1_ok"] else "") + ("·" if not tr["road1_ok"] and not tr["tex1_ok"] else "") + ("질감 비" if not tr["tex1_ok"] else "")
+        rows.append({"image": name, "top": top, "full_road": float(road.mean()), "road1": tr["road1"], "tex1": tr["tex1"],
+                     "blocked_by": why or "(넓어짐)", "seed_box": f"x {sx0}~{sx1}, y {sy0}~{sy1} (높이 {sy0 / H:.2f}~{sy1 / H:.2f})",
+                     "seed_L": float(np.median(lab8[seed][..., 0])), "seed_chroma": float(np.median(chroma[seed])),
+                     "seed_bright": float(bright[seed].mean()), "seed_hichroma": float((chroma[seed] > HIGH_CHROMA).mean()),
+                     "seed_in_mask": float(road[seed].mean()), "seg_off": float(seg_off.mean()),
+                     "seg_off_bright": float(bright[y_seg0:y_seg1][seg_off].mean()) if seg_off.any() else np.nan,
+                     "gt_above": sum(1 for x, y, w, h, k in gt if y + h / 2 < int(H * top)), "n_gt": len(gt)})
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4.2 * H / W + 0.6))
+        img = small.copy()
+        cv.rectangle(img, (sx0, sy0), (sx1 - 1, sy1 - 1), (0, 255, 255), 2)
+        cv.rectangle(img, (0, y_seg0), (W - 1, y_seg1 - 1), (255, 0, 255), 2)
+        cv.line(img, (0, int(H * top)), (W - 1, int(H * top)), (0, 0, 255), 2)
+        for x, y, w, h, k in gt:
+            cv.rectangle(img, (x, y), (x + w, y + h), (255, 255, 255), 2)
+        ov = small.copy()
+        ov[road] = (0.5 * ov[road] + 0.5 * np.array((0, 255, 0))).astype(np.uint8)
+        cv.rectangle(ov, (sx0, sy0), (sx1 - 1, sy1 - 1), (0, 255, 255), 2)
+        cv.rectangle(ov, (0, y_seg0), (W - 1, y_seg1 - 1), (255, 0, 255), 2)
+        for ax, im, title in zip(axes, (img, ov), ("사진(노랑 시드 영역, 자홍 첫 확장 구간, 빨강 ROI 상단 경계, 흰 정답)", "사진 전체 노면 마스크(초록)")):
+            ax.imshow(cv.cvtColor(im, cv.COLOR_BGR2RGB))
+            ax.set_title(title, fontsize=8)
+            ax.axis("off")
+        r = rows[-1]
+        fig.suptitle(f"{name} — 전체 노면 {r['full_road']:.2f}, 첫 구간 노면 {r['road1']:.2f}·질감 비 {r['tex1']:.2f} → {r['blocked_by']}", fontsize=9)
+        fig.tight_layout()
+        fig.savefig(OUT_DIR / f"diag_{Path(name).stem}.png", dpi=70)
+        plt.close(fig)
+    return pd.DataFrame(rows)
+
+
+def _seed_box(w, h):
+    """ROAD_SEED_BOX를 (w, h) 영상에 적용한 시드 상자 (x0, y0, x1, y1). io_utils.road_mask와 같은 자르기."""
+    fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
+    x0, y0 = max(0, min(int(w * fx0), w - 1)), max(0, min(int(h * fy0), h - 1))
+    return x0, y0, max(x0 + 1, min(int(w * fx1), w)), max(y0 + 1, min(int(h * fy1), h))
+
+
 STUCK_SOURCES = ("China_Drone", "China_MotorBike")   # (1) 재측정 대상: 사진 전체 노면 ≥ 0.8인데 시작 경계에 머문 드론·오토바이 사진
 
 
@@ -690,6 +754,8 @@ def main(argv=None):
                         help="(2') 개발셋 실제 포트홀 후보의 질감 비만 잰다 → B2_pothole_candidates.csv, summary_candidates.txt")
     parser.add_argument("--iou", action="store_true",
                         help="IoU 기준이 낮은 이유: 개발셋 중심 기준 검출 성공 후보의 IoU·넓이 비·조각 수 → D_iou_*.csv, summary_iou.txt")
+    parser.add_argument("--diag", action="store_true",
+                        help="ROI 상단 경계 진단: 0.5에 머문 드론·오토바이 개발셋 사진과 39장 중 0.5에 머물거나 ROI 위 정답이 있는 사진 → D_diag.csv, diag_*.png")
     parser.add_argument("--stuck", action="store_true", help="(1) 재측정: 0.5에 머문 드론·오토바이 사진만 지금 config로 다시 잰다")
     parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                         help="이번 실행에만 바꿀 config 값(여러 번). 값은 파이썬 리터럴(예: ROAD_L_RANGE_MAX=64, ROAD_COLOR_DIST='mahal')")
@@ -709,6 +775,18 @@ def main(argv=None):
         (OUT_DIR / "summary_iou.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         for line in lines:
             print(line)
+        return
+    if args.diag:
+        a = pd.read_csv(OUT_DIR / "A_roi_dev.csv", encoding="utf-8-sig")
+        stuck = set(a[(a.full_road >= FULL_ROAD_LEVELS[0]) & (a.top == a.top_start) & (a.top_start == 0.5) & a.source.isin(STUCK_SOURCES)].image)
+        items = [it for it in dev_items() if it[0] in stuck] + own_items()
+        df = diag_roi(items)
+        df.insert(0, "set", ["dev"] * len(stuck) + ["39"] * (len(df) - len(stuck)))
+        df.to_csv(OUT_DIR / "D_diag.csv", index=False, encoding="utf-8-sig")
+        pd.set_option("display.width", 250)
+        pd.set_option("display.max_columns", 30)
+        show = df[(df.set == "dev") | (df.top == 0.5) | (df.gt_above > 0)]
+        print(show.drop(columns=["seed_box"]).to_string(index=False, float_format=lambda v: f"{v:.2f}"))
         return
     if args.stuck:
         df, lines = stuck_check({"dev": dev_items()})

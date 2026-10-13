@@ -16,6 +16,16 @@ def local_std(gray, ksize):
     return np.sqrt(np.maximum(cv.blur(g * g, (ksize, ksize)) - mean * mean, 0))
 
 
+def fixed_seed_box(width, height, top, bottom, y0):
+    """(v5 V1c) 시드 상자를 '원래 ROI(top~bottom 비율)'의 ROAD_SEED_BOX 자리에 두고, 위에서 y0픽셀을 잘라 낸 영상의 좌표로 돌려준다
+    → (x0, y0, x1, y1) 픽셀. ROI가 넓어져도 시드가 위쪽(나무·하늘)으로 올라가지 않게 하려고다. 넓어지지 않았으면(y0 = 원래 ROI 시작)
+    io_utils.road_mask의 상자와 같다."""
+    fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
+    r0, r1 = int(height * top), int(height * bottom)
+    span = max(1, r1 - r0)
+    return (int(width * fx0), r0 + int(span * fy0) - y0, int(width * fx1), r0 + int(span * fy1) - y0)
+
+
 def auto_band_top(small, top):
     """노면만 찍힌 사진(드론·오토바이 시점)에서 띠 위쪽 노면을 버리지 않으려고, 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 정한다.
     small은 640px 컬러 사진 전체, top은 시작 경계(비율). 바로 위 구간(config C 구역 AUTO_BAND_STEP 높이)의 노면 픽셀 비율이
@@ -27,7 +37,11 @@ def auto_band_top(small, top):
     시작 띠에 노면 픽셀이 없거나 결이 0이면 견줄 기준이 없어 넓히지 않는다.
     노면 마스크는 A의 io_utils.road_mask를 사진 전체에 한 번 부른다. 구간 경계는 crop_roi와 같이 int(높이 × 비율)로 자른다.
     받은 영상은 바꾸지 않고, 정한 경계(비율, float)를 돌려준다."""
-    road = io_utils.road_mask(small) > 0
+    if C.AUTO_BAND_SEED_FIXED:                          # (v5 V1c) 사진 전체 마스크의 시드도 원래 아래쪽 ROI(top~ROI_BOTTOM_DEFAULT) 자리
+        h_img, w_img = small.shape[:2]
+        road = io_utils.road_mask_seeded(small, fixed_seed_box(w_img, h_img, top, C.ROI_BOTTOM_DEFAULT, 0)) > 0
+    else:
+        road = io_utils.road_mask(small) > 0
     h = road.shape[0]
     if C.AUTO_BAND_USE_TEXTURE:
         tex = local_std(cv.cvtColor(small, cv.COLOR_BGR2GRAY), C.AUTO_BAND_TEX_KSIZE)
@@ -93,13 +107,17 @@ def run_pipeline(bgr, top, bottom, use_preprocess):
     끔·켬에 같음). 실제로 쓴 경계는 top, 그 계산 시간은 t_band_ms(꺼져 있으면 0.0)로 결과에 담는다. 꺼져 있으면 받은 top 그대로다."""
     small = io_utils.resize_width(bgr)
     t_band_ms = 0.0
+    top0 = top
     if C.AUTO_BAND_TOP:
         t_band = time.perf_counter()
         top = auto_band_top(small, top)
         t_band_ms = round((time.perf_counter() - t_band) * 1000, 2)
     roi, y0 = io_utils.crop_roi(small, top, bottom)
     t_road = time.perf_counter()
-    road = io_utils.road_mask(roi)
+    if C.AUTO_BAND_SEED_FIXED:                          # (v5 V1c) ROI가 넓어져도 시드는 받은 top의 ROI 자리
+        road = io_utils.road_mask_seeded(roi, fixed_seed_box(small.shape[1], small.shape[0], top0, bottom, y0))
+    else:
+        road = io_utils.road_mask(roi)
     t_road_ms = round((time.perf_counter() - t_road) * 1000, 2)
     road_arg = road if C.USE_ROAD_MASK else None
     gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY)

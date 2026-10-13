@@ -1016,6 +1016,32 @@ def band_scene(sky_ratio):
     return bgr
 
 
+def test_auto_band_seed_fixed():
+    """(v5 V1c) fixed_seed_box: ROI가 넓어지지 않았으면(y0 = 원래 ROI 시작) io_utils.road_mask의 시드 상자와 같고, 넓어지면 같은 사진 위치를
+    넓어진 ROI 좌표로 옮긴다. AUTO_BAND_TOP을 끄면(ROI가 넓어지지 않음) AUTO_BAND_SEED_FIXED를 켜도 run_pipeline의 노면 마스크·row가 끔과 같다."""
+    H, W = 480, 640
+    r0 = int(H * 0.5)
+    fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
+    h_roi = H - r0
+    check(pipeline.fixed_seed_box(W, H, 0.5, 1.0, r0) == (int(W * fx0), int(h_roi * fy0), int(W * fx1), int(h_roi * fy1)),
+          "fixed_seed_box: 넓어지지 않았는데 road_mask의 시드 상자와 다름")
+    y_wide = int(H * 0.2)
+    box = pipeline.fixed_seed_box(W, H, 0.5, 1.0, y_wide)
+    check(box[1] == r0 + int(h_roi * fy0) - y_wide and box[3] == r0 + int(h_roi * fy1) - y_wide,
+          f"fixed_seed_box: 넓어진 ROI 좌표로 옮기지 않음 ({box})")
+    bgr = np.full((H, W, 3), 110, np.uint8)
+    rng = np.random.default_rng(3)
+    bgr = (bgr.astype(int) + rng.normal(0, 6, bgr.shape)).clip(0, 255).astype(np.uint8)
+    bgr[:120] = (60, 140, 60)
+    with patched(C, "AUTO_BAND_TOP", False):
+        with patched(C, "AUTO_BAND_SEED_FIXED", False):
+            off = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+        with patched(C, "AUTO_BAND_SEED_FIXED", True):
+            on = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    check(np.array_equal(off["road"], on["road"]) and {k: v for k, v in off["row"].items() if not k.startswith("t_")}
+          == {k: v for k, v in on["row"].items() if not k.startswith("t_")}, "AUTO_BAND_SEED_FIXED: ROI가 넓어지지 않았는데 결과가 달라짐")
+
+
 def test_auto_band_switch_off():
     """AUTO_BAND_TOP이 꺼져 있으면 사진 전체 노면 마스크를 계산하지 않고 받은 top 그대로 자른다(지금 결과 그대로).
     결과의 top은 받은 값, t_band_ms는 0.0이고, 켰을 때 경계가 그대로이면(가짜 auto_band_top) 결과가 끈 것과 같다."""
