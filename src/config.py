@@ -41,6 +41,13 @@ ROAD_LANE_DELTA = 20        # 밝기 단계(L, 0~255), 탑햇(주변보다 밝�
 ROAD_LANE_WHITE_CHROMA = 12 # Lab a·b 거리, 무채색(128, 128)과 이보다 가까우면 흰 차선 색
 ROAD_LANE_YELLOW_B = 20     # Lab b − 128, 이 값 이상이고 |a − 128|의 2배 이상이면 노란 중앙선 색
 ROAD_CLOSE_BEFORE_SEED = False  # (나) 켬·끔. True면 씨앗 연결 요소를 고르기 전에 ROAD_CLOSE_KSIZE 닫힘을 해, 닫힘 폭보다 가는 차선 건너편을 잇는다
+# 아래는 10/13 보완 3단계(C가 A 동의로 넣음, docs/tasks/supplement.md 3-1~3-5). 스위치를 모두 끄면 v9와 같다
+USE_BLUR_DIR = False        # 3-1 켬·끔. True면 방향별 에지 세기 비율(blur_dir) < BLUR_DIR_MIN일 때도 샤프닝(흔들림). 기존 두 흐림 기준과 '또는'
+BLUR_DIR_MIN = 0.5          # 비율(최소 방향 ÷ 최대 방향 기울기 제곱 평균), 출발값. 개발셋 원본 분포로 후보를 정함(part_C 보완 결과 3-1)
+BLUR_DIR_ANGLES = (0, 45, 90, 135)  # 도, 기울기 세기를 잴 방향. 0 = 가로(x), 90 = 세로(y)
+NIGHT_DENOISE = False       # 3-5 켬·끔. True면 잡티 제거와 밝게 하는 감마(< 1)를 함께 고른 영상(야간)에 가우시안 대신 NLM
+NIGHT_DENOISE_H = 10        # 밝기 단계, NLM 세기 h. 잡음 σ와 비슷하게 잡는다(인위 저하 night의 잡음 σ 10, 계획 3-5)
+NIGHT_NLM_TEMPLATE, NIGHT_NLM_SEARCH = 7, 21    # px, NLM 비교 조각·찾는 창 크기(OpenCV 기본값)
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
