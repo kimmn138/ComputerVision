@@ -212,7 +212,7 @@ def test_road_mask_seed_cells():
     rng = np.random.default_rng(1)
     img[patch] = (np.array([45, 140, 70]) + rng.normal(0, 8, (patch.sum(), 3))).clip(0, 255).astype(np.uint8)
     road = part["road"] & ~patch
-    with config_values(ROAD_SEED_MODE="box"):
+    with config_values(ROAD_SEED_MODE="box", ROAD_SEED_CHECK=False):     # 시드 검사(V6a, 10/13 밤 채택)를 끈 상자 시드 그대로
         box = io_utils.road_mask(img) == 255
     with config_values(ROAD_SEED_MODE="cells"):
         cells = io_utils.road_mask(img) == 255
