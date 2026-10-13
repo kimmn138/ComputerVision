@@ -590,6 +590,71 @@ def candidate_lines(df):
     return lines
 
 
+def box_iou(a, b):
+    """두 상자 (x, y, w, h)의 IoU(겹친 넓이 ÷ 합친 넓이). 겹치지 않으면 0."""
+    ix = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
+
+
+def measure_iou(items):
+    """IoU 기준 F1이 중심 기준보다 낮은 이유: 지금 config(점수 임계값 포함, 전처리 미적용)로 검출해, 중심이 같은 종류 정답 상자 안인 후보
+    (중심 기준 검출 성공)마다 그 정답 상자와의 IoU, 넓이 비(후보 ÷ 정답), 가로·세로 비를 잰다. 정답 상자마다 성공 후보 수(조각 수)와,
+    성공 후보 상자를 모두 합친 외접 상자의 IoU도 낸다(조각을 하나로 묶으면 IoU를 넘는지). → (후보 DataFrame, 정답 DataFrame)"""
+    cand_rows, gt_rows = [], []
+    for n, (name, path, gt_path, top0, bottom) in enumerate(items, start=1):
+        gt = evaluate.load_gt(str(gt_path)) or []
+        out = pipeline.run_pipeline(io_utils.load_image(path), top0, bottom, False)
+        for kind in ("crack", "pothole"):
+            truth = [(x, y, w, h) for x, y, w, h, k in gt if k == kind]
+            boxes = [(x, y + out["y0"], w, h) for x, y, w, h in (r["bbox"] for r in out[f"{kind}s"])]
+            hits = {i: [] for i in range(len(truth))}
+            for b in boxes:
+                cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+                inside = [i for i, g in enumerate(truth) if g[0] <= cx <= g[0] + g[2] and g[1] <= cy <= g[1] + g[3]]
+                for i in inside:
+                    g = truth[i]
+                    hits[i].append(b)
+                    cand_rows.append({"image": name, "kind": kind, "iou": box_iou(b, g), "area_ratio": (b[2] * b[3]) / (g[2] * g[3]),
+                                      "w_ratio": b[2] / g[2], "h_ratio": b[3] / g[3], "gt_area": g[2] * g[3]})
+            for i, g in enumerate(truth):
+                hb = hits[i]
+                if hb:
+                    x0, y0 = min(b[0] for b in hb), min(b[1] for b in hb)
+                    x1, y1 = max(b[0] + b[2] for b in hb), max(b[1] + b[3] for b in hb)
+                    union_iou = box_iou((x0, y0, x1 - x0, y1 - y0), g)
+                else:
+                    union_iou = np.nan
+                gt_rows.append({"image": name, "kind": kind, "n_hits": len(hb), "best_iou": max((box_iou(b, g) for b in hb), default=np.nan),
+                                "union_iou": union_iou, "gt_area": g[2] * g[3], "gt_w": g[2], "gt_h": g[3]})
+        if n % 100 == 0:
+            print(f"IoU {n}/{len(items)}")
+    return pd.DataFrame(cand_rows), pd.DataFrame(gt_rows)
+
+
+def iou_lines(cands, gts):
+    """IoU 확인 요약 줄: 성공 후보의 IoU 분포와 넓이 비, 정답 상자별 조각 수, 조각을 묶은 외접 상자의 IoU."""
+    lines = [f"IoU 확인(지금 config, 전처리 미적용, IoU 기준 {C.IOU_THRESH})"]
+    for kind in ("crack", "pothole"):
+        c, g = cands[cands.kind == kind], gts[gts.kind == kind]
+        if not len(c):
+            lines.append(f"  {kind}: 중심 기준 검출 성공 후보 0개")
+            continue
+        q = np.quantile(c.iou, [0.1, 0.25, 0.5, 0.75, 0.9]).round(3).tolist()
+        hit = g[g.n_hits > 0]
+        lines.append(f"  {kind}: 중심 기준 검출 성공 후보 {len(c)}개 | IoU 10·25·50·75·90백분위 {q}, IoU ≥ {C.IOU_THRESH} {(c.iou >= C.IOU_THRESH).mean():.1%}")
+        lines.append(f"    넓이 비(후보 ÷ 정답) 중앙값 {c.area_ratio.median():.3f}(25·75백분위 {c.area_ratio.quantile(0.25):.3f}·{c.area_ratio.quantile(0.75):.3f}), "
+                     f"가로 비 중앙값 {c.w_ratio.median():.2f}, 세로 비 중앙값 {c.h_ratio.median():.2f}, 후보가 정답보다 큰 비율 {(c.area_ratio > 1).mean():.1%}")
+        lines.append(f"    정답 상자 {len(g)}개 중 성공 후보가 든 상자 {len(hit)}개, 상자당 성공 후보 수 중앙값 {hit.n_hits.median():.0f}·평균 {hit.n_hits.mean():.2f}"
+                     f"(2개 이상 {(hit.n_hits >= 2).mean():.1%}) | 상자별 최고 IoU 중앙값 {hit.best_iou.median():.3f}, "
+                     f"성공 후보를 묶은 외접 상자의 IoU 중앙값 {hit.union_iou.median():.3f}(≥ {C.IOU_THRESH} {(hit.union_iou >= C.IOU_THRESH).mean():.1%}"
+                     f", 최고 IoU ≥ {C.IOU_THRESH} {(hit.best_iou >= C.IOU_THRESH).mean():.1%})")
+        lines.append(f"    정답 상자 넓이 중앙값 {g.gt_area.median():.0f}px²(가로 {g.gt_w.median():.0f}·세로 {g.gt_h.median():.0f}px), 성공 후보가 든 상자는 {hit.gt_area.median():.0f}px²")
+    return lines
+
+
 STUCK_SOURCES = ("China_Drone", "China_MotorBike")   # (1) 재측정 대상: 사진 전체 노면 ≥ 0.8인데 시작 경계에 머문 드론·오토바이 사진
 
 
@@ -623,6 +688,8 @@ def main(argv=None):
     parser.add_argument("--from-csv", action="store_true", help="측정은 건너뛰고 저장된 CSV로 요약·그림만 다시 만든다")
     parser.add_argument("--candidates", action="store_true",
                         help="(2') 개발셋 실제 포트홀 후보의 질감 비만 잰다 → B2_pothole_candidates.csv, summary_candidates.txt")
+    parser.add_argument("--iou", action="store_true",
+                        help="IoU 기준이 낮은 이유: 개발셋 중심 기준 검출 성공 후보의 IoU·넓이 비·조각 수 → D_iou_*.csv, summary_iou.txt")
     parser.add_argument("--stuck", action="store_true", help="(1) 재측정: 0.5에 머문 드론·오토바이 사진만 지금 config로 다시 잰다")
     parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                         help="이번 실행에만 바꿀 config 값(여러 번). 값은 파이썬 리터럴(예: ROAD_L_RANGE_MAX=64, ROAD_COLOR_DIST='mahal')")
@@ -633,6 +700,16 @@ def main(argv=None):
         if not hasattr(C, key):
             parser.error(f"config에 없는 이름: {key}")
         setattr(C, key, ast.literal_eval(value))
+    if args.iou:
+        items = dev_items()[:args.limit] if args.limit else dev_items()
+        cands, gts = measure_iou(items)
+        cands.to_csv(OUT_DIR / "D_iou_candidates.csv", index=False, encoding="utf-8-sig")
+        gts.to_csv(OUT_DIR / "D_iou_gt.csv", index=False, encoding="utf-8-sig")
+        lines = iou_lines(cands, gts)
+        (OUT_DIR / "summary_iou.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        for line in lines:
+            print(line)
+        return
     if args.stuck:
         df, lines = stuck_check({"dev": dev_items()})
         tag = "_".join(s.replace("=", "-").replace("'", "") for s in args.set) or "config"
