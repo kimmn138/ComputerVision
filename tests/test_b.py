@@ -876,6 +876,62 @@ def test_score_edge_term():
     assert math.isclose(soft_on[0]["score_pothole"], soft_off[0]["score_pothole"] * term), "점수에 경계 항이 곱해지지 않음"
 
 
+def test_ridge_line_vs_blob():
+    """(보완 5-2) SCORE_USE_HESSIAN을 켜면 영역마다 헤시안 선 강조 ridge(0~1)를 재 균열 점수에만 곱한다. 가는 어두운 선은 작은 둥근
+    덩어리보다 ridge가 크다(C 메모리 확인: 선 0.79, 지름 12px 원 0.36~0.39). 끄면 점수는 그대로이고 ridge 키도 없다."""
+    g = asphalt(4).copy()
+    cv.line(g, (40, 60), (300, 90), 50, 3)
+    blobs = ((420, 80), (480, 170), (560, 90))
+    for c in blobs:
+        cv.circle(g, c, 6, 50, -1)
+
+    def regions(on):
+        with config_values(DETECT_MODE="dark", SCORE_FORMULA="snr", USE_SCORE_TAU=False, SCORE_USE_HESSIAN=on):
+            found = extract_dark_regions(g)[0]
+        return centered_in(found, (170, 75), 40), [r for c in blobs for r in centered_in(found, c, 8)]
+
+    (line_off, blob_off), (line_on, blob_on) = regions(False), regions(True)
+    assert len(line_on) == 1 and len(blob_on) == 3, ("시험 영상의 선·덩어리가 영역 하나씩이 아님", len(line_on), len(blob_on))
+    assert "ridge" not in line_off[0], "끔인데 ridge 키가 생김"
+    assert line_on[0]["ridge"] > max(r["ridge"] for r in blob_on), ([r["ridge"] for r in line_on], [r["ridge"] for r in blob_on])
+    assert math.isclose(line_on[0]["score_crack"], line_off[0]["score_crack"] * line_on[0]["ridge"]), "균열 점수에 ridge가 곱해지지 않음"
+    assert all(math.isclose(a["score_pothole"], b["score_pothole"]) for a, b in zip(blob_on, blob_off)), "포트홀 점수까지 바뀜"
+
+
+def test_dark_area_perspective():
+    """(보완 5-3) DARK_AREA_PERSPECTIVE를 켜면 최소 넓이가 띠 맨 위 DARK_MIN_AREA_TOP(20) → 맨 아래 DARK_MIN_AREA(40)로 행 위치에 따라 줄어,
+    띠 위쪽의 넓이 약 30 조각이 끔이면 버려지고 켬이면 남는다. 띠 아래쪽 조각(넓이 50 남짓)은 어느 쪽이든 남는다."""
+    g = asphalt(5).copy()
+    cv.rectangle(g, (100, 10), (114, 11), 45, -1)
+    cv.rectangle(g, (400, 225), (414, 226), 45, -1)
+    with config_values(DETECT_MODE="dark", DARK_AREA_PERSPECTIVE=False):
+        off = extract_dark_regions(g)[0]
+    with config_values(DETECT_MODE="dark", DARK_AREA_PERSPECTIVE=True):
+        on = extract_dark_regions(g)[0]
+    assert not centered_in(off, (107, 10), 10) and len(centered_in(on, (107, 10), 10)) == 1, "띠 위쪽 작은 조각: 끔이면 버리고 켬이면 남아야 함"
+    assert len(centered_in(off, (407, 225), 10)) == 1 and len(centered_in(on, (407, 225), 10)) == 1, "띠 아래쪽 조각이 사라짐"
+
+
+def test_bright_gravel_pothole():
+    """(보완 5-4) BRIGHT_POTHOLE을 켜면 노면과 평균 밝기가 같지만 결이 거친 자갈 원(반지름 45)이 포트홀 후보 하나로 더해진다(bright_gravel).
+    후보 형식(약속 표의 키)을 지키고, 끄면 지금과 같다."""
+    rng = np.random.default_rng(1)
+    g = asphalt(6).copy()
+    disc = np.zeros(g.shape, np.uint8)
+    cv.circle(disc, (320, 120), 45, 255, -1)
+    gravel = cv.GaussianBlur(rng.normal(125, 45, g.shape).clip(0, 255).astype(np.uint8), (0, 0), 1.0)
+    g[disc > 0] = gravel[disc > 0]
+    with config_values(DETECT_MODE="dark", USE_SCORE_TAU=False, BRIGHT_POTHOLE=False):
+        off = detect_potholes(g)[0]
+    with config_values(DETECT_MODE="dark", USE_SCORE_TAU=False, BRIGHT_POTHOLE=True):
+        on = detect_potholes(g)[0]
+    added = [r for r in on if r.get("bright_gravel")]
+    assert not any(r.get("bright_gravel") for r in off) and len(added) == 1 and centered_in(added, (320, 120), 15), added
+    keys = {"area", "elong", "fill", "solidity", "bbox", "contour", "thickness", "dt_width", "circ_inv", "contrast", "score"}
+    assert keys <= set(added[0]), keys - set(added[0])
+    assert [r["bbox"] for r in on if not r.get("bright_gravel")] == [r["bbox"] for r in off], "켬인데 원래 후보가 바뀜"
+
+
 def test_existing_tests_in_dark_mode():
     """기존 합성 시험(균열 모양·밝은 선·포트홀·빈 영상)을 DETECT_MODE='dark'에서도 모두 통과한다. C 메모리 확인: 통과."""
     with config_values(DETECT_MODE="dark"):
