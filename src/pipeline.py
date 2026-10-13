@@ -22,6 +22,8 @@ def auto_band_top(small, top):
     AUTO_BAND_ROAD_MIN 이상이면 그 구간까지 넓히고, 모자란 구간이 나오면 멈춘다. 0.0까지 넓어질 수 있고 좁히지는 않는다.
     AUTO_BAND_USE_TEXTURE가 켜져 있으면 결도 본다: 구간 노면 픽셀의 결(local_std) 중앙값 ÷ 시작 띠(top 아래) 노면 픽셀의 결 중앙값이
     1/AUTO_BAND_TEX_RATIO ~ AUTO_BAND_TEX_RATIO 밖이면 멈춘다. 노면 마스크가 색만 보고 칠한 흐린 하늘(매끈함)·나무(거침)를 거르려고다.
+    AUTO_BAND_TEX_PERSPECTIVE가 켜져 있으면 위로 k번째 구간의 아래 한계를 (1/AUTO_BAND_TEX_RATIO) × AUTO_BAND_TEX_DECAY^k로 낮춘다
+    (원근 때문에 먼 노면의 결이 매끈해 보이는 만큼 봐줌, 보완 4-4). 위 한계는 그대로다.
     시작 띠에 노면 픽셀이 없거나 결이 0이면 견줄 기준이 없어 넓히지 않는다.
     노면 마스크는 A의 io_utils.road_mask를 사진 전체에 한 번 부른다. 구간 경계는 crop_roi와 같이 int(높이 × 비율)로 자른다.
     받은 영상은 바꾸지 않고, 정한 경계(비율, float)를 돌려준다."""
@@ -33,7 +35,7 @@ def auto_band_top(small, top):
         ref_tex = float(np.median(ref)) if ref.size else 0.0
         if ref_tex <= 0:
             return top
-    cur = top
+    cur, step = top, 0
     while cur > 0:
         nxt = max(0.0, round(cur - C.AUTO_BAND_STEP, 6))    # 0.5 − 0.1 − 0.1 …의 소수 오차(0.30000000000000004)를 없앰
         seg = road[int(h * nxt):int(h * cur)]
@@ -41,9 +43,12 @@ def auto_band_top(small, top):
             break
         if C.AUTO_BAND_USE_TEXTURE:
             ratio = float(np.median(tex[int(h * nxt):int(h * cur)][seg])) / ref_tex
-            if not 1 / C.AUTO_BAND_TEX_RATIO <= ratio <= C.AUTO_BAND_TEX_RATIO:
+            low = 1 / C.AUTO_BAND_TEX_RATIO
+            if C.AUTO_BAND_TEX_PERSPECTIVE:
+                low *= C.AUTO_BAND_TEX_DECAY ** (step + 1)
+            if not low <= ratio <= C.AUTO_BAND_TEX_RATIO:
                 break
-        cur = nxt
+        cur, step = nxt, step + 1
     return cur
 
 
