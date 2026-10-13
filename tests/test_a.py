@@ -201,6 +201,49 @@ def test_road_mask_v2_edge_density():
     assert on[rest].mean() >= 0.95 and on[part["pothole"]].mean() >= 0.95, (on[rest].mean(), on[part["pothole"]].mean())
 
 
+def test_road_mask_seed_cells():
+    """v5 (3)①: 시드 상자의 오른쪽 절반을 띠 위 테두리까지 이어진 풀(구멍이 아님)로 덮으면, 상자 시드("box")는 대표색이 풀과 노면
+    사이에 떨어져 노면을 못 칠하고, 칸 시드("cells")는 노면 칸 묶음을 골라 노면을 칠하며 풀은 뺀다. 풀이 없는 띠에서는 두 방식 모두 v1과 같은 수준.
+    (C가 메모리에서 확인: box 노면 0.0, cells 노면 0.971·풀 조각 0.0·왼쪽 풀 0.0·포트홀 1.0)"""
+    bgr, part = road_band()
+    img = bgr.copy()
+    patch = np.zeros((240, 640), bool)
+    patch[:200, 320:460] = True
+    rng = np.random.default_rng(1)
+    img[patch] = (np.array([45, 140, 70]) + rng.normal(0, 8, (patch.sum(), 3))).clip(0, 255).astype(np.uint8)
+    road = part["road"] & ~patch
+    with config_values(ROAD_SEED_MODE="box"):
+        box = io_utils.road_mask(img) == 255
+    with config_values(ROAD_SEED_MODE="cells"):
+        cells = io_utils.road_mask(img) == 255
+        plain = io_utils.road_mask(bgr) == 255
+    assert box[road].mean() <= 0.5, f"상자 시드가 이미 노면을 칠함 ({box[road].mean():.3f}): 시험 장면이 시드를 오염시키지 못함"
+    assert cells[road].mean() >= 0.90 and cells[part["pothole"]].mean() >= 0.95, (cells[road].mean(), cells[part["pothole"]].mean())
+    assert cells[patch].mean() <= 0.05 and cells[part["grass"]].mean() <= 0.05, (cells[patch].mean(), cells[part["grass"]].mean())
+    assert plain[part["road"]].mean() >= 0.95 and plain[part["building"]].mean() <= 0.05, "풀 없는 띠에서 칸 시드가 v1보다 나쁨"
+    with config_values(ROAD_SEED_MODE="nope"):
+        try:
+            io_utils.road_mask(bgr)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("ROAD_SEED_MODE가 잘못된 값인데 ValueError가 나지 않음")
+
+
+def test_road_mask_l_range_max():
+    """v5 (3)①: ROAD_L_RANGE_MAX를 주면 노면 밝기 범위가 그 값을 넘지 않는다. 어두운 노면(밝기 −60)을 오른쪽에 두면
+    상한이 없을 때(범위 넓게, ROAD_L_K 20)는 잇고, 상한 30이면 뺀다."""
+    bgr, part = road_band()
+    dark = part["road"] & (np.arange(640)[None, :] >= 500)
+    img = bgr.copy()
+    img[dark] = (img[dark].astype(int) - 60).clip(0, 255).astype(np.uint8)
+    with config_values(ROAD_L_K=20, ROAD_L_RANGE_MAX=0):
+        wide = io_utils.road_mask(img) == 255
+    with config_values(ROAD_L_K=20, ROAD_L_RANGE_MAX=30):
+        capped = io_utils.road_mask(img) == 255
+    assert wide[dark].mean() >= 0.90 and capped[dark].mean() <= 0.10, (wide[dark].mean(), capped[dark].mean())
+
+
 @todo("A WP1 v2 (Should): 차선이 노면을 가르는 영상 (Plan.md 3.3 (5) 차선)")
 def test_road_mask_v2_lane_split():
     """v2: 흰 차선이 띠 아래에서 위까지 노면을 갈라도 차선 건너편 노면과 차선을 마스크에 넣는다.

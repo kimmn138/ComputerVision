@@ -108,6 +108,38 @@ def _lane_pixels(L, a, b, L_med):
     return thin_bright & (white | yellow)
 
 
+def _seed_cells(L, a, b, fallback_box):
+    """시드 상자 하나 대신, 풀밭·보닛·차선이 섞여도 노면 색을 고르도록 칸 묶음을 시드로 고른다(v5 (3)①) → bool (H, W).
+    ROAD_SEED_CELLS_BOX 안을 ROAD_SEED_GRID(가로 칸 수, 세로 칸 수)로 나누고 칸마다 흐린 Lab의 L·a·b 중앙값과 L의 MAD를 잰다.
+    두 칸의 a·b 중앙값 거리가 ROAD_CHROMA_MAX보다 가깝고 L 중앙값 차이가 칸 MAD 중앙값으로 낸 밝기 범위
+    (ROAD_L_K × (1.4826 × MAD + 2), ROAD_L_RANGE_MAX가 있으면 그 상한)보다 작으면 '비슷한 칸'이다. 비슷한 칸이 가장 많은 칸과
+    그 칸에 비슷한 칸들이 시드다. 같으면 아래 행(카메라에 가까워 노면일 가능성이 큼), 그다음 가운데 열을 고른다.
+    칸이 하나도 없으면(아주 작은 영상) fallback_box(x0, y0, x1, y1)를 쓴다. 받은 배열은 바꾸지 않는다."""
+    h, w = L.shape
+    fx0, fy0, fx1, fy1 = C.ROAD_SEED_CELLS_BOX
+    nx, ny = C.ROAD_SEED_GRID
+    xs = np.linspace(int(w * fx0), int(w * fx1), nx + 1).astype(int)
+    ys = np.linspace(int(h * fy0), int(h * fy1), ny + 1).astype(int)
+    cells = [(j, i, slice(ys[j], ys[j + 1]), slice(xs[i], xs[i + 1]))
+             for j in range(ny) for i in range(nx) if ys[j + 1] > ys[j] and xs[i + 1] > xs[i]]
+    region = np.zeros((h, w), bool)
+    if not cells:
+        x0, y0, x1, y1 = fallback_box
+        region[y0:y1, x0:x1] = True
+        return region
+    med = np.array([[np.median(L[r, c]), np.median(a[r, c]), np.median(b[r, c])] for _, _, r, c in cells])
+    mad = np.array([np.median(np.abs(L[r, c] - m[0])) for (_, _, r, c), m in zip(cells, med)])
+    tol = C.ROAD_L_K * (1.4826 * float(np.median(mad)) + 2.0)
+    if C.ROAD_L_RANGE_MAX > 0:
+        tol = min(tol, float(C.ROAD_L_RANGE_MAX))
+    chroma = np.sqrt((med[:, None, 1] - med[None, :, 1]) ** 2 + (med[:, None, 2] - med[None, :, 2]) ** 2)
+    close = (chroma < C.ROAD_CHROMA_MAX) & (np.abs(med[:, None, 0] - med[None, :, 0]) < tol)
+    order = sorted(range(len(cells)), key=lambda k: (-int(close[k].sum()), -cells[k][0], abs(cells[k][1] - (nx - 1) / 2)))
+    for k in np.flatnonzero(close[order[0]]):
+        region[cells[k][2], cells[k][3]] = True
+    return region
+
+
 def road_mask(bgr_roi):
     """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다."""
 
@@ -145,11 +177,19 @@ def road_mask(bgr_roi):
     y0 = max(0, min(y0, h - 1))
     y1 = max(y0 + 1, min(y1, h))
 
-    seed = lab[y0:y1, x0:x1]
+    # 시드 영역(bool): "box"는 위 상자 하나, "cells"는 ROI 아래쪽 칸들 가운데 색·밝기가 서로 비슷한 칸이 가장 많은 묶음(v5 (3)①).
+    # 상자 하나는 풀밭·보닛·차선이 섞이면 대표색과 밝기 MAD가 함께 흔들려 밝기 범위가 0~255를 덮는다(part_C 측정 C)
+    if C.ROAD_SEED_MODE == "box":
+        seed_region = np.zeros((h, w), bool)
+        seed_region[y0:y1, x0:x1] = True
+    elif C.ROAD_SEED_MODE == "cells":
+        seed_region = _seed_cells(L, a, b, (x0, y0, x1, y1))
+    else:
+        raise ValueError(f"ROAD_SEED_MODE는 'box' 또는 'cells'여야 함 ({C.ROAD_SEED_MODE!r})")
 
-    seed_L = seed[:, :, 0].astype(np.float32)
-    seed_a = seed[:, :, 1].astype(np.float32)
-    seed_b = seed[:, :, 2].astype(np.float32)
+    seed_L = L[seed_region]
+    seed_a = a[seed_region]
+    seed_b = b[seed_region]
     
     # seed 영역의 대표값
     L_med = float(np.median(seed_L))
@@ -174,6 +214,9 @@ def road_mask(bgr_roi):
         C.ROAD_L_K *
         (1.4826 * mad + 2.0)
     )
+    # (v5 (3)①) 밝기 범위 상한. 0이면 끔
+    if C.ROAD_L_RANGE_MAX > 0:
+        l_threshold = min(l_threshold, float(C.ROAD_L_RANGE_MAX))
 
     # 색과 밝기가 모두 노면과 비슷한 픽셀
     candidate = (
@@ -231,7 +274,7 @@ def road_mask(bgr_roi):
 
     keep_labels = set()
 
-    seed_labels = labels[y0:y1, x0:x1]
+    seed_labels = labels[seed_region]
 
     for label in np.unique(seed_labels):
         if label != 0:
