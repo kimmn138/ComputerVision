@@ -230,6 +230,32 @@ def build_view(off_img, on_img, labels, screen, unicode_ok, footer=()):
     return cv.vconcat([view] + [text_band(view.shape[1], line, unicode_ok) for line in footer])
 
 
+def text_width(text, unicode_ok):
+    """글자 한 줄을 띠에 썼을 때 오른쪽 끝 픽셀 위치(px). 넉넉히 넓은 띠에 실제로 써 보고 글자 픽셀이 있는 마지막 열을 잰다
+    (한글 글꼴은 글자마다 폭이 달라 글자 수로 어림하면 틀림)."""
+    band = text_band(C.DEMO_LABEL_HEIGHT * max(1, len(text)) + LABEL_X, text, unicode_ok)
+    cols = np.flatnonzero(band.any(axis=(0, 2)))
+    return int(cols[-1]) + 1 if cols.size else 0
+
+
+def wrap_footer(lines, width, unicode_ok):
+    """아래 띠 줄이 그림 폭(width)을 넘으면 항목 구분자(' · ', 영문 ' / ')에서 나눠 여러 줄로 만든다. 이어지는 줄은 두 칸 들여 쓴다.
+    세로 사진처럼 패널이 좁으면 설정 줄 끝이 잘리던 것을 막는다(보고서 그림 4). 넘지 않으면 그대로."""
+    sep = " · " if unicode_ok else " / "
+    out = []
+    for line in lines:
+        parts, cur = line.split(sep), ""
+        for part in parts:
+            trial = part if not cur else cur + sep + part
+            if cur and text_width(trial, unicode_ok) > width - LABEL_X:
+                out.append(cur)
+                cur = "  " + part
+            else:
+                cur = trial
+        out.append(cur)
+    return out
+
+
 def make_labels(steps_text, unicode_ok):
     """끔·켬 패널 제목 2개. 한글을 못 쓰면 영문으로(고른 전처리 이름은 콘솔에서 봄)."""
     if unicode_ok:
@@ -329,11 +355,13 @@ def draw_panel(out, rejected=None):
     return visualize.draw_candidates(base, out["cracks"], out["potholes"], out["y0"])
 
 
-def demo_one(path, args, show_fn=None, warn=None):
+def demo_one(path, args, show_fn=None, warn=None, decorate=None, screen=None, wrap=False):
     """사진 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
     (--save면 창 대신 그림 파일로 저장). --mask·--detect·--auto-band·--band-texture는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다.
     자동 띠 높이가 켜져 있으면 콘솔과 아래 띠의 ROI를 실제로 쓴 위쪽 경계로 적고, 출처에 시작 경계를 덧붙인다.
-    못 읽는 사진·설정 오류는 알기 쉬운 문구를 콘솔(과 warn이 있으면 안내 창)에 내고 1을 돌려준다. 끝 코드를 돌려준다."""
+    못 읽는 사진·설정 오류는 알기 쉬운 문구를 콘솔(과 warn이 있으면 안내 창)에 내고 1을 돌려준다. 끝 코드를 돌려준다.
+    보고서 그림용(tools/report_figures.py) 선택 인자: decorate(패널 영상, 결과) → 영상(정답 상자·번호판 가림을 640px 패널에 더함),
+    screen(화면 크기 대신 쓸 (가로, 세로)), wrap(아래 띠 줄이 그림 폭을 넘으면 나눔). 모두 기본값이면 지금 화면과 같다."""
     def report(text):
         print(text)
         if warn is not None:
@@ -376,7 +404,18 @@ def demo_one(path, args, show_fn=None, warn=None):
 
         rejected = {use: tau_rejected(bgr, top, bottom, use, outs[use]) for use in outs} if C.DRAW_TAU_REJECTED else {}
         drawn = [draw_panel(o, rejected.get(use)) for use, o in outs.items()]
-        view = build_view(drawn[0], drawn[1], make_labels(steps_text, unicode_ok), screen_size(), unicode_ok, footer)
+        if decorate is not None:
+            drawn = [decorate(img, o) for img, o in zip(drawn, outs.values())]
+        labels, size = make_labels(steps_text, unicode_ok), screen or screen_size()
+        if wrap:                                    # 줄이 늘면 아래 띠가 높아져 패널이 줄 수 있으므로 폭이 그대로일 때까지 몇 번 다시 잰다
+            lines, width = footer, build_view(drawn[0], drawn[1], labels, size, unicode_ok, footer).shape[1]
+            for _ in range(3):
+                footer = wrap_footer(lines, width, unicode_ok)
+                new = build_view(drawn[0], drawn[1], labels, size, unicode_ok, footer).shape[1]
+                if new == width:
+                    break
+                width = new
+        view = build_view(drawn[0], drawn[1], labels, size, unicode_ok, footer)
     finally:
         rx.restore_overrides(backup)
 
