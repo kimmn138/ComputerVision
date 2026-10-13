@@ -62,9 +62,9 @@ ROAD_EDGE_CANNY = (50, 150) # Canny 낮은·높은 문턱, 8c 에지 (B 구역 C
 ROAD_SEED_MODE = "box"      # 시드 영역: "box" = ROAD_SEED_BOX 한 상자(지금), "cells" = 칸 가운데 색·밝기가 서로 비슷한 칸이 가장 많은 묶음
 ROAD_SEED_CELLS_BOX = (0.10, 0.35, 0.90, 0.85)  # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), "cells"가 칸을 나눌 범위. 맨 아래 보닛 몫 0.15는 뺌
 ROAD_SEED_GRID = (4, 3)     # 칸 수 (가로, 세로), "cells". 640px 띠 240행이면 칸 하나 약 128 × 40px(차선 폭 8~40px보다 넓어 칸 중앙값이 차선에 끌려가지 않음)
-ROAD_L_RANGE_MAX = 0        # 밝기 단계(L, 0~255), 노면 밝기 범위 ±ROAD_L_K × (1.4826 × MAD + 2)의 상한. 0 = 끔. 개발셋 ROI 범위 중앙값 55·90백분위 133(측정 C)
+ROAD_L_RANGE_MAX = 0        # 밝기 단계(L, 0~255), 노면 밝기 범위 ±ROAD_L_K × (1.4826 × MAD + 2)의 상한(ab_L 색 기준과 칸 시드에만 쓰임). 0 = 끔. 개발셋 ROI 범위 중앙값 55·90백분위 133(측정 C)
 # 아래는 10/13 v5 (3)③ 마할라노비스 색 거리(C가 A 동의로 넣음). 기본 "ab_L"이면 그 전과 같다
-ROAD_COLOR_DIST = "ab_L"    # 노면 색 기준: "ab_L" = a·b 거리 < ROAD_CHROMA_MAX 그리고 L 범위(지금), "mahal" = 시드 Lab 분포의 마할라노비스 거리² < ROAD_MAHAL_D2
+ROAD_COLOR_DIST = "mahal"   # 노면 색 기준: "ab_L" = a·b 거리 < ROAD_CHROMA_MAX 그리고 L 범위(v12까지), "mahal" = 시드 Lab 분포의 마할라노비스 거리² < ROAD_MAHAL_D2. 10/13 V5a 채택(규칙 1~3 + 마스크 안 정답 95.66%, part_C)
 ROAD_MAHAL_D2 = 11.34       # 마할라노비스 거리², χ²(자유도 3) 99% 점. 시드 노면 색이 정규분포라면 노면 픽셀의 99%가 들어옴
 ROAD_MAHAL_SIGMA_MIN = (2.4, 3.0, 3.0)  # (L, a, b) 표준편차 하한(Lab 0~255 단위). √11.34 = 3.37배가 기존 기준의 최소 범위 L ±8(= 4 × 2)·a·b 10과 맞게
 
