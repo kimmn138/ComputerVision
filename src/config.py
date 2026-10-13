@@ -58,6 +58,11 @@ ROAD_EDGE_DENSITY = False   # 8c 켬·끔. True면 창 안 Canny 에지 밀도�
 ROAD_EDGE_KSIZE = 15        # px, 8c 에지 밀도를 잴 창 (Plan.md 3.3 (5) 15×15)
 ROAD_EDGE_QUANTILE = 0.95   # 분위, 8c 씨앗 영역 에지 밀도의 이 분위보다 크면 노면 아님 (Plan.md 95백분위)
 ROAD_EDGE_CANNY = (50, 150) # Canny 낮은·높은 문턱, 8c 에지 (B 구역 CANNY_LOW·HIGH와 같은 값, 구역을 넘지 않으려고 따로 둠)
+# 아래는 10/13 v5 (3)① 시드 다시 고르기(C가 A 동의로 넣음, docs/part_C.md 'v12 뒤 남은 문제'). 기본값이면 그 전과 같다
+ROAD_SEED_MODE = "box"      # 시드 영역: "box" = ROAD_SEED_BOX 한 상자(지금), "cells" = 칸 가운데 색·밝기가 서로 비슷한 칸이 가장 많은 묶음
+ROAD_SEED_CELLS_BOX = (0.10, 0.35, 0.90, 0.85)  # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), "cells"가 칸을 나눌 범위. 맨 아래 보닛 몫 0.15는 뺌
+ROAD_SEED_GRID = (4, 3)     # 칸 수 (가로, 세로), "cells". 640px 띠 240행이면 칸 하나 약 128 × 40px(차선 폭 8~40px보다 넓어 칸 중앙값이 차선에 끌려가지 않음)
+ROAD_L_RANGE_MAX = 0        # 밝기 단계(L, 0~255), 노면 밝기 범위 ±ROAD_L_K × (1.4826 × MAD + 2)의 상한. 0 = 끔. 개발셋 ROI 범위 중앙값 55·90백분위 133(측정 C)
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
