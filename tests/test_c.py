@@ -2321,6 +2321,31 @@ def test_run_all_judgement():
     check([(s, ok) for s, _, _, ok in pairs] == [("05", True), ("06", False)], f"blur_pairs: 정상·흔들림 쌍 판정이 틀림 ({pairs})")
 
 
+def test_road_v6_variants():
+    """(10/14 1번) tools/road_v6: 변형이 없으면 io_utils.road_mask와 픽셀 하나까지 같다. 시드 상자 밖의 흰 세로 선(폭 20px)이 노면을 가르면
+    지금 방식은 건너편 노면을 버리고, B1(연결 조건 없애기)·B2(차선을 노면으로)는 건너편을 노면으로 남긴다. A1(여러 점 다수결)은
+    시드 상자 오른쪽 절반이 풀이어도 노면 색을 고른다."""
+    from tools import road_v6 as rv
+    calib = {"chroma_max": 16.0, "l_range_max": 108.0}
+    rng = np.random.default_rng(5)
+    bgr = (np.full((240, 640, 3), 110.0) + rng.normal(0, 4, (240, 640, 3))).clip(0, 255).astype(np.uint8)
+    bgr[:, 500:520] = 235                                   # 시드 상자(x 192~448) 밖 흰 차선
+    base = io_utils.road_mask(bgr)
+    check(np.array_equal(rv.road_mask_v6(bgr, (), calib), base), "road_v6: 변형 없음이 road_mask와 다름")
+    right = (slice(20, 220), slice(540, 630))
+    check((base[right] > 0).mean() < 0.1, f"road_v6 시험 장면: 지금 방식이 차선 건너편을 이미 칠함 ({(base[right] > 0).mean():.2f})")
+    for opts in (("B1",), ("B2",)):
+        got = rv.road_mask_v6(bgr, opts, calib)
+        check((got[right] > 0).mean() > 0.9, f"road_v6 {opts}: 차선 건너편 노면을 남기지 않음 ({(got[right] > 0).mean():.2f})")
+    grass = bgr.copy()
+    grass[:, 320:] = (40, 150, 60)                          # 시드 상자 오른쪽 절반부터 풀
+    info = {}
+    got = rv.road_mask_v6(grass, ("A1",), calib, info)
+    check((got[:, :300] > 0).mean() > 0.9 and (got[:, 340:] > 0).mean() < 0.1,
+          f"road_v6 A1: 다수결 시드가 노면을 고르지 않음 (노면 {(got[:, :300] > 0).mean():.2f}, 풀 {(got[:, 340:] > 0).mean():.2f})")
+    check(np.array_equal(bgr, bgr.copy()) and info["seed"][:, 340:].sum() == 0, "road_v6 A1: 시드가 풀 쪽 점을 포함함")
+
+
 def main():
     """시험 함수를 차례로 돌려 실패를 모아 보여 준다. @todo로 표시한 시험(구현 전 기능)은 건너뛰고 몇 건인지 따로 보여 준다."""
     skips = []
@@ -2340,7 +2365,10 @@ def main():
                test_run_all_plan, test_run_all_resolve, test_run_all_adoption, test_run_all_grid, test_run_all_ready,
                test_run_all_refuse, test_run_all_retest_refuse, test_run_all_done_tests_blocked, test_run_all_supp_plan,
                test_run_all_rule1_tau, test_run_all_only, test_run_all_report_empty,
-               test_run_all_judgement):
+               test_run_all_judgement,
+               test_demo_tau_rejected, test_report_figures_helpers, test_auto_band_perspective, test_scores_f1_f2, test_run_all_supp_final_plan,
+               test_run_all_retest_supp_refuse, test_run_all_final_v5_stages, test_run_all_retest_v5_refuse, test_run_all_et_tau_lines,
+               test_road_v6_variants):
         try:
             fn()
         except unittest.SkipTest as e:
