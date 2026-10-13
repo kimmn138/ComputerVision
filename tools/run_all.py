@@ -168,7 +168,10 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              # 3-1은 되돌림(10/13) → 3-2의 비교 기준은 S13. 잡티(S6c)는 밝기 값이 채택되지 않을 때 그대로 쓰고, 채택되면 그 위에서 다시 돈다
              ("S6a", "s06_bright150_dev", "3-2(6번) 과노출 기준 BRIGHT_MEAN_MIN 150", {"BRIGHT_MEAN_MIN": 150}, "S13", "on", "rules"),
              ("S6b", "s06_bright160_dev", "3-2(6번) 과노출 기준 BRIGHT_MEAN_MIN 160", {"BRIGHT_MEAN_MIN": 160}, "S13", "on", "rules"),
-             ("S6c", "s06_noiseq05_dev", "3-2(6번) 잡티 평평한 블록 NOISE_FLAT_QUANTILE 0.05", {"NOISE_FLAT_QUANTILE": 0.05}, "S13", "on", "rules"))
+             ("S6c", "s06_noiseq05_dev", "3-2(6번) 잡티 평평한 블록 NOISE_FLAT_QUANTILE 0.05", {"NOISE_FLAT_QUANTILE": 0.05}, "S13", "on", "rules"),
+             # 3-2: 밝기는 되돌림, 잡티 0.05 채택(config에 씀) → 3-3의 비교 기준은 S6c
+             ("S3a", "s03_gamma20_dev", "3-3(3번) 감마 상한 GAMMA_RANGE (0.4, 2.0)", {"GAMMA_RANGE": (0.4, 2.0)}, "S6c", "on", "rules"),
+             ("S3b", "s03_gamma15_dev", "3-3(3번) 감마 상한 GAMMA_RANGE (0.4, 1.5)", {"GAMMA_RANGE": (0.4, 1.5)}, "S6c", "on", "rules"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
@@ -192,7 +195,11 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "S13": "채택(규칙 1~3 통과. 끔 행 차이는 작고 켬 행에서 뚜렷함)",
                   "S9a": "되돌림(규칙 1~3 모두 못 넘음)",
                   "S9c": "되돌림(규칙 1~3 모두 못 넘음)",
-                  "S9b": "되돌림(규칙 1·2 못 넘음: 경계 항이 모든 후보에서 1이라 효과 없음)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+                  "S9b": "되돌림(규칙 1·2 못 넘음: 경계 항이 모든 후보에서 1이라 효과 없음)",
+                  "S7a": "되돌림(규칙 1·2 못 넘음. 3-1 세 후보 모두 못 넘어 USE_BLUR_DIR 끔 그대로)",
+                  "S7b": "되돌림(규칙 1·2 못 넘음)", "S7c": "되돌림(규칙 1·2 못 넘음)",
+                  "S6a": "되돌림(규칙 2 못 넘음: 특이도가 떨어짐. BRIGHT_MEAN_MIN 170 그대로)", "S6b": "되돌림(규칙 1·2 못 넘음)",
+                  "S6c": "채택(규칙 1~3을 넘은 유일한 후보, NOISE_FLAT_QUANTILE 0.05. 밝기 값이 채택되지 않아 S13 기준 그대로)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
