@@ -244,6 +244,31 @@ def test_road_mask_l_range_max():
     assert wide[dark].mean() >= 0.90 and capped[dark].mean() <= 0.10, (wide[dark].mean(), capped[dark].mean())
 
 
+def test_road_mask_mahal():
+    """v5 (3)③: ROAD_COLOR_DIST "mahal"(시드 Lab 분포의 마할라노비스 거리)도 v1 합성 띠에서 노면·포트홀·차선 조각은 남기고 풀·건물은 뺀다.
+    오른쪽 노면이 같은 색으로 조금 어두워지면(−8, 하한으로 둔 최소 범위 안) 잇는다. 잘못된 값은 ValueError.
+    (C가 메모리에서 확인: ab_L·mahal 99% 모두 노면 0.989·풀 0.0·건물 0.001·포트홀 1.0. 오른쪽 −4·−6·−8은 둘 다 0.989,
+    −12는 ab_L 0.989·mahal 0.011 — 결이 고운 시드에서는 mahal의 밝기 범위가 ab_L보다 좁다)"""
+    bgr, part = road_band()
+    with config_values(ROAD_COLOR_DIST="mahal"):
+        road = io_utils.road_mask(bgr) == 255
+        ratio = {name: round(float(road[where].mean()), 3) for name, where in part.items()}
+        img = bgr.copy()
+        right = part["road"] & (np.arange(640)[None, :] >= 500)
+        img[right] = (img[right].astype(int) - 8).clip(0, 255).astype(np.uint8)
+        dim = io_utils.road_mask(img) == 255
+    assert ratio["road"] >= 0.95 and ratio["pothole"] >= 0.95 and ratio["lane"] >= 0.95, ratio
+    assert ratio["grass"] <= 0.05 and ratio["building"] <= 0.05, ratio
+    assert dim[right].mean() >= 0.90, f"mahal이 조금 어두운 같은 색 노면을 뺌 ({dim[right].mean():.3f})"
+    with config_values(ROAD_COLOR_DIST="nope"):
+        try:
+            io_utils.road_mask(bgr)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("ROAD_COLOR_DIST가 잘못된 값인데 ValueError가 나지 않음")
+
+
 @todo("A WP1 v2 (Should): 차선이 노면을 가르는 영상 (Plan.md 3.3 (5) 차선)")
 def test_road_mask_v2_lane_split():
     """v2: 흰 차선이 띠 아래에서 위까지 노면을 갈라도 차선 건너편 노면과 차선을 마스크에 넣는다.

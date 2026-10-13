@@ -140,6 +140,22 @@ def _seed_cells(L, a, b, fallback_box):
     return region
 
 
+def _mahal_candidate(L, a, b, seed_L, seed_a, seed_b, seed_inlier):
+    """시드 픽셀의 Lab 평균·공분산으로 픽셀마다 마할라노비스 거리²를 내어 ROAD_MAHAL_D2보다 작으면 노면 색으로 본다(v5 (3)③) → bool (H, W).
+    공분산은 시드 픽셀 가운데 기존 기준(a·b 거리 < ROAD_CHROMA_MAX, L 범위)을 만족하는 픽셀(seed_inlier)로만 잰다. 시드에 섞인 풀·차선이
+    분포를 부풀리지 않게 하려고다. 그런 픽셀이 3개 미만이면 시드 전체를 쓴다. 표준편차 하한 ROAD_MAHAL_SIGMA_MIN(L, a, b)을 대각에 더해
+    결이 아주 고운 시드에서도 기존 기준의 최소 범위(L ±8, a·b 10)만큼은 노면으로 본다. 받은 배열은 바꾸지 않는다."""
+    X = np.stack([seed_L, seed_a, seed_b], axis=1).astype(np.float64)
+    if int(np.count_nonzero(seed_inlier)) >= 3:
+        X = X[seed_inlier]
+    mean = X.mean(axis=0)
+    cov = np.cov(X, rowvar=False) + np.diag(np.square(np.asarray(C.ROAD_MAHAL_SIGMA_MIN, np.float64)))
+    inv = np.linalg.inv(cov)
+    d = np.stack([L - mean[0], a - mean[1], b - mean[2]], axis=-1).astype(np.float64)
+    d2 = np.einsum("...i,ij,...j->...", d, inv, d)
+    return d2 < C.ROAD_MAHAL_D2
+
+
 def road_mask(bgr_roi):
     """노면과 비슷한 색·밝기의 연결 영역을 찾아 자동 노면 마스크를 만든다."""
 
@@ -223,6 +239,12 @@ def road_mask(bgr_roi):
         (chroma_dist < C.ROAD_CHROMA_MAX) &
         (np.abs(L - L_med) < l_threshold)
     )
+
+    # (v5 (3)③) 색 거리를 시드 Lab 분포의 마할라노비스 거리로. 그림자처럼 L과 a·b가 함께 움직이는 노면 변화를 한 기준으로 담는다
+    if C.ROAD_COLOR_DIST == "mahal":
+        candidate = _mahal_candidate(L, a, b, seed_L, seed_a, seed_b, candidate[seed_region])
+    elif C.ROAD_COLOR_DIST != "ab_L":
+        raise ValueError(f"ROAD_COLOR_DIST는 'ab_L' 또는 'mahal'이어야 함 ({C.ROAD_COLOR_DIST!r})")
 
     # (v2 8a 그림자·햇빛) 색이 씨앗과 더 가까우면(ROAD_SHADOW_CHROMA) 밝기 범위를 위아래 모두 ROAD_SHADOW_L_K배로 넓힘.
     # 그림자와 햇빛은 밝기만 바꾸고 색은 거의 그대로라, 씨앗이 어느 쪽에 있든 반대쪽 노면을 잇는다 (Plan.md 3.3 (5))
