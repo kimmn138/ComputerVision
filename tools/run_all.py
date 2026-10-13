@@ -240,7 +240,9 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("V1g", "v1g_v6a_seedfixed_roadmin90_dev", "v5 V6a 위 V1c + 노면 비율 0.9", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.9},
               "V1y", "off", "rules"),
              ("V1h", "v1h_v6a_seedfixed_roadmin85_dev", "v5 V6a 위 V1c + 노면 비율 0.85", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.85},
-              "V1y", "off", "rules"))
+              "V1y", "off", "rules"),
+             # V6a·V1c 채택 뒤 운영점(ETV와 같은 방식, 새 폴더)
+             ("ETW", "e5_v6_tau_dev", "v5 운영점: V6a·V1c 채택 뒤 지금 config의 fp2 점", {}, "V1y", "off", "curve"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
@@ -291,7 +293,12 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "V1a": "미채택(규칙 1~3은 넘었지만 마스크 안 정답 93.82%: Norway_007802가 ROI 0.0까지 넓어지며 시드가 숲에 떨어져 12개 손실. AUTO_BAND_ROAD_MIN 0.95 그대로)",
                   "V1b": "미채택(규칙 1·마스크 안 정답 조건 못 넘음)",
                   "V1c": "미채택(V5a 위, 규칙 1 못 넘음: fp2 민감도 −0.2%p, 마스크 안 정답 94.76%)",
-                  "V1d": "미채택(V5a 위, 규칙 1 못 넘음: fp2 민감도 −0.2%p). 드론·오토바이 ROI 위 정답 12개는 한계로 보고"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+                  "V1d": "미채택(V5a 위, 규칙 1 못 넘음: fp2 민감도 −0.2%p). 드론·오토바이 ROI 위 정답 12개는 한계로 보고",
+                  "V6a": "채택(10/13 밤, 규칙 1~3 + 마스크 안 정답 96.10%). ROAD_SEED_CHECK True",
+                  "V1x": "V6a 전 설정 위 참고(규칙 2 못 넘음: 균형 정확도 같음). 판정은 V6a 위 V1y로",
+                  "V1e": "V1x 위 참고(판정에 쓰지 않음)", "V1f": "V1x 위 참고(판정에 쓰지 않음)",
+                  "V1y": "채택(V6a 위 V1c, 규칙 1~3 + 마스크 안 정답 95.43%). AUTO_BAND_SEED_FIXED True",
+                  "V1g": "미채택(규칙 1·마스크 안 정답 94.08% 못 넘음)", "V1h": "미채택(규칙 1·2·마스크 안 정답 94.13% 못 넘음)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
 SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
@@ -1166,7 +1173,7 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
     report = build_report(paths, human, command_line)
     print_report(report, stage)
-    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETV")), None) if stage == "supp" else None
+    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETV", "ETW")), None) if stage == "supp" else None
     tau_lines = et_tau_lines(paths, report["states"], tau_id) if tau_id else []
     if tau_lines:
         print(f"\n{tau_id} 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 최종 실행(ET → supp_final, ETV → final_v5)을 돌린다"
