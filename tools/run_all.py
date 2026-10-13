@@ -207,11 +207,15 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              # (3)①은 미채택 → (3)③도 비교 기준은 S6c. 거리² 문턱 후보는 χ²(자유도 3) 99%·99.9% 점
              ("V5a", "v5a_mahal99_dev", "v5 (3)③ 마할라노비스 색 거리(χ² 99%, 11.34)", {"ROAD_COLOR_DIST": "mahal"}, "S6c", "off", "rules"),
              ("V5b", "v5b_mahal999_dev", "v5 (3)③ 마할라노비스 색 거리(χ² 99.9%, 16.27)", {"ROAD_COLOR_DIST": "mahal", "ROAD_MAHAL_D2": 16.27},
-              "S6c", "off", "rules"))
+              "S6c", "off", "rules"),
+             # (1) 재측정(measure_v5 --stuck): (3) 변형으로는 드론·오토바이 13장이 거의 회복되지 않아(칸 시드 1/12개), 머문 원인인 노면 비율 기준을 낮춘다.
+             # 10/12 0.9 미채택은 질감 조건 전이었고, 지금은 질감 조건이 차량 시점을 막는다(측정 A). 후보 0.9·0.85(10/12 band 후보와 같음)
+             ("V1a", "v1a_roadmin90_dev", "v5 (1)③ 자동 ROI 노면 비율 0.9", {"AUTO_BAND_ROAD_MIN": 0.9}, "S6c", "off", "rules"),
+             ("V1b", "v1b_roadmin85_dev", "v5 (1)③ 자동 ROI 노면 비율 0.85", {"AUTO_BAND_ROAD_MIN": 0.85}, "S6c", "off", "rules"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
-STAGE_V5_IDS = ("V3a", "V3b", "V3c", "V3d", "V5a", "V5b")   # v5(10/13) 노면 마스크 행: 4단계처럼 39장 참고와 마스크 안 정답(표 17)
+STAGE_V5_IDS = ("V3a", "V3b", "V3c", "V3d", "V5a", "V5b", "V1a", "V1b")   # v5(10/13) 노면 마스크 행: 4단계처럼 39장 참고와 마스크 안 정답(표 17)
 MASK_GT_MIN = 0.95                  # 4단계 채택 조건: 마스크 안 정답 비율이 이 값 이상 (v9 95.1%, 계획 7장 4단계 공통)
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),

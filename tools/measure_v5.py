@@ -10,6 +10,7 @@
 src의 함수(pipeline.auto_band_top, io_utils.road_mask)를 그대로 부르고, 중간값(첫 구간 조건·연결 전 후보)은 같은 식으로 따로 계산한 뒤
 결과가 src와 같은지 사진마다 대조한다(다르면 summary에 개수를 적음)."""
 import argparse
+import ast
 import sys
 import zlib
 from pathlib import Path
@@ -589,6 +590,32 @@ def candidate_lines(df):
     return lines
 
 
+STUCK_SOURCES = ("China_Drone", "China_MotorBike")   # (1) 재측정 대상: 사진 전체 노면 ≥ 0.8인데 시작 경계에 머문 드론·오토바이 사진
+
+
+def stuck_check(sets):
+    """(1) 재측정: A_roi_dev.csv(지금 config로 잰 기준)에서 사진 전체 노면 ≥ 0.8이면서 0.5에 머문 드론·오토바이 사진마다, 지금 실행의
+    config(--set으로 바꾼 값 포함)로 ROI 상단 경계와 ROI 위로 빠진 정답 수를 다시 잰다. → (DataFrame, 요약 줄 list)"""
+    base = pd.read_csv(OUT_DIR / "A_roi_dev.csv", encoding="utf-8-sig")
+    base = base[(base.full_road >= FULL_ROAD_LEVELS[0]) & (base.top == base.top_start) & (base.top_start == 0.5)
+                & base.source.isin(STUCK_SOURCES)]
+    items = {it[0]: it for it in sets["dev"]}
+    rows = []
+    for r in base.itertuples():
+        name, path, gt_path, top0, bottom = items[r.image]
+        small = io_utils.resize_width(io_utils.load_image(path))
+        top = pipeline.auto_band_top(small, top0) if C.AUTO_BAND_TOP else top0
+        y0 = int(small.shape[0] * top)
+        gt = evaluate.load_gt(str(gt_path)) or []
+        rows.append({"image": name, "top_before": r.top, "top": top, "gt_above_before": r.gt_above,
+                     "gt_above": sum(1 for x, y, w, h, k in gt if y + h / 2 < y0)})
+    df = pd.DataFrame(rows)
+    lines = [f"(1) 재측정: 드론·오토바이 {len(df)}장(ROI 위 정답 {int(df.gt_above_before.sum())}개) → 넓어진 사진 {int((df.top < df.top_before).sum())}장, "
+             f"ROI 위 정답 {int(df.gt_above.sum())}개(회복 {int(df.gt_above_before.sum() - df.gt_above.sum())}개)",
+             "  " + ", ".join(f"{r.image} {r.top_before}→{r.top}(위 정답 {r.gt_above_before}→{r.gt_above})" for r in df.itertuples())]
+    return df, lines
+
+
 def main(argv=None):
     """개발셋 652장과 39장을 재서 results/measure_v5/에 CSV·요약·확인 그림을 저장하고 요약을 출력한다."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -596,8 +623,24 @@ def main(argv=None):
     parser.add_argument("--from-csv", action="store_true", help="측정은 건너뛰고 저장된 CSV로 요약·그림만 다시 만든다")
     parser.add_argument("--candidates", action="store_true",
                         help="(2') 개발셋 실제 포트홀 후보의 질감 비만 잰다 → B2_pothole_candidates.csv, summary_candidates.txt")
+    parser.add_argument("--stuck", action="store_true", help="(1) 재측정: 0.5에 머문 드론·오토바이 사진만 지금 config로 다시 잰다")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                        help="이번 실행에만 바꿀 config 값(여러 번). 값은 파이썬 리터럴(예: ROAD_L_RANGE_MAX=64, ROAD_COLOR_DIST='mahal')")
     args = parser.parse_args(argv)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    for item in args.set:
+        key, value = item.split("=", 1)
+        if not hasattr(C, key):
+            parser.error(f"config에 없는 이름: {key}")
+        setattr(C, key, ast.literal_eval(value))
+    if args.stuck:
+        df, lines = stuck_check({"dev": dev_items()})
+        tag = "_".join(s.replace("=", "-").replace("'", "") for s in args.set) or "config"
+        df.to_csv(OUT_DIR / f"A_stuck_{tag}.csv", index=False, encoding="utf-8-sig")
+        print(f"설정: {', '.join(args.set) or 'config 그대로'}")
+        for line in lines:
+            print(line)
+        return
     if args.candidates:
         items = dev_items()[:args.limit] if args.limit else dev_items()
         df = measure_candidates(items)
