@@ -83,7 +83,7 @@ from tools import evaluate_train as et  # noqa: E402
 
 STAGES = {"compare": "비교", "band": "자동 띠 비교", "mask2": "노면 마스크 보완 비교", "supp": "보완 비교", "final": "최종", "test": "시험",
           "supp_final": "보완 최종", "retest_supp": "시험(보완 최종, 한 번만)", "retest_supp_repro": "재현(보완 최종)",
-          "final_v5": "v5 최종", "retest_v5": "시험(v5 최종, 한 번만)", "retest_v5_repro": "재현(v5 최종)",
+          "final_v5": "v6 최종", "retest_v5": "시험(v6 최종, 한 번만)", "retest_v5_repro": "재현(v6 최종)",
           "repro": "재현",
           "retest": "시험(자동 띠)", "retest_repro": "재현(자동 띠)", "retest_ratio": "시험(ratio)", "retest_ratio_repro": "재현(ratio)",
           "tables": "표만"}
@@ -254,7 +254,8 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "SH": "되돌림(규칙 1·2 못 넘음. SCORE_USE_HESSIAN 끔 그대로)",
                   "SP": "되돌림(개발셋 규칙 1~3은 넘었지만 기존 합성 시험이 부작용(띠 위쪽 결 조각)을 잡아 되돌림, 10/13 사용자 결정)",
                   "S15": "되돌림(규칙 1·2 못 넘음: S6c 기준 판정이 바뀐 사진 0장. SP를 채택하면 SP 위에서 다시 판정해야 함)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
-SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
+SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False,
+                   "ROAD_SEED_FILTER": False, "ROAD_L_RANGE_MAX": 0, "ROAD_KEEP_BLOBS": False, "ROAD_LANE_AS_ROAD": False}   # 10/14 노면 스위치 4개도 생기기 전 실행에서는 끔(예전 실행의 마스크를 지금 config 값으로 다시 만들지 않게)   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
     # 비교 단계 (개발셋). 이 순서로 돌고, adopt 단계는 끝날 때마다 잠정 판정해 뒤 단계 설정에 반영한다
@@ -326,17 +327,17 @@ EXPERIMENTS = [
     # 시험셋 네 번째 (6단계 4번): 보완 최종 설정으로 한 번만, 그다음 같은 코드로 재현 확인
     _exp("TS", "retest_supp", "train", "test_supp", "시험셋 보완 최종(네 번째, 한 번만)", split="test"),
     _exp("RS", "retest_supp_repro", "train", "final_test_supp", "시험셋 재현 확인(보완 최종)", split="test"),
-    # v5 최종 (10/13 밤, v5 7단계): 다음 최종 설정의 config 그대로. 구성은 보완 최종과 같다(10/14 v5 방법 폐기 뒤에도 단계는 남김)
-    _exp("F39V", "final_v5", "run39", "final_v5", "39장 v5 최종(roi.csv)", roi="csv"),
-    _exp("FMV", "final_v5", "match", "final_v5", "특징점·매칭 v5 최종"),
-    _exp("F39aV", "final_v5", "run39", "final_auto_v5", "39장 v5 최종(자동 ROI)", roi="auto"),
-    _exp("F39e0V", "final_v5", "run39", "e0_final_v5", "39장 1차 설정(v5 최종 실행에서 다시 잼)", FIRST, roi="csv"),
-    _exp("E5V", "final_v5", "train", "e5_v5_dev", "E5 v5 최종 끔·켬(τ 곡선: config 점 = fp2 점 확인)", {"tau_curve": True}, split="dev"),
-    *[_exp(f"F6V_{kind}", "final_v5", "train", f"e6_{kind}_final_v5_dev", f"E6 v5 최종 {DEGRADE_NAMES[kind]}", {"degrade": kind},
+    # v6 최종 (10/13 밤, v5 7단계): 다음 최종 설정의 config 그대로. 구성은 보완 최종과 같다(10/14 v5 방법 폐기 뒤에도 단계는 남김)
+    _exp("F39V", "final_v5", "run39", "final_v5", "39장 v6 최종(roi.csv)", roi="csv"),
+    _exp("FMV", "final_v5", "match", "final_v5", "특징점·매칭 v6 최종"),
+    _exp("F39aV", "final_v5", "run39", "final_auto_v5", "39장 v6 최종(자동 ROI)", roi="auto"),
+    _exp("F39e0V", "final_v5", "run39", "e0_final_v5", "39장 1차 설정(v6 최종 실행에서 다시 잼)", FIRST, roi="csv"),
+    _exp("E5V", "final_v5", "train", "e5_v5_dev", "E5 v6 최종 끔·켬(τ 곡선: config 점 = fp2 점 확인)", {"tau_curve": True}, split="dev"),
+    *[_exp(f"F6V_{kind}", "final_v5", "train", f"e6_{kind}_final_v5_dev", f"E6 v6 최종 {DEGRADE_NAMES[kind]}", {"degrade": kind},
            split="dev") for kind in V9_DEGRADE_KINDS + ("night",)],
-    # 시험셋 다섯 번째: v5 최종 설정으로 한 번만, 그다음 같은 코드로 재현 확인
-    _exp("TV", "retest_v5", "train", "test_v5", "시험셋 v5 최종(다섯 번째, 한 번만)", split="test"),
-    _exp("RV", "retest_v5_repro", "train", "final_test_v5", "시험셋 재현 확인(v5 최종)", split="test"),
+    # 시험셋 다섯 번째: v6 최종 설정으로 한 번만, 그다음 같은 코드로 재현 확인
+    _exp("TV", "retest_v5", "train", "test_v5", "시험셋 v6 최종(다섯 번째, 한 번만)", split="test"),
+    _exp("RV", "retest_v5_repro", "train", "final_test_v5", "시험셋 재현 확인(v6 최종)", split="test"),
 ]
 EXP = {e["id"]: e for e in EXPERIMENTS}
 ADOPT_ORDER = [e["id"] for e in EXPERIMENTS if e.get("adopt")]       # E1, E1b, E2, E3, E3s, E4
@@ -355,7 +356,7 @@ COUNTRY_RUNS = (("E0", "1차"), ("E3", "띠 고정(E3)"), ("B1", "자동 띠(결
 RUNS39 = (("F39e0", "1차 설정"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI, 자동 띠 + 결 + ratio)"),
           ("E1_39", "E1 자동 ROI(참고)"), ("E3_39", "E3 자동 ROI(참고, 띠 고정)"), ("B1_39", "자동 띠(결 없음) 자동 ROI(참고)"),
           ("F39e0S", "1차 설정(보완 최종 실행)"), ("F39S", "보완 최종(roi.csv)"), ("F39aS", "보완 최종(자동 ROI)"),
-          ("F39e0V", "1차 설정(v5 최종 실행)"), ("F39V", "v5 최종(roi.csv)"), ("F39aV", "v5 최종(자동 ROI)"))
+          ("F39e0V", "1차 설정(v6 최종 실행)"), ("F39V", "v6 최종(roi.csv)"), ("F39aV", "v6 최종(자동 ROI)"))
 # 9번 자동 띠 비교: (단계, 이름). 개발셋은 전처리 끔(채택 규칙의 조건), 39장은 자동 ROI 끔·켬
 BAND_DEV = (("E3", "띠 고정(E3)"), ("B1", "자동 띠"), ("M0", "자동 띠 + 결"))      # 모두 남기기 center (ratio는 10번 표)
 BAND_39 = (("E3_39", "띠 고정(E3)"), ("B1_39", "자동 띠"), ("M0_39", "자동 띠 + 결"))
@@ -365,7 +366,7 @@ TEST_RUNS = (("T", "띠 고정", "E3(dark + 노면 마스크) + 띠 고정 0.5 +
              ("TA", "자동 띠", "E3 + 자동 띠 + 결 1.5 + 남기기 center"),
              ("TR", "자동 띠 + ratio(최종)", "E3 + 자동 띠 + 결 1.5 + 남기기 ratio"),
              ("TS", "보완 최종(네 번째)", "TR + 점수 τ(E4, ET) + 국소 σ + 밝은 줄 옆 테두리 메움 + 잡티 0.05 (docs/part_C.md 보완 결과)"),
-             ("TV", "v5 최종(다섯 번째)", "다음 최종 설정(10/14 v5 방법 폐기, docs/part_C.md)"))
+             ("TV", "v6 최종(다섯 번째)", "다음 최종 설정(10/14 v5 방법 폐기, docs/part_C.md)"))
 IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"),
               ("supp_final", "F39S"), ("supp_auto", "F39aS"), ("v5_final", "F39V"), ("v5_auto", "F39aV"))     # 보완 최종(roi.csv·자동 ROI) 열은 8번 표 끝에 더함
 GROUP39 = ["n_images", "n_gt", "n_damage", "n_none", "sensitivity_off", "sensitivity_on", "specificity_off", "specificity_on",
@@ -381,7 +382,7 @@ PRE_TRAIN = [("에지 수", "edges_mean"), ("해리스 코너 수", "harris_mean
              ("균열 면적 (픽셀)", "area_crack_mean"), ("포트홀 후보 수", "pred_pothole_mean"), ("포트홀 면적 (픽셀)", "area_pothole_mean")]
 MATCH_ITEMS = [("SIFT 특징점 수(기준 A)", "kp_ref"), ("SIFT 특징점 수(대상)", "kp_target"), ("good 매칭 점 수", "good"),
                ("inlier 수", "inliers"), ("inlier 비율", "inlier_ratio")]
-DEGRADE_ROUNDS = (("1회(비교)", "E6_"), ("2회(최종 설정)", "F6_"), ("3회(보완 최종)", "F6S_"), ("4회(v5 최종)", "F6V_"))   # 3회는 night까지(보완 6단계)
+DEGRADE_ROUNDS = (("1회(비교)", "E6_"), ("2회(최종 설정)", "F6_"), ("3회(보완 최종)", "F6S_"), ("4회(v6 최종)", "F6V_"))   # 3회는 night까지(보완 6단계)
 DEGRADE_COLS = ["sensitivity", "specificity", "accuracy", "baseline_none", "balanced", "fp_per_image",
                 "crack_ctr_recall", "crack_ctr_recall_net", "pothole_ctr_recall", "pothole_ctr_recall_net",
                 "edges_mean", "harris_mean", "pred_crack_mean", "pred_pothole_mean", "area_crack_mean", "area_pothole_mean",
@@ -1541,7 +1542,7 @@ def preprocess_table(paths, states, runs):
     rows = []
     for sid, name in (("F39", "39장 최종(roi.csv)"), ("F39a", "39장 최종(자동 ROI, 자동 띠 + 결 + ratio)"),
                       ("F39S", "39장 보완 최종(roi.csv)"), ("F39aS", "39장 보완 최종(자동 ROI)"),
-                      ("F39V", "39장 v5 최종(roi.csv)"), ("F39aV", "39장 v5 최종(자동 ROI)")):
+                      ("F39V", "39장 v6 최종(roi.csv)"), ("F39aV", "39장 v6 최종(자동 ROI)")):
         data = runs[sid]
         if data is None:
             continue
@@ -1553,7 +1554,7 @@ def preprocess_table(paths, states, runs):
         total = {mode: sum(value[mode][m] for m in TIME39) for mode in ("off", "on")}
         rows.append({"data": name, "folder": EXP[sid]["name"], "item": "처리 시간 합 ms (전처리+검출+노면+띠 경계)",
                      "off": total["off"], "on": total["on"], "diff": total["on"] - total["off"]})
-    for sid, word in (("E5", "최종"), ("TR", "최종"), ("E5S", "보완 최종"), ("TS", "보완 최종"), ("E5V", "v5 최종"), ("TV", "v5 최종")):
+    for sid, word in (("E5", "최종"), ("TR", "최종"), ("E5S", "보완 최종"), ("TS", "보완 최종"), ("E5V", "v6 최종"), ("TV", "v6 최종")):
         summary = train_summary(paths, EXP[sid], states[sid])
         if summary and {"off", "on"} <= set(summary):
             rows += [{"data": f"{DATA_NAMES[EXP[sid]['split']]} {word}", "folder": EXP[sid]["name"], "item": item,
@@ -1567,7 +1568,7 @@ def matching_table(paths, states, runs):
     맨 끝에 쌍 평균. inlier 비율은 천장(0.97 이상)이라 점의 수를 중심으로 본다(Plan.md 1.4·3.7 5번).
     보완 최종 실행(F39S·E5S·FMS)의 같은 행을 대상 이름 앞에 '[보완 최종]'을 붙여 뒤에 더한다(보완 6단계)."""
     rows = []
-    for f39, e5, fm, tag in (("F39", "E5", "FM", ""), ("F39S", "E5S", "FMS", "[보완 최종] "), ("F39V", "E5V", "FMV", "[v5 최종] ")):
+    for f39, e5, fm, tag in (("F39", "E5", "FM", ""), ("F39S", "E5S", "FMS", "[보완 최종] "), ("F39V", "E5V", "FMV", "[v6 최종] ")):
         if runs[f39] is not None:
             whole = runs[f39]["source"][runs[f39]["source"]["source"] == "all"].iloc[0]
             rows.append({"item": "해리스 코너 수", "target": f"{tag}39장 영상 평균", "off": whole["harris_off"], "on": whole["harris_on"],
@@ -1913,7 +1914,7 @@ def supp_mask_table(paths, states, out_dir):
     마스크 안 정답이 MASK_GT_MIN 이상인지. 값은 mask_gt_rows(그 실행의 config 기록으로 마스크를 다시 만듦)로 잰다. 채택은 표 14의
     규칙 1~3과 이 조건을 모두 넘을 때만이다(계획 7장 4단계 공통)."""
     rows = []
-    for sid in ("S6c",) + STAGE4_IDS:
+    for sid in ("S6c",) + STAGE4_IDS + ("E5V",):         # E5V = v6 최종(노면 A2rA3B1B2, 10/14)
         exp, state = EXP[sid], states[sid]
         df = mask_gt_rows(paths, exp, state, out_dir)
         band, mask, widened = mask_gt_ratios(df)
@@ -1985,7 +1986,7 @@ def time_table(runs):
     rows = []
     for sid, name in (("F39e0", "1차 설정(roi.csv)"), ("F39", "최종(roi.csv)"), ("F39a", "최종(자동 ROI, 자동 띠 + 결 + ratio)"),
                       ("F39e0S", "1차 설정(roi.csv, 보완 최종 실행)"), ("F39S", "보완 최종(roi.csv)"), ("F39aS", "보완 최종(자동 ROI)"),
-                      ("F39e0V", "1차 설정(roi.csv, v5 최종 실행)"), ("F39V", "v5 최종(roi.csv)"), ("F39aV", "v5 최종(자동 ROI)")):
+                      ("F39e0V", "1차 설정(roi.csv, v6 최종 실행)"), ("F39V", "v6 최종(roi.csv)"), ("F39aV", "v6 최종(자동 ROI)")):
         data = runs.get(sid)
         if data is None:
             continue
@@ -2569,7 +2570,7 @@ def image_lines(table, gt_note):
              f"{mark(i['v5_final_correct_off'])} / {mark(i['v5_final_correct_on'])}",
              f"{mark(i['v5_auto_correct_off'])} / {mark(i['v5_auto_correct_on'])}"] for _, i in table.iterrows()]
     return lines + md_table(["사진", "조건", "정답", "손상", "고른 전처리", "맞는 전처리?", "1차 끔/켬", "최종 끔/켬",
-                             "자동 ROI 끔/켬", "보완 최종 끔/켬", "보완 자동 ROI 끔/켬", "v5 최종 끔/켬", "v5 자동 ROI 끔/켬"], rows)
+                             "자동 ROI 끔/켬", "보완 최종 끔/켬", "보완 자동 ROI 끔/켬", "v6 최종 끔/켬", "v5 자동 ROI 끔/켬"], rows)
 
 
 def print_report(report, stage):

@@ -11,6 +11,7 @@
 - 재현율 = 그 종류 정답 상자 중 안에 후보 중심이 든 비율, 우연 수준을 보정한 재현율 = 재현율 − 우연 대조군 재현율.
 - (v5) 곡선에 정밀도·F1·F2 열(evaluate_train.TAU_SCORE_METRICS)이 있으면 종류별·전체 F1·F2(중심·IoU 0.3)와 영상 단위 정밀도·F1·F2를 더하고,
   고정한 쪽 단면 전체에서 전체(중심) F1·F2가 가장 높은 행을 '참고'로 표시한다(운영점 규칙은 그대로). 열이 없는 옛 실행이면 NaN.
+- (10/14) --kinds 실행1,실행2: 종류별(균열·포트홀) 재현율·후보 정밀도·F1·영상당 오검출 → table22_kinds.csv.
 - (v5) --scores 실행1,실행2: 저장된 train_detail.csv의 사진별 개수로 정밀도·F1·F2를 다시 계산해 table21_scores.csv에 쓴다
   (시험셋을 다시 돌리지 않고 이미 잰 결과로. 정의는 evaluate_train.score_columns)."""
 import argparse
@@ -163,13 +164,41 @@ def scores_table(runs):
     return pd.DataFrame(rows)
 
 
+def kinds_table(runs):
+    """(10/14) 종류별 지표 표: 실행마다 전처리 미적용·적용 행에 균열·포트홀 재현율(중심), 후보 정밀도(중심), F1, 영상당 오검출을
+    저장된 train_detail.csv의 사진별 개수(crack_ctr_tp·fp·found·fn 등)로 낸다. 운영점은 그 실행에 쓴 config 임계값."""
+    rows = []
+    for run in runs:
+        d = pd.read_csv(Path("results") / run / "train_detail.csv", encoding="utf-8-sig")
+        for mode, g in d.groupby("preprocess", sort=False):
+            row = {"run": run, "preprocess": mode, "images": len(g)}
+            for kind in ("crack", "pothole"):
+                tp, fp = g[f"{kind}_ctr_tp"].sum(), g[f"{kind}_ctr_fp"].sum()
+                found, fn = g[f"{kind}_ctr_found"].sum(), g[f"{kind}_ctr_fn"].sum()
+                prec = tp / (tp + fp) if tp + fp else np.nan
+                rec = found / (found + fn) if found + fn else np.nan
+                f1 = 2 * prec * rec / (prec + rec) if prec == prec and rec == rec and prec + rec > 0 else (0.0 if prec == 0 or rec == 0 else np.nan)
+                row.update({f"{kind}_recall": rec, f"{kind}_precision": prec, f"{kind}_f1": f1, f"{kind}_fp_per_image": fp / len(g),
+                            f"{kind}_candidates": int(tp + fp), f"{kind}_gt": int(found + fn)})
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def main(argv=None):
     """운영점 실행의 tau_curve.csv에서 균열·포트홀 임계값 표와 그래프를 results/report/에 저장한다."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--run", default="e5_supp_dev", help="임계값별 성능 곡선이 있는 결과 폴더(results/ 아래)")
     parser.add_argument("--preprocess", default="off", choices=("off", "on"), help="전처리 미적용(off, 운영점을 정한 행) 또는 적용(on)")
+    parser.add_argument("--kinds", help="종류별 지표 표를 낼 실행 폴더(쉼표로, 예: e5_supp_dev,e5_v5_dev) → table22_kinds.csv")
     parser.add_argument("--scores", help="정밀도·F1·F2를 다시 계산할 실행 폴더(쉼표로, 예: e5_supp_dev,test_supp) → table21_scores.csv")
     args = parser.parse_args(argv)
+    if args.kinds:
+        table = kinds_table(args.kinds.split(","))
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        table.to_csv(REPORT_DIR / "table22_kinds.csv", index=False, encoding="utf-8-sig", float_format="%.4f")
+        print(table.round(4).to_string())
+        print("저장:", REPORT_DIR / "table22_kinds.csv")
+        return 0
     if args.scores:
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
         table = scores_table([r.strip() for r in args.scores.split(",") if r.strip()])
