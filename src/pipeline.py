@@ -16,34 +16,18 @@ def local_std(gray, ksize):
     return np.sqrt(np.maximum(cv.blur(g * g, (ksize, ksize)) - mean * mean, 0))
 
 
-def fixed_seed_box(width, height, top, bottom, y0):
-    """(v5 V1c) 시드 상자를 '원래 ROI(top~bottom 비율)'의 ROAD_SEED_BOX 자리에 두고, 위에서 y0픽셀을 잘라 낸 영상의 좌표로 돌려준다
-    → (x0, y0, x1, y1) 픽셀. ROI가 넓어져도 시드가 위쪽(나무·하늘)으로 올라가지 않게 하려고다. 넓어지지 않았으면(y0 = 원래 ROI 시작)
-    io_utils.road_mask의 상자와 같다."""
-    fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
-    r0, r1 = int(height * top), int(height * bottom)
-    span = max(1, r1 - r0)
-    return (int(width * fx0), r0 + int(span * fy0) - y0, int(width * fx1), r0 + int(span * fy1) - y0)
-
-
 def auto_band_top(small, top):
     """노면만 찍힌 사진(드론·오토바이 시점)에서 띠 위쪽 노면을 버리지 않으려고, 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 정한다.
     small은 640px 컬러 사진 전체, top은 시작 경계(비율). 바로 위 구간(config C 구역 AUTO_BAND_STEP 높이)의 노면 픽셀 비율이
     AUTO_BAND_ROAD_MIN 이상이면 그 구간까지 넓히고, 모자란 구간이 나오면 멈춘다. 0.0까지 넓어질 수 있고 좁히지는 않는다.
     AUTO_BAND_USE_TEXTURE가 켜져 있으면 결도 본다: 구간 노면 픽셀의 결(local_std) 중앙값 ÷ 시작 띠(top 아래) 노면 픽셀의 결 중앙값이
     1/AUTO_BAND_TEX_RATIO ~ AUTO_BAND_TEX_RATIO 밖이면 멈춘다. 노면 마스크가 색만 보고 칠한 흐린 하늘(매끈함)·나무(거침)를 거르려고다.
-    AUTO_BAND_TEX_REF가 "below"면 기준을 시작 ROI 대신 바로 아래 구간(직전에 받아들인 구간, 첫 단계는 시작 ROI의 맨 위 구간)의 노면 질감으로 한다
-    (v5 V1d: 원근 때문에 조금씩 매끈해지는 노면은 통과하고, 노면에서 숲·건물로 갑자기 바뀌는 곳에서 멈추게). 아래 구간에 노면 픽셀이 없으면 시작 ROI 기준.
     AUTO_BAND_TEX_PERSPECTIVE가 켜져 있으면 위로 k번째 구간의 아래 한계를 (1/AUTO_BAND_TEX_RATIO) × AUTO_BAND_TEX_DECAY^k로 낮춘다
     (원근 때문에 먼 노면의 결이 매끈해 보이는 만큼 봐줌, 보완 4-4). 위 한계는 그대로다.
     시작 띠에 노면 픽셀이 없거나 결이 0이면 견줄 기준이 없어 넓히지 않는다.
     노면 마스크는 A의 io_utils.road_mask를 사진 전체에 한 번 부른다. 구간 경계는 crop_roi와 같이 int(높이 × 비율)로 자른다.
     받은 영상은 바꾸지 않고, 정한 경계(비율, float)를 돌려준다."""
-    if C.AUTO_BAND_SEED_FIXED:                          # (v5 V1c) 사진 전체 마스크의 시드도 원래 아래쪽 ROI(top~ROI_BOTTOM_DEFAULT) 자리
-        h_img, w_img = small.shape[:2]
-        road = io_utils.road_mask_seeded(small, fixed_seed_box(w_img, h_img, top, C.ROI_BOTTOM_DEFAULT, 0)) > 0
-    else:
-        road = io_utils.road_mask(small) > 0
+    road = io_utils.road_mask(small) > 0
     h = road.shape[0]
     if C.AUTO_BAND_USE_TEXTURE:
         tex = local_std(cv.cvtColor(small, cv.COLOR_BGR2GRAY), C.AUTO_BAND_TEX_KSIZE)
@@ -58,14 +42,7 @@ def auto_band_top(small, top):
         if seg.size == 0 or np.count_nonzero(seg) < C.AUTO_BAND_ROAD_MIN * seg.size:
             break
         if C.AUTO_BAND_USE_TEXTURE:
-            base = ref_tex
-            if C.AUTO_BAND_TEX_REF == "below":              # (v5 V1d) 바로 아래 구간(직전에 받아들인 구간)의 노면 질감과 비교
-                lo = min(1.0, round(cur + C.AUTO_BAND_STEP, 6))
-                below = tex[int(h * cur):int(h * lo)][road[int(h * cur):int(h * lo)]]
-                base = float(np.median(below)) if below.size and float(np.median(below)) > 0 else ref_tex
-            elif C.AUTO_BAND_TEX_REF != "start":
-                raise ValueError(f"AUTO_BAND_TEX_REF는 'start' 또는 'below'여야 함 ({C.AUTO_BAND_TEX_REF!r})")
-            ratio = float(np.median(tex[int(h * nxt):int(h * cur)][seg])) / base
+            ratio = float(np.median(tex[int(h * nxt):int(h * cur)][seg])) / ref_tex
             low = 1 / C.AUTO_BAND_TEX_RATIO
             if C.AUTO_BAND_TEX_PERSPECTIVE:
                 low *= C.AUTO_BAND_TEX_DECAY ** (step + 1)
@@ -116,17 +93,13 @@ def run_pipeline(bgr, top, bottom, use_preprocess):
     끔·켬에 같음). 실제로 쓴 경계는 top, 그 계산 시간은 t_band_ms(꺼져 있으면 0.0)로 결과에 담는다. 꺼져 있으면 받은 top 그대로다."""
     small = io_utils.resize_width(bgr)
     t_band_ms = 0.0
-    top0 = top
     if C.AUTO_BAND_TOP:
         t_band = time.perf_counter()
         top = auto_band_top(small, top)
         t_band_ms = round((time.perf_counter() - t_band) * 1000, 2)
     roi, y0 = io_utils.crop_roi(small, top, bottom)
     t_road = time.perf_counter()
-    if C.AUTO_BAND_SEED_FIXED and top != top0:          # (v5 V1c) ROI가 넓어졌으면 시드는 받은 top의 ROI 자리(넓어지지 않았으면 같은 상자라 road_mask)
-        road = io_utils.road_mask_seeded(roi, fixed_seed_box(small.shape[1], small.shape[0], top0, bottom, y0))
-    else:
-        road = io_utils.road_mask(roi)
+    road = io_utils.road_mask(roi)
     t_road_ms = round((time.perf_counter() - t_road) * 1000, 2)
     road_arg = road if C.USE_ROAD_MASK else None
     gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY)

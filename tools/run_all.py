@@ -40,7 +40,7 @@
 - retest_supp: 시험셋 네 번째(test_supp). 한 번만 돈다: 시작할 때 저장소 안 기록 파일(docs/test_supp_done.txt)을 남기고, 그 파일이 있으면
   results/가 지워졌어도 거부한다(0-1과 같은 이유). supp_final의 E5(e5_supp_dev)를 돌린 config와 지금 config가 다르면 거부한다.
 - retest_supp_repro: 같은 코드로 시험셋을 다시 돌려(final_test_supp) test_supp와 같은지 본다.
-- final_v5: (10/13 밤, v5 7단계) V5a 채택·ETV 운영점 뒤 config 그대로 supp_final과 같은 구성(39장 roi.csv·자동 ROI·1차, 매칭, E5 τ 곡선, E6 여섯 가지).
+- final_v5: (10/13 밤, v5 7단계) 다음 최종 설정의 config 그대로 supp_final과 같은 구성(39장 roi.csv·자동 ROI·1차, 매칭, E5 τ 곡선, E6 여섯 가지).
   처리 시간을 보고서에 쓰는 실행이라 병렬 금지·전원 연결·다른 프로그램 종료.
 - retest_v5: 시험셋 다섯 번째(test_v5). 한 번만 돈다: 시작할 때 저장소 안 기록 파일(docs/test_v5_done.txt)을 남기고, 그 파일이 있으면
   results/가 지워졌어도 거부한다. final_v5의 E5(e5_v5_dev)를 돌린 config와 지금 config가 다르면 거부한다.
@@ -209,50 +209,10 @@ SUPP_RUNS = (("S0", "supp_base_dev", "보완 기준: v9 최종 설정(점수 없
              ("SP", "sp_persp_dev", "5-3 원근: 최소 넓이를 행 위치로(위 20 → 아래 40)", {"DARK_AREA_PERSPECTIVE": True}, "S6c", "off", "rules"),
              ("S15", "s15_brightpot_dev", "5-4(15번) 밝은 자갈 포트홀(결 2배)", {"BRIGHT_POTHOLE": True}, "S6c", "off", "rules"),
              # 6단계 1번: 지금 config(마지막 채택 설정)의 τ 곡선. 판정 행(끔) fp2 점 τ를 config에 쓴다(et_tau_lines가 줄을 알려 줌)
-             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"),
-             # v5(10/13, docs/part_C.md 'v12 뒤 남은 문제'): 노면 마스크 (3)①. 비교 기준은 지금 config와 같은 S6c. 판정 행 끔 + 마스크 안 정답 95%
-             ("V3a", "v3a_seedcells_dev", "v5 (3)① 칸 시드", {"ROAD_SEED_MODE": "cells"}, "S6c", "off", "rules"),
-             ("V3b", "v3b_seedcells_cap64_dev", "v5 (3)① 칸 시드 + 밝기 범위 상한 64", {"ROAD_SEED_MODE": "cells", "ROAD_L_RANGE_MAX": 64},
-              "S6c", "off", "rules"),
-             ("V3c", "v3c_seedcells_cap96_dev", "v5 (3)① 칸 시드 + 밝기 범위 상한 96", {"ROAD_SEED_MODE": "cells", "ROAD_L_RANGE_MAX": 96},
-              "S6c", "off", "rules"),
-             ("V3d", "v3d_cap64_dev", "v5 (3)① 상자 시드 + 밝기 범위 상한 64(상한만의 효과)", {"ROAD_L_RANGE_MAX": 64}, "S6c", "off", "rules"),
-             # (3)①은 미채택 → (3)③도 비교 기준은 S6c. 거리² 문턱 후보는 χ²(자유도 3) 99%·99.9% 점
-             ("V5a", "v5a_mahal99_dev", "v5 (3)③ 마할라노비스 색 거리(χ² 99%, 11.34)", {"ROAD_COLOR_DIST": "mahal"}, "S6c", "off", "rules"),
-             ("V5b", "v5b_mahal999_dev", "v5 (3)③ 마할라노비스 색 거리(χ² 99.9%, 16.27)", {"ROAD_COLOR_DIST": "mahal", "ROAD_MAHAL_D2": 16.27},
-              "S6c", "off", "rules"),
-             # (1) 재측정(measure_v5 --stuck): (3) 변형으로는 드론·오토바이 13장이 거의 회복되지 않아(칸 시드 1/12개), 머문 원인인 노면 비율 기준을 낮춘다.
-             # 10/12 0.9 미채택은 질감 조건 전이었고, 지금은 질감 조건이 차량 시점을 막는다(측정 A). 후보 0.9·0.85(10/12 band 후보와 같음)
-             ("V1a", "v1a_roadmin90_dev", "v5 (1)③ 자동 ROI 노면 비율 0.9", {"AUTO_BAND_ROAD_MIN": 0.9}, "S6c", "off", "rules"),
-             ("V1b", "v1b_roadmin85_dev", "v5 (1)③ 자동 ROI 노면 비율 0.85", {"AUTO_BAND_ROAD_MIN": 0.85}, "S6c", "off", "rules"),
-             # V5a 채택(10/13, config ROAD_COLOR_DIST mahal) 뒤 V1을 그 위에서 다시: 비교 기준 V5a(새 config와 같은 설정)
-             ("V1c", "v1c_mahal_roadmin90_dev", "v5 (1)③ V5a 위 자동 ROI 노면 비율 0.9", {"AUTO_BAND_ROAD_MIN": 0.9}, "V5a", "off", "rules"),
-             ("V1d", "v1d_mahal_roadmin85_dev", "v5 (1)③ V5a 위 자동 ROI 노면 비율 0.85", {"AUTO_BAND_ROAD_MIN": 0.85}, "V5a", "off", "rules"),
-             # v5 7단계 1번(10/13 밤): V5a 채택 뒤 지금 config의 τ 곡선. 판정 행(끔) fp2 점 τ를 config B 구역에 쓴다(ET와 같은 방식, 새 폴더)
-             ("ETV", "e5_v5_tau_dev", "v5 운영점: V5a 채택 뒤 지금 config의 fp2 점", {}, "V5a", "off", "curve"),
-             # 10/13 밤 동결을 풀고 ROI 시드 문제: 비교 기준은 지금 채택 설정(ETV). V1e·V1f는 V1c 위
-             ("V6a", "v6a_seedcheck_dev", "v5 V6a 시드 검사(칸끼리 색이 다르면 칸 시드)", {"ROAD_SEED_CHECK": True}, "ETV", "off", "rules"),
-             ("V1x", "v1x_seedfixed_dev", "v5 V1c 시드 위치 고정(ROI가 넓어져도 원래 ROI 자리)", {"AUTO_BAND_SEED_FIXED": True}, "ETV", "off", "rules"),
-             ("V1e", "v1e_seedfixed_roadmin90_dev", "v5 V1c 위 노면 비율 0.9", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.9}, "V1x", "off", "rules"),
-             ("V1f", "v1f_seedfixed_roadmin85_dev", "v5 V1c 위 노면 비율 0.85", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.85}, "V1x", "off", "rules"),
-             # V6a 채택(config ROAD_SEED_CHECK True) 뒤 V1c·노면 비율을 그 위에서 다시: 비교 기준 V6a(새 config와 같은 설정)
-             ("V1y", "v1y_v6a_seedfixed_dev", "v5 V6a 위 V1c 시드 위치 고정", {"AUTO_BAND_SEED_FIXED": True}, "V6a", "off", "rules"),
-             ("V1g", "v1g_v6a_seedfixed_roadmin90_dev", "v5 V6a 위 V1c + 노면 비율 0.9", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.9},
-              "V1y", "off", "rules"),
-             ("V1h", "v1h_v6a_seedfixed_roadmin85_dev", "v5 V6a 위 V1c + 노면 비율 0.85", {"AUTO_BAND_SEED_FIXED": True, "AUTO_BAND_ROAD_MIN": 0.85},
-              "V1y", "off", "rules"),
-             # V6a·V1c 채택 뒤 운영점(ETV와 같은 방식, 새 폴더)
-             ("ETW", "e5_v6_tau_dev", "v5 운영점: V6a·V1c 채택 뒤 지금 config의 fp2 점", {}, "V1y", "off", "curve"),
-             # 10/14 마지막 시도(ROI 상단 경계의 남은 원인): 비교 기준은 지금 채택 설정 ETW. V7c는 둘 다 채택될 때만 판정
-             ("V7a", "v7a_texbelow_dev", "v5 V1d 질감 비를 바로 아래 구간과 비교", {"AUTO_BAND_TEX_REF": "below"}, "ETW", "off", "rules"),
-             ("V7b", "v7b_lane_ga_dev", "v5 차선 건너기 (가) 지금 설정 위 다시", {"ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"),
-             ("V7c", "v7c_texbelow_lane_dev", "v5 V1d + 차선 (가)", {"AUTO_BAND_TEX_REF": "below", "ROAD_LANE_BRIDGE": True}, "ETW", "off", "rules"),
-             # V1d 채택 뒤 운영점(ETW와 같은 방식, 새 폴더)
-             ("ETX", "e5_v7_tau_dev", "v5 운영점: V1d 채택 뒤 지금 config의 fp2 점", {}, "V7a", "off", "curve"))
+             ("ET", "e4_final_tau_dev", "6단계 최종 τ: 지금 config의 fp2 점", {}, "S6c", "off", "curve"))
 STAGE3_PREFIXES = ("S7", "S6", "S3", "S4", "S5")   # 3단계(전처리·상태 판정) 행: 39장 검증과 E6를 함께 돈다
 STAGE4_IDS = ("S8da", "S8db", "S8a1", "S8a2", "S8b", "S8c", "S14")   # 4단계(노면 마스크·띠) 행: 39장 참고와 마스크 안 정답(표 17)
 STAGE5_IDS = ("SH", "SP", "S15")    # 5단계(Could) 행: 39장 참고(S15는 own_18 확인)
-STAGE_V5_IDS = ("V3a", "V3b", "V3c", "V3d", "V5a", "V5b", "V1a", "V1b", "V1c", "V1d", "V6a", "V1x", "V1e", "V1f", "V1y", "V1g", "V1h", "V7a", "V7b", "V7c")   # v5(10/13) 노면 마스크 행: 4단계처럼 39장 참고와 마스크 안 정답(표 17)
 MASK_GT_MIN = 0.95                  # 4단계 채택 조건: 마스크 안 정답 비율이 이 값 이상 (v9 95.1%, 계획 7장 4단계 공통)
 SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 판정 검증, 참고)", {}),
                ("S12_39", "s12_localsigma39", "2-1(12번) 국소 σ 39장 자동 ROI(참고)", {"DARK_SIGMA_LOCAL": True}),
@@ -261,7 +221,7 @@ SUPP39_RUNS = (("E5s_39", "e5s_score39", "E5 E4 설정 39장 자동 ROI(상태 �
                ("S9c_39", "s09c_split39", "2-3(9c) 덩어리·선 나누기 39장 자동 ROI(참고)", {"DARK_SPLIT_BLOB": True}),
                ("S9b_39", "s09b_edge39", "2-4(9b) 경계 날카로움 39장 자동 ROI(참고)", {"SCORE_USE_EDGE": True}),
                *[(f"{sid}_39", folder[:-4] + "_39", f"{label} 39장 자동 ROI(상태 판정 검증, 참고)", sets)
-                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS + STAGE5_IDS + STAGE_V5_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
+                 for sid, folder, label, sets, *_ in SUPP_RUNS if sid.startswith(STAGE3_PREFIXES) or sid in STAGE4_IDS + STAGE5_IDS])   # 39장 참고 실행(채택 판단에 쓰지 않음)
 # 3단계 행은 E6 인위 저하도 함께 돈다(계획 4.1): 상태 판정 적중률과 원본 기준 비율. 비교 기준(S13)도 같은 저하로 한 번 돈다
 SUPP_DEGRADE = ("blur", "dark", "bright", "noise", "night")
 SUPP_E6_IDS = ("S13",) + tuple(r[0] for r in SUPP_RUNS if r[0].startswith(STAGE3_PREFIXES))
@@ -291,26 +251,8 @@ SUPP_DECISIONS = {"S1a": "점수식 margin 선택(사용자, 10/13): 같은 동�
                   "S14": "되돌림(규칙 2 못 넘음: 균형 정확도 같음)",
                   "SH": "되돌림(규칙 1·2 못 넘음. SCORE_USE_HESSIAN 끔 그대로)",
                   "SP": "되돌림(개발셋 규칙 1~3은 넘었지만 기존 합성 시험이 부작용(띠 위쪽 결 조각)을 잡아 되돌림, 10/13 사용자 결정)",
-                  "S15": "되돌림(규칙 1·2 못 넘음: S6c 기준 판정이 바뀐 사진 0장. SP를 채택하면 SP 위에서 다시 판정해야 함)",
-                  "V3a": "미채택(규칙 1~3 못 넘음. ROAD_SEED_MODE box 그대로)", "V3b": "미채택(규칙 1·2 못 넘음, 규칙 3은 −0.77%p로 통과)", "V3c": "미채택(규칙 1~3 못 넘음)",
-                  "V3d": "미채택(규칙 1~3은 넘었지만 마스크 안 정답 95.13 → 92.96%로 95% 미달, 13장·28개 손실. ROAD_L_RANGE_MAX 0 그대로)",
-                  "V5a": "채택(10/13 사용자 확인: 규칙 1·2 통과, 규칙 3은 −0.22%p로 1%p 안이라 통과, 마스크 안 정답 95.66%). ROAD_COLOR_DIST mahal",
-                  "V5b": "미채택(규칙 1 못 넘음, 규칙 3은 −0.66%p로 통과)",
-                  "V1a": "미채택(규칙 1~3은 넘었지만 마스크 안 정답 93.82%: Norway_007802가 ROI 0.0까지 넓어지며 시드가 숲에 떨어져 12개 손실. AUTO_BAND_ROAD_MIN 0.95 그대로)",
-                  "V1b": "미채택(규칙 1·마스크 안 정답 조건 못 넘음)",
-                  "V1c": "미채택(V5a 위, 규칙 1 못 넘음: fp2 민감도 −0.2%p, 마스크 안 정답 94.76%)",
-                  "V1d": "미채택(V5a 위, 규칙 1 못 넘음: fp2 민감도 −0.2%p). 드론·오토바이 ROI 위 정답 12개는 한계로 보고",
-                  "V6a": "채택(10/13 밤, 규칙 1~3 + 마스크 안 정답 96.10%). ROAD_SEED_CHECK True",
-                  "V1x": "V6a 전 설정 위 참고(규칙 2 못 넘음: 균형 정확도 같음). 판정은 V6a 위 V1y로",
-                  "V1e": "V1x 위 참고(판정에 쓰지 않음)", "V1f": "V1x 위 참고(판정에 쓰지 않음)",
-                  "V1y": "채택(V6a 위 V1c, 규칙 1~3 + 마스크 안 정답 95.43%). AUTO_BAND_SEED_FIXED True",
-                  "V1g": "미채택(규칙 1·마스크 안 정답 94.40% 못 넘음, 측정 코드 수정 뒤 값)", "V1h": "미채택(규칙 1·2·마스크 안 정답 94.45% 못 넘음, 측정 코드 수정 뒤 값)",
-                  "V7a": "채택(10/14, V1d: 규칙 1~3 + 마스크 안 정답 95.76%). AUTO_BAND_TEX_REF below",
-                  "V7b": "미채택(규칙 1·3 못 넘음: fp1·fp2 민감도 하락, 우연 보정 균열 −1.10%p). ROAD_LANE_BRIDGE 끔 그대로",
-                  "V7c": "돌리지 않음(V7b 미채택)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
-SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False,
-                   "ROAD_SEED_MODE": "box", "ROAD_L_RANGE_MAX": 0, "ROAD_COLOR_DIST": "ab_L", "ROAD_SEED_CHECK": False,
-                   "AUTO_BAND_SEED_FIXED": False, "AUTO_BAND_TEX_REF": "start"}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
+                  "S15": "되돌림(규칙 1·2 못 넘음: S6c 기준 판정이 바뀐 사진 0장. SP를 채택하면 SP 위에서 다시 판정해야 함)"}   # 사람이 정한 판정. 자동 판정과 나란히 적는다
+SWITCHES_BEFORE = {"AUTO_BAND_TOP": False, "ROAD_LANE_BRIDGE": False, "ROAD_CLOSE_BEFORE_SEED": False}   # 생기기 전 실행의 값  # 마스크 안 정답 비율을 잴 개발셋 실행(노면 마스크가 다른 것만. 남기기 규칙은 마스크를 바꾸지 않음)
 
 EXPERIMENTS = [
     # 비교 단계 (개발셋). 이 순서로 돌고, adopt 단계는 끝날 때마다 잠정 판정해 뒤 단계 설정에 반영한다
@@ -382,7 +324,7 @@ EXPERIMENTS = [
     # 시험셋 네 번째 (6단계 4번): 보완 최종 설정으로 한 번만, 그다음 같은 코드로 재현 확인
     _exp("TS", "retest_supp", "train", "test_supp", "시험셋 보완 최종(네 번째, 한 번만)", split="test"),
     _exp("RS", "retest_supp_repro", "train", "final_test_supp", "시험셋 재현 확인(보완 최종)", split="test"),
-    # v5 최종 (10/13 밤, v5 7단계): V5a 채택·ETV 운영점 뒤 config 그대로. 구성은 보완 최종과 같다
+    # v5 최종 (10/13 밤, v5 7단계): 다음 최종 설정의 config 그대로. 구성은 보완 최종과 같다(10/14 v5 방법 폐기 뒤에도 단계는 남김)
     _exp("F39V", "final_v5", "run39", "final_v5", "39장 v5 최종(roi.csv)", roi="csv"),
     _exp("FMV", "final_v5", "match", "final_v5", "특징점·매칭 v5 최종"),
     _exp("F39aV", "final_v5", "run39", "final_auto_v5", "39장 v5 최종(자동 ROI)", roi="auto"),
@@ -421,7 +363,7 @@ TEST_RUNS = (("T", "띠 고정", "E3(dark + 노면 마스크) + 띠 고정 0.5 +
              ("TA", "자동 띠", "E3 + 자동 띠 + 결 1.5 + 남기기 center"),
              ("TR", "자동 띠 + ratio(최종)", "E3 + 자동 띠 + 결 1.5 + 남기기 ratio"),
              ("TS", "보완 최종(네 번째)", "TR + 점수 τ(E4, ET) + 국소 σ + 밝은 줄 옆 테두리 메움 + 잡티 0.05 (docs/part_C.md 보완 결과)"),
-             ("TV", "v5 최종(다섯 번째)", "TS + 노면 색 기준 마할라노비스(V5a) + 운영점 다시(ETV) (docs/part_C.md v5 진행 기록)"))
+             ("TV", "v5 최종(다섯 번째)", "다음 최종 설정(10/14 v5 방법 폐기, docs/part_C.md)"))
 IMAGE_RUNS = (("first", "F39e0"), ("final", "F39"), ("auto", "F39a"), ("e1_auto", "E1_39"), ("e3_auto", "E3_39"),
               ("supp_final", "F39S"), ("supp_auto", "F39aS"), ("v5_final", "F39V"), ("v5_auto", "F39aV"))     # 보완 최종(roi.csv·자동 ROI) 열은 8번 표 끝에 더함
 GROUP39 = ["n_images", "n_gt", "n_damage", "n_none", "sensitivity_off", "sensitivity_on", "specificity_off", "specificity_on",
@@ -1184,10 +1126,10 @@ def run_stage(stage, args, paths, human, command_line, ask=input):
         print(f"  {exp['id']:<9} {exp['name']:<22} {shown} ({duration(seconds)})")
     report = build_report(paths, human, command_line)
     print_report(report, stage)
-    tau_id = next((e["id"] for e, _, _ in done if e["id"] in ("ET", "ETV", "ETW", "ETX")), None) if stage == "supp" else None
+    tau_id = next((e["id"] for e, _, _ in done if e["id"] == "ET"), None) if stage == "supp" else None
     tau_lines = et_tau_lines(paths, report["states"], tau_id) if tau_id else []
     if tau_lines:
-        print(f"\n{tau_id} 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 최종 실행(ET → supp_final, ETV → final_v5)을 돌린다"
+        print(f"\n{tau_id} 끝: config B 구역의 점수 문턱을 아래로 바꾼 뒤 커밋하고 최종 실행(supp_final 또는 final_v5)을 돌린다"
               "(docs/tasks/supplement.md)")
         print("\n".join(f"  {line}" for line in tau_lines))
     return 1 if any(shown.startswith("실패") for _, shown, _ in done) else 0
@@ -1782,11 +1724,7 @@ def mask_gt_rows(paths, exp, state, out_dir):
             small = io_utils.resize_width(io_utils.load_image(str(image_dir / name)))
             top = pipeline.auto_band_top(small, C.ROI_TOP_DEFAULT) if C.AUTO_BAND_TOP else C.ROI_TOP_DEFAULT
             roi, y0 = io_utils.crop_roi(small, top, C.ROI_BOTTOM_DEFAULT)
-            if C.AUTO_BAND_SEED_FIXED and top != C.ROI_TOP_DEFAULT:    # pipeline.run_pipeline과 같게(v5 V1c: 넓어진 ROI는 원래 ROI 자리의 시드)
-                road = io_utils.road_mask_seeded(roi, pipeline.fixed_seed_box(small.shape[1], small.shape[0], C.ROI_TOP_DEFAULT,
-                                                                               C.ROI_BOTTOM_DEFAULT, y0))
-            else:
-                road = io_utils.road_mask(roi)
+            road = io_utils.road_mask(roi)
             gt = evaluate.load_gt(str(Path(paths["train_gt"]) / f"{Path(name).stem}.csv")) or []
             band = [(int(x + w / 2), int(y + h / 2) - y0) for x, y, w, h, _ in gt if 0 <= int(y + h / 2) - y0 < road.shape[0]]
             rows.append({"image": name, "source": et.source_of(name), "top": top,
@@ -1967,7 +1905,7 @@ def supp_mask_table(paths, states, out_dir):
     마스크 안 정답이 MASK_GT_MIN 이상인지. 값은 mask_gt_rows(그 실행의 config 기록으로 마스크를 다시 만듦)로 잰다. 채택은 표 14의
     규칙 1~3과 이 조건을 모두 넘을 때만이다(계획 7장 4단계 공통)."""
     rows = []
-    for sid in ("S6c",) + STAGE4_IDS + STAGE_V5_IDS:
+    for sid in ("S6c",) + STAGE4_IDS:
         exp, state = EXP[sid], states[sid]
         df = mask_gt_rows(paths, exp, state, out_dir)
         band, mask, widened = mask_gt_ratios(df)

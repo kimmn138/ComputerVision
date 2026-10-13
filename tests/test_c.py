@@ -1016,60 +1016,6 @@ def band_scene(sky_ratio):
     return bgr
 
 
-def test_auto_band_seed_fixed():
-    """(v5 V1c) fixed_seed_box: ROI가 넓어지지 않았으면(y0 = 원래 ROI 시작) io_utils.road_mask의 시드 상자와 같고, 넓어지면 같은 사진 위치를
-    넓어진 ROI 좌표로 옮긴다. AUTO_BAND_TOP을 끄면(ROI가 넓어지지 않음) AUTO_BAND_SEED_FIXED를 켜도 run_pipeline의 노면 마스크·row가 끔과 같다."""
-    H, W = 480, 640
-    r0 = int(H * 0.5)
-    fx0, fy0, fx1, fy1 = C.ROAD_SEED_BOX
-    h_roi = H - r0
-    check(pipeline.fixed_seed_box(W, H, 0.5, 1.0, r0) == (int(W * fx0), int(h_roi * fy0), int(W * fx1), int(h_roi * fy1)),
-          "fixed_seed_box: 넓어지지 않았는데 road_mask의 시드 상자와 다름")
-    y_wide = int(H * 0.2)
-    box = pipeline.fixed_seed_box(W, H, 0.5, 1.0, y_wide)
-    check(box[1] == r0 + int(h_roi * fy0) - y_wide and box[3] == r0 + int(h_roi * fy1) - y_wide,
-          f"fixed_seed_box: 넓어진 ROI 좌표로 옮기지 않음 ({box})")
-    bgr = np.full((H, W, 3), 110, np.uint8)
-    rng = np.random.default_rng(3)
-    bgr = (bgr.astype(int) + rng.normal(0, 6, bgr.shape)).clip(0, 255).astype(np.uint8)
-    bgr[:120] = (60, 140, 60)
-    with patched(C, "AUTO_BAND_TOP", False):
-        with patched(C, "AUTO_BAND_SEED_FIXED", False):
-            off = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
-        with patched(C, "AUTO_BAND_SEED_FIXED", True):
-            on = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
-    check(np.array_equal(off["road"], on["road"]) and {k: v for k, v in off["row"].items() if not k.startswith("t_")}
-          == {k: v for k, v in on["row"].items() if not k.startswith("t_")}, "AUTO_BAND_SEED_FIXED: ROI가 넓어지지 않았는데 결과가 달라짐")
-
-
-def test_auto_band_tex_below():
-    """(v5 V1d) AUTO_BAND_TEX_REF "below": 노면 질감이 위로 갈수록 조금씩 매끈해지면(구간 σ 12 → 10 → 8 → 6.5 → 5.3) 바로 아래 구간과의 비(0.8 안팎)는
-    범위 안이라 계속 넓히고, 맨 위에서 갑자기 거칠어지는 곳(σ 25, 숲)에서 멈춘다. "start"(시작 ROI와 비교)는 시작 ROI 대비 매끈해진 곳에서 더 일찍 멈춘다.
-    노면 마스크는 전부 노면으로 바꿔 끼워 질감 조건만 본다. 잘못된 값은 ValueError."""
-    H, W = 500, 640
-    rng = np.random.default_rng(5)
-    sig = np.full(H, 12.0)
-    for (a, b), s_ in (((0.0, 0.1), 25.0), ((0.1, 0.2), 5.3), ((0.2, 0.3), 5.3), ((0.3, 0.4), 6.5), ((0.4, 0.5), 8.0), ((0.5, 0.6), 10.0)):
-        sig[int(H * a):int(H * b)] = s_
-    gray = (128 + rng.normal(0, 1, (H, W)) * sig[:, None]).clip(0, 255).astype(np.uint8)
-    bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
-    full = lambda img, *a: np.full(img.shape[:2], 255, np.uint8)   # noqa: E731
-    with patched(io_utils, "road_mask", full), patched(io_utils, "road_mask_seeded", full), patched(C, "AUTO_BAND_USE_TEXTURE", True), \
-            patched(C, "AUTO_BAND_ROAD_MIN", 0.95), patched(C, "AUTO_BAND_TEX_RATIO", 1.5), patched(C, "AUTO_BAND_TEX_PERSPECTIVE", False):
-        with patched(C, "AUTO_BAND_TEX_REF", "start"):
-            start = pipeline.auto_band_top(bgr, 0.5)
-        with patched(C, "AUTO_BAND_TEX_REF", "below"):
-            below = pipeline.auto_band_top(bgr, 0.5)
-        with patched(C, "AUTO_BAND_TEX_REF", "nope"):
-            try:
-                pipeline.auto_band_top(bgr, 0.5)
-                bad = False
-            except ValueError:
-                bad = True
-    check(below == 0.1 and start > below, f"AUTO_BAND_TEX_REF: below는 숲 앞(0.1)까지, start는 더 일찍 멈춰야 함 (start {start}, below {below})")
-    check(bad, "AUTO_BAND_TEX_REF: 잘못된 값인데 ValueError가 나지 않음")
-
-
 def test_auto_band_switch_off():
     """AUTO_BAND_TOP이 꺼져 있으면 사진 전체 노면 마스크를 계산하지 않고 받은 top 그대로 자른다(지금 결과 그대로).
     결과의 top은 받은 값, t_band_ms는 0.0이고, 켰을 때 경계가 그대로이면(가짜 auto_band_top) 결과가 끈 것과 같다."""
@@ -2079,7 +2025,7 @@ def test_run_all_retest_supp_refuse():
 
 def test_run_all_final_v5_stages():
     """(v5 7단계, 10/13 밤) final_v5는 supp_final과 같은 구성(39장 roi.csv·매칭·자동 ROI·1차, E5 τ 곡선, E6 여섯 가지)을 config 그대로,
-    시험셋 다섯 번째(TV)·재현(RV)은 시험셋을 쓰고, 처리 시간 단계라 병렬 금지 안내를 띄운다. ETV는 지금 config의 τ 곡선이다."""
+    시험셋 다섯 번째(TV)·재현(RV)은 시험셋을 쓰고, 처리 시간 단계라 병렬 금지 안내를 띄운다."""
     from tools import run_all as ra
     from tools import evaluate_train as et
     ids = [e["id"] for e in ra.EXPERIMENTS if e["stage"] == "final_v5"]
@@ -2097,8 +2043,6 @@ def test_run_all_final_v5_stages():
           "run_all: 시험셋 다섯 번째·재현 행이 빠짐")
     check("final_v5" in ra.FINAL_STAGES and ra.RETEST_FINAL["retest_v5"] == "E5V" and ra.FINAL_STAGE_OF["E5V"] == "final_v5",
           "run_all final_v5: 최종 단계·대조 실험이 맞지 않음")
-    check(ra.EXP["ETV"]["stage"] == "supp" and not ra.EXP["ETV"]["opts"]["sets"] and ra.EXP["ETV"]["opts"]["tau_curve"],
-          "run_all ETV: 지금 config의 τ 곡선 행이 아님")
     check(ra.default_paths()["test_marker_v5"] == "docs/test_v5_done.txt" and ra.default_paths()["test_marker"] == "docs/test_supp_done.txt",
           "run_all: 시험셋 기록 파일 경로가 다름")
 
@@ -2126,9 +2070,9 @@ def test_run_all_retest_v5_refuse():
         supp_marker.write_text("2026-10-13 14:00:33 커밋 b27a289\n", encoding="utf-8")
         check(ra.stage_refusal("retest_v5", results, str(marker)) is None,
               "run_all retest_v5: config가 같고 v5 기록 파일이 없는데 거부함(retest_supp 기록 파일에 막힘?)")
-        with patched(C, "ROAD_COLOR_DIST", "ab_L"):
+        with patched(C, "ROAD_L_K", C.ROAD_L_K + 1):
             text = ra.stage_refusal("retest_v5", results, str(marker)) or ""
-        check("ROAD_COLOR_DIST" in text, f"run_all retest_v5: config가 다른데 거부하지 않음 ({text})")
+        check("ROAD_L_K" in text, f"run_all retest_v5: config가 다른데 거부하지 않음 ({text})")
         with contextlib.redirect_stdout(io.StringIO()) as printed:
             code = ra.main(["retest_v5_repro"], paths)
         check(code == 2 and "retest_v5 뒤에" in printed.getvalue(), "run_all retest_v5_repro: test_v5 없이도 돌았음")

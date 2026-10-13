@@ -758,7 +758,7 @@ def main(argv=None):
                         help="ROI 상단 경계 진단: 0.5에 머문 드론·오토바이 개발셋 사진과 39장 중 0.5에 머물거나 ROI 위 정답이 있는 사진 → D_diag.csv, diag_*.png")
     parser.add_argument("--stuck", action="store_true", help="(1) 재측정: 0.5에 머문 드론·오토바이 사진만 지금 config로 다시 잰다")
     parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
-                        help="이번 실행에만 바꿀 config 값(여러 번). 값은 파이썬 리터럴(예: ROAD_L_RANGE_MAX=64, ROAD_COLOR_DIST='mahal')")
+                        help="이번 실행에만 바꿀 config 값(여러 번). 값은 파이썬 리터럴(예: ROAD_L_K=3, AUTO_BAND_ROAD_MIN=0.9)")
     args = parser.parse_args(argv)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for item in args.set:
