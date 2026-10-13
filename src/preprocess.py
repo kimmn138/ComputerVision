@@ -7,13 +7,19 @@ from src import config as C
 
 def preprocess(gray, steps):
     """검출이 잘 되도록 고른 단계만 적용한 흑백 영상을 돌려준다. NO_STEPS면 입력과 똑같은 영상.
-    순서: 가우시안(GAUSS_KSIZE·GAUSS_SIGMA) → 감마(결과 = 입력^감마, 감마 < 1이면 밝게)·평활화·CLAHE(CLAHE_CLIP·CLAHE_TILE)
+    순서: 가우시안(GAUSS_KSIZE·GAUSS_SIGMA, NIGHT_DENOISE면 야간 영상은 NLM) → 감마(결과 = 입력^감마, 감마 < 1이면 밝게)·평활화·CLAHE(CLAHE_CLIP·CLAHE_TILE)
     → 샤프닝(언샤프 마스크: 결과 = 입력 + SHARPEN_AMOUNT × (입력 − 가우시안(SHARPEN_SIGMA)))."""
     out = gray.copy()
 
-    # 1. 잡티 제거 (Denoise)
+    # 1. 잡티 제거 (Denoise). NIGHT_DENOISE가 켜져 있고 밝게 하는 감마(< 1)를 함께 고른 영상(어둡고 잡음 많은 야간)은
+    #    가우시안 대신 비국소 평균(NLM): 비슷한 무늬 조각끼리 평균해 경계를 덜 뭉갠다. 감마로 밝히기 전에 잡음을 줄인다
     if steps.get("denoise"):
-        out = cv.GaussianBlur(out, C.GAUSS_KSIZE, C.GAUSS_SIGMA)
+        night = C.NIGHT_DENOISE and steps.get("tone") == "gamma" and steps.get("gamma", 1.0) < 1
+        if night:
+            out = cv.fastNlMeansDenoising(out, None, h=C.NIGHT_DENOISE_H, templateWindowSize=C.NIGHT_NLM_TEMPLATE,
+                                          searchWindowSize=C.NIGHT_NLM_SEARCH)
+        else:
+            out = cv.GaussianBlur(out, C.GAUSS_KSIZE, C.GAUSS_SIGMA)
 
     # 2. 톤/조도 보정 (Tone)
     tone = steps.get("tone")
