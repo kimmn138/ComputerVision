@@ -145,12 +145,18 @@ def road_mask(bgr_roi):
     y0 = max(0, min(y0, h - 1))
     y1 = max(y0 + 1, min(y1, h))
 
-    seed = lab[y0:y1, x0:x1]
+    # 시드 픽셀(bool). 기본은 시드 상자 전체, (A2r) 켜져 있으면 노면답지 않은 픽셀을 뺀다
+    seed_sel = np.zeros((h, w), bool)
+    seed_sel[y0:y1, x0:x1] = True
+    if C.ROAD_SEED_FILTER:
+        good = seed_sel & ~_not_road_seed(img, L, a, b)
+        if np.count_nonzero(good) >= C.ROAD_SEED_KEEP_MIN * np.count_nonzero(seed_sel):
+            seed_sel = good
 
-    seed_L = seed[:, :, 0].astype(np.float32)
-    seed_a = seed[:, :, 1].astype(np.float32)
-    seed_b = seed[:, :, 2].astype(np.float32)
-    
+    seed_L = L[seed_sel]
+    seed_a = a[seed_sel]
+    seed_b = b[seed_sel]
+
     # seed 영역의 대표값
     L_med = float(np.median(seed_L))
     a_med = float(np.median(seed_a))
@@ -174,6 +180,8 @@ def road_mask(bgr_roi):
         C.ROAD_L_K *
         (1.4826 * mad + 2.0)
     )
+    if C.ROAD_L_RANGE_MAX > 0:                          # (A3) 시드가 그늘·햇빛·지평선을 섞어 허용 폭이 0~255를 덮지 않게
+        l_threshold = min(l_threshold, C.ROAD_L_RANGE_MAX)
 
     # 색과 밝기가 모두 노면과 비슷한 픽셀
     candidate = (
@@ -200,6 +208,10 @@ def road_mask(bgr_roi):
     # (v2 차선 (가)) 차선 픽셀도 노면으로 다뤄 차선 건너편 노면과 이어지게 함
     if C.ROAD_LANE_BRIDGE:
         candidate = candidate | _lane_pixels(L, a, b, L_med)
+
+    # (B2) 노면 위의 가늘고 긴 흰·노란 줄을 노면으로: 건너편 노면과 이어지게
+    if C.ROAD_LANE_AS_ROAD:
+        candidate = candidate | _lane_on_road(L, a, b, L_med, candidate)
 
     mask = candidate.astype(np.uint8) * 255
 
@@ -231,16 +243,22 @@ def road_mask(bgr_roi):
 
     keep_labels = set()
 
-    seed_labels = labels[y0:y1, x0:x1]
+    seed_labels = labels[seed_sel]
 
     for label in np.unique(seed_labels):
         if label != 0:
             keep_labels.add(int(label))
 
-    connected = np.zeros_like(mask)
+    # (B1) 시드와 이어지지 않았어도 큰 덩어리, 아래쪽에 닿은 덩어리는 노면으로(흰 선에 막힌 건너편)
+    if C.ROAD_KEEP_BLOBS:
+        bottom = int(h * (1 - C.ROAD_BLOB_BOTTOM))
+        for label in range(1, num_labels):
+            area = stats[label, cv.CC_STAT_AREA]
+            touches = stats[label, cv.CC_STAT_TOP] + stats[label, cv.CC_STAT_HEIGHT] > bottom
+            if area >= C.ROAD_BLOB_BIG * h * w or (area >= C.ROAD_BLOB_SMALL * h * w and touches):
+                keep_labels.add(label)
 
-    for label in keep_labels:
-        connected[labels == label] = 255
+    connected = np.isin(labels, list(keep_labels)).astype(np.uint8) * 255
 
     # seed와 연결된 것이 하나도 없다면
     # 너무 공격적으로 전부 없애지 않고 기존 후보를 사용
@@ -267,6 +285,52 @@ def road_mask(bgr_roi):
         connected[_hood_rows(img, (x0, y0, x1, y1))] = 0
 
     return connected.astype(np.uint8)
+
+
+def _not_road_seed(bgr, L, a, b):
+    """(A2r) 시드로 쓰면 안 되는 픽셀(bool): 그 사진 ROI 아래쪽(ROAD_SEED_REF_BOX)의 채도 중앙값보다 ROAD_SEED_CHROMA_REL 넘게 채도가 높은
+    픽셀(풀·차), 밝은 표시(검출기 1단계와 같은 기준: 1/DARK_BG_DOWNSCALE 중앙값 거친 배경 + DARK_BRIGHT_DELTA보다 밝음, 흰 선),
+    노란 선 색(차선 (가)와 같은 노랑 규칙). 채도를 사진마다 상대적으로 보므로 빨간·푸른 아스팔트 자체는 빠지지 않는다."""
+    h, w = L.shape
+    da, db = a - 128, b - 128
+    chroma = np.sqrt(da ** 2 + db ** 2)
+    fx0, fy0, fx1, fy1 = C.ROAD_SEED_REF_BOX
+    ref = float(np.median(chroma[int(h * fy0):int(h * fy1), int(w * fx0):int(w * fx1)]))
+    gray = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY)
+    s = C.DARK_BG_DOWNSCALE
+    size = (max(1, int(round(w / s))), max(1, int(round(h / s))))
+    coarse = cv.resize(cv.medianBlur(cv.resize(gray, size, interpolation=cv.INTER_AREA), C.DARK_BG_KSIZE_SMALL | 1), (w, h),
+                       interpolation=cv.INTER_LINEAR).astype(np.float32)
+    bright = gray.astype(np.float32) > coarse + C.DARK_BRIGHT_DELTA
+    yellow = (db >= C.ROAD_LANE_YELLOW_B) & (db >= 2 * np.abs(da))
+    return (chroma - ref > C.ROAD_SEED_CHROMA_REL) | bright | yellow
+
+
+def _lane_on_road(L, a, b, L_med, candidate):
+    """(B2) _lane_pixels 덩어리 가운데 가늘고 길며(긴 변 ÷ 짧은 변 ≥ ROAD_LANE_ELONG) 둘레 고리(ROAD_LANE_RING px)의 ROAD_LANE_RING_ROAD
+    이상이 노면 색(candidate)인 줄만 골라, 흐림 번짐 폭(ROAD_LANE_EDGE)만큼 넓혀 bool로 돌려준다. 하늘·벽 같은 밝은 면은 둘레가 노면이 아니라 빠진다."""
+    lane = _lane_pixels(L, a, b, L_med).astype(np.uint8)
+    n, labels, stats, _ = cv.connectedComponentsWithStats(lane, connectivity=8)
+    out = np.zeros(lane.shape, bool)
+    r = C.ROAD_LANE_RING
+    k = cv.getStructuringElement(cv.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+    for i in range(1, n):
+        if stats[i, cv.CC_STAT_AREA] < C.ROAD_LANE_MIN_AREA:
+            continue
+        x, y, bw, bh = stats[i, :4]
+        comp = labels[y:y + bh, x:x + bw] == i
+        (_, _), (rw, rh), _ = cv.minAreaRect(np.column_stack(np.nonzero(comp)[::-1]).astype(np.float32))
+        if max(rw, rh) < C.ROAD_LANE_ELONG * max(1.0, min(rw, rh)):
+            continue
+        X0, Y0 = max(0, x - r), max(0, y - r)
+        X1, Y1 = min(lane.shape[1], x + bw + r), min(lane.shape[0], y + bh + r)
+        local = np.zeros((Y1 - Y0, X1 - X0), np.uint8)
+        local[y - Y0:y - Y0 + bh, x - X0:x - X0 + bw] = comp
+        ring = (cv.dilate(local, k) > 0) & (local == 0) & (lane[Y0:Y1, X0:X1] == 0)
+        if ring.any() and candidate[Y0:Y1, X0:X1][ring].mean() >= C.ROAD_LANE_RING_ROAD:
+            out[Y0:Y1, X0:X1] |= local > 0
+    d = 2 * C.ROAD_LANE_EDGE + 1
+    return cv.dilate(out.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (d, d))) > 0
 
 
 def _hood_rows(bgr, seed_box):

@@ -201,15 +201,40 @@ def test_road_mask_v2_edge_density():
     assert on[rest].mean() >= 0.95 and on[part["pothole"]].mean() >= 0.95, (on[rest].mean(), on[part["pothole"]].mean())
 
 
-@todo("A WP1 v2 (Should): 차선이 노면을 가르는 영상 (Plan.md 3.3 (5) 차선)")
 def test_road_mask_v2_lane_split():
     """v2: 흰 차선이 띠 아래에서 위까지 노면을 갈라도 차선 건너편 노면과 차선을 마스크에 넣는다.
-    (v1은 건너편을 통째로 뺀다. C가 부록 C 코드로 메모리에서 확인: 건너편 0.0, 차선 0.0)"""
+    (v1은 건너편을 통째로 뺀다. C가 부록 C 코드로 메모리에서 확인: 건너편 0.0, 차선 0.0)
+    10/14 B1(ROAD_KEEP_BLOBS)·B2(ROAD_LANE_AS_ROAD)로 통과(C가 A 동의로 @todo를 뗌)."""
     bgr, part = road_band(split_lane=True)
     road = io_utils.road_mask(bgr) == 255
     ratio = {name: round(float(road[where].mean()), 3) for name, where in part.items()}
     assert ratio["right"] >= 0.90 and ratio["lane"] >= 0.90, ratio
     assert ratio["grass"] <= 0.05 and ratio["building"] <= 0.05, ratio
+
+
+def test_road_mask_10_14_switches():
+    """10/14 노면 두 결함(C가 A 동의로 넣음). 차선이 가르는 장면에서 B1·B2를 모두 끄면 건너편을 버리고, 하나만 켜도 건너편을 남긴다.
+    시드 상자 오른쪽 절반을 풀로 덮으면 A2r(ROAD_SEED_FILTER)을 끈 때는 풀을 칠하고 노면을 버리며, 켜면 노면을 칠하고 풀을 뺀다.
+    네 스위치를 모두 끄면 그 전(보완 최종)과 같은 식이다."""
+    off = dict(ROAD_SEED_FILTER=False, ROAD_L_RANGE_MAX=0, ROAD_KEEP_BLOBS=False, ROAD_LANE_AS_ROAD=False)
+    bgr, part = road_band(split_lane=True)
+    with config_values(**off):
+        none = io_utils.road_mask(bgr) == 255
+    assert none[part["right"]].mean() <= 0.10, f"스위치를 다 껐는데 건너편을 칠함 ({none[part['right']].mean():.3f}): 시험 장면이 맞지 않음"
+    for name in ("ROAD_KEEP_BLOBS", "ROAD_LANE_AS_ROAD"):
+        with config_values(**{**off, name: True}):
+            one = io_utils.road_mask(bgr) == 255
+        assert one[part["right"]].mean() >= 0.90, f"{name}만 켰는데 건너편을 남기지 않음 ({one[part['right']].mean():.3f})"
+    rng = np.random.default_rng(7)
+    img = (np.full((240, 640, 3), 110.0) + rng.normal(0, 4, (240, 640, 3))).clip(0, 255).astype(np.uint8)
+    img[:, 320:] = (40, 150, 60)                           # 시드 상자(x 192~448) 오른쪽 절반부터 풀
+    with config_values(**off):
+        a_off = io_utils.road_mask(img) == 255
+    with config_values(**{**off, "ROAD_SEED_FILTER": True}):
+        a_on = io_utils.road_mask(img) == 255
+    assert a_off[:, :300].mean() <= 0.10, f"A2r를 껐는데 노면을 칠함 ({a_off[:, :300].mean():.3f}): 시험 장면이 맞지 않음"
+    assert a_on[:, :300].mean() >= 0.90 and a_on[:, 340:].mean() <= 0.10, (a_on[:, :300].mean(), a_on[:, 340:].mean())
+
 
 # ==========================================
 # 2. analyze.py 테스트
