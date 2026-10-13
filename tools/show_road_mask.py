@@ -40,11 +40,54 @@ from tools.evaluate_train import DIAG35
 OUT_DIR = "results/road_mask"
 
 
+COMPARE_DIR = "results/road_mask_compare"
+# --compare 패널: (제목, 이 패널에서만 바꿀 config 값). v1 = v2 스위치를 모두 끈 마스크, 8a~8c = 그 스위치 하나만 켬, config = 지금 config.
+# 8a의 배수 2는 보완 4-2의 개발셋 후보 1.5·2 가운데 큰 값(넓히는 효과가 잘 보이게, part_C 4-2)
+V2_OFF = {"ROAD_SHADOW_L_K": 0, "ROAD_HOOD_CUT": False, "ROAD_EDGE_DENSITY": False}
+COMPARE_PANELS = (("v1", V2_OFF), ("8a shadow K2", {**V2_OFF, "ROAD_SHADOW_L_K": 2}),
+                  ("8b hood", {**V2_OFF, "ROAD_HOOD_CUT": True}), ("8c edge density", {**V2_OFF, "ROAD_EDGE_DENSITY": True}),
+                  ("config", {}))
+
+
 def parse_args(argv=None):
+    """확인할 사진 묶음(--set)·저장 폴더(--out)와, v1·v2 마스크를 나란히 그릴지(--compare, 보완 4-3)를 읽는다."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--set", choices=("dev39", "diag35"), default="dev39")
-    parser.add_argument("--out", default=OUT_DIR)
-    return parser.parse_args(argv)
+    parser.add_argument("--out", default=None, help=f"저장 폴더. 기본 {OUT_DIR}, --compare면 {COMPARE_DIR}")
+    parser.add_argument("--compare", action="store_true",
+                        help="v1(v2 스위치 모두 끔)·8a·8b·8c(하나씩 켬)·config 마스크를 한 장에 나란히 저장 (보완 4-3, 채택 판정 없음)")
+    args = parser.parse_args(argv)
+    if args.out is None:
+        args.out = COMPARE_DIR if args.compare else OUT_DIR
+    return args
+
+
+def masks_by_panel(roi):
+    """COMPARE_PANELS마다 config 값을 잠시 바꿔 노면 마스크를 만들고 되돌린다 → [(제목, 마스크)]. 받은 영상은 바꾸지 않는다."""
+    out = []
+    for title, values in COMPARE_PANELS:
+        backup = {k: getattr(C, k) for k in values}
+        try:
+            for k, v in values.items():
+                setattr(C, k, v)
+            out.append((title, io_utils.road_mask(roi)))
+        finally:
+            for k, v in backup.items():
+                setattr(C, k, v)
+    return out
+
+
+def compare_figure(small, roi, y0, gt):
+    """한 사진의 패널들을 가로로 이어 붙인 그림과 패널마다 (제목, 노면 비율, 띠 안 정답, 마스크 안 정답)을 돌려준다."""
+    panels, stats = [], []
+    for title, road in masks_by_panel(roi):
+        drawn = draw_gt(draw_road(small, road, y0), gt)
+        cv.putText(drawn, title, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 4, cv.LINE_AA)
+        cv.putText(drawn, title, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv.LINE_AA)
+        n_roi, n_road = count_gt(gt, road, y0)
+        panels.append(drawn)
+        stats.append((title, round(np.count_nonzero(road) / road.size, 4), n_roi, n_road))
+    return np.hstack(panels), stats
 
 def list_images(set_name):
     """dev39 또는 diag35에 해당하는 영상 경로를 반환한다."""
@@ -187,6 +230,14 @@ def main(argv=None):
 
         stem = os.path.splitext(name)[0]
 
+        if args.compare:
+            gt_path = os.path.join(C.TRAIN_GT_DIR if args.set == "diag35" else "gt", f"{stem}.csv")
+            figure, stats = compare_figure(small, roi, y0, load_gt(gt_path))
+            cv.imwrite(os.path.join(out_dir, f"{stem}.jpg"), figure)
+            rows += [{"file": name, "panel": t, "mask_ratio": r, "gt_in_roi": a, "gt_in_road": b} for t, r, a, b in stats]
+            print(name, " | ".join(f"{t} road={r:.3f} GT={b}/{a}" for t, r, a, b in stats))
+            continue
+
         if args.set == "diag35":
             gt_path = os.path.join(
                 C.TRAIN_GT_DIR,
@@ -255,6 +306,7 @@ def main(argv=None):
             f,
             fieldnames=[
                 "file",
+                *(["panel"] if args.compare else []),
                 "mask_ratio",
                 "gt_in_roi",
                 "gt_in_road",
@@ -263,6 +315,14 @@ def main(argv=None):
 
         writer.writeheader()
         writer.writerows(rows)
+
+    if args.compare:                    # 패널마다 정답 유지율(띠 안 정답 중 마스크 안)
+        for title, _ in COMPARE_PANELS:
+            part = [r for r in rows if r["panel"] == title]
+            n_roi, n_road = sum(r["gt_in_roi"] for r in part), sum(r["gt_in_road"] for r in part)
+            if n_roi:
+                print(f"{title} 정답 유지율: {n_road}/{n_roi} = {n_road / n_roi * 100:.2f}%")
+        return
 
     total_roi = sum(
         r["gt_in_roi"]
