@@ -7,6 +7,7 @@ import contextlib
 import functools
 import io
 import math
+import shutil
 import os
 import struct
 import sys
@@ -666,6 +667,64 @@ def test_demo_main_save():
     check(after == before and after_dark == before, f"demo.main: 실행 뒤 config가 되돌아오지 않음 ({after}, {after_dark}, 원래 {before})")
     check(dark_code == 1 and not dark_saved and "아직 구현되지 않은" in dark_printed.getvalue(),
           "demo.main: 검출기 오류(가짜 검출기)에 알기 쉬운 문구와 1로 끝나지 않았거나 그림을 저장함")
+
+
+def rejected_scene():
+    """τ로 걸러지는 후보가 생기는 합성 사진 480×640: 결이 있는 회색 노면 띠에 진한 긴 선(점수 큼)과 옅은 짧은 선 여러 개(점수 작음)."""
+    rng = np.random.default_rng(11)
+    gray = cv.GaussianBlur(rng.normal(120, 8, (480, 640)).clip(0, 255).astype(np.uint8), (0, 0), 1.2)
+    cv.line(gray, (60, 300), (580, 360), 40, 3)
+    for x in range(80, 600, 90):
+        cv.line(gray, (x, 400), (x + 40, 430), 95, 2)
+    return cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+
+
+def test_demo_tau_rejected():
+    """(보완 6단계) DRAW_TAU_REJECTED: 끄면 시연 그림이 지금과 픽셀까지 같고(draw_rejected를 부르지도 않음), 켜면 τ에 걸러진 후보만
+    옅은 점선으로 더해진다. 어느 쪽이든 결과 숫자(run_pipeline의 row·후보)와 config는 그대로다. draw_rejected는 받은 영상을 바꾸지 않고,
+    후보가 없으면 그대로이며, 걸러진 후보의 윤곽 위 픽셀만 바꾼다."""
+    bgr = rejected_scene()
+    with patched(C, "USE_SCORE_TAU", True):
+        out = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+        rejected = demo.tau_rejected(bgr, 0.5, 1.0, False, out)
+        restored = C.USE_SCORE_TAU
+    check(restored is True, "tau_rejected: τ를 끈 재검출 뒤 USE_SCORE_TAU가 되돌아오지 않음")
+    check(bool(rejected[0] or rejected[1]), f"시험 장면에서 τ에 걸러진 후보가 없음 ({len(rejected[0])}, {len(rejected[1])})")
+    old = visualize.draw_candidates(visualize.draw_road(out["small"], out["road"], out["y0"]), out["cracks"], out["potholes"], out["y0"])
+    check(np.array_equal(demo.draw_panel(out, None), old), "draw_panel: 걸러진 후보 없이 그린 그림이 지금 그림과 다름")
+    small = out["small"]
+    before = small.copy()
+    check(np.array_equal(visualize.draw_rejected(small, [], [], out["y0"]), small), "draw_rejected: 후보가 없는데 그림이 바뀜")
+    drawn = visualize.draw_rejected(small, rejected[0], rejected[1], out["y0"])
+    line = np.zeros(small.shape[:2], np.uint8)
+    cv.drawContours(line, [r["contour"] for r in rejected[0] + rejected[1]], -1, 255, C.REJECTED_THICKNESS, offset=(0, out["y0"]))
+    changed = np.any(drawn != small, axis=2)
+    check(np.array_equal(small, before) and changed.any() and not (changed & (line == 0)).any(),
+          "draw_rejected: 받은 영상을 바꾸거나, 아무것도 그리지 않거나, 윤곽 밖 픽셀을 바꿈")
+
+    def forbidden(*args):
+        raise AssertionError("DRAW_TAU_REJECTED 끔인데 draw_rejected를 부름")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "Japan_900002.jpg")
+        cv.imwrite(path, bgr)
+        views = {}
+        for name, draw, rej in (("off", forbidden, False), ("on", visualize.draw_rejected, True)):
+            saved = os.path.join(tmp, f"{name}.png")
+            with patched(C, "USE_SCORE_TAU", True), patched(C, "DRAW_TAU_REJECTED", rej), patched(visualize, "draw_rejected", draw),                     contextlib.redirect_stdout(io.StringIO()):
+                code = demo.main([path, "--auto-band", "off", "--save", saved])
+            views[name] = cv.imdecode(np.fromfile(saved, np.uint8), cv.IMREAD_COLOR) if code == 0 else None
+        with patched(C, "USE_SCORE_TAU", True), patched(C, "DRAW_TAU_REJECTED", False), contextlib.redirect_stdout(io.StringIO()):
+            plain = os.path.join(tmp, "plain.png")
+            demo.main([path, "--auto-band", "off", "--save", plain])
+            views["plain"] = cv.imdecode(np.fromfile(plain, np.uint8), cv.IMREAD_COLOR)
+    check(views["off"] is not None and np.array_equal(views["off"], views["plain"]), "demo: 끔인데 그림이 다르거나 저장하지 못함")
+    check(views["on"] is not None and not np.array_equal(views["on"], views["off"]), "demo: 켰는데 걸러진 후보가 그려지지 않음")
+    with patched(C, "USE_SCORE_TAU", True), patched(C, "DRAW_TAU_REJECTED", True):
+        again = pipeline.run_pipeline(bgr, 0.5, 1.0, False)
+    untimed = lambda row: {k: v for k, v in row.items() if not k.startswith("t_")}  # noqa: E731  처리 시간 열은 매번 다름
+    check(untimed(again["row"]) == untimed(out["row"]) and [r["bbox"] for r in again["cracks"]] == [r["bbox"] for r in out["cracks"]],
+          "DRAW_TAU_REJECTED가 결과 숫자(row·후보)를 바꿈")
 
 
 def test_demo_dialog_args():
@@ -1517,7 +1576,8 @@ def test_run_all_plan():
     from tools import evaluate_train as et
     from tools import run_all as ra
     names = collections.Counter(e["name"] for e in ra.EXPERIMENTS)
-    check(names.pop("final_ratio") == 2 and set(names.values()) == {1}, f"run_all: 결과 폴더 이름이 겹침 ({names.most_common(3)})")
+    check(names.pop("final_ratio") == 2 and names.pop("final_supp") == 2 and set(names.values()) == {1},
+          f"run_all: 결과 폴더 이름이 겹침 ({names.most_common(3)})")
     old_final = {"final", "final_auto", "e0", "e5_dev"} | {f"e6_{k}_final_dev" for k in et.DEGRADE_KINDS}
     check(not old_final & {e["name"] for e in ra.EXPERIMENTS if e["stage"] == "final"},
           "run_all: ratio 채택 뒤 최종 단계가 예전 최종 폴더(남기기 center)를 덮어씀")
@@ -1525,7 +1585,7 @@ def test_run_all_plan():
     for e in ra.EXPERIMENTS:
         if e["tool"] == "train":
             check(e["name"].endswith(("_all", "_dev", "_test")) or e["name"] in ("test_once", "final_test", "test_autoband", "final_test_autoband",
-                                                                                 "test_ratio", "final_test_ratio"),
+                                                                                 "test_ratio", "final_test_ratio", "test_supp", "final_test_supp"),
                   f"run_all: 학습 데이터 폴더 이름 끝에 데이터가 없음 ({e['name']})")
         if e["tool"]:
             argv, _ = ra.command(e, ra.resolve(e, {"E0"}))
@@ -1822,6 +1882,109 @@ def test_run_all_retest_refuse():
     old = {"t_pre_ms_mean": 1.0, "t_detect_ms_mean": 2.0, "t_road_ms_mean": 3.0}
     check(ra.time_per_image(old) == 6.0 and ra.time_per_image({**old, "t_band_ms_mean": 4.0}) == 10.0,
           "run_all: 처리 시간 합에 t_band가 빠지거나 예전 결과(t_band 없음)를 0으로 읽지 않음")
+
+
+def test_run_all_supp_final_plan():
+    """6단계(10/13): supp_final은 39장(roi.csv·자동 ROI·1차)·매칭·E5(개발셋, --tau-curve로 config 점 = fp2 점 확인)·E6 여섯 가지(night 포함)를
+    config 그대로 돌고(점수 τ·남기기 규칙을 실행 중에 고정하지 않음), 시작 전에 전원·병렬 금지 안내를 한다. 시험셋 네 번째(TS)·재현(RS)과
+    6단계 ET 행(supp, 지금 config의 τ 곡선)이 있다."""
+    from tools import evaluate_train as et
+    from tools import run_all as ra
+    ids = [e["id"] for e in ra.EXPERIMENTS if e["stage"] == "supp_final"]
+    check(ids == ["F39S", "FMS", "F39aS", "F39e0S", "E5S"] + [f"F6S_{k}" for k in ra.V9_DEGRADE_KINDS + ("night",)],
+          f"run_all supp_final: 실험 목록·순서가 다름 ({ids})")
+    argv, pins = ra.command(ra.EXP["E5S"], ra.resolve(ra.EXP["E5S"], {"E0"}))
+    args = parse_quietly(et.parse_args, argv)
+    check(args is not None and args.tau_curve and args.split == "dev" and not args.overrides and not pins,
+          f"run_all E5S: config 그대로 τ 곡선이 아님 ({argv}, {pins})")
+    for sid in ("F39S", "F39aS", "TS"):
+        _, pins = ra.command(ra.EXP[sid], ra.resolve(ra.EXP[sid], {"E0"}))
+        check(not pins, f"run_all {sid}: 보완 최종 실행이 config 값을 실행 중에 고정함 ({pins})")
+    check(ra.EXP["TS"]["split"] == "test" and ra.EXP["RS"]["split"] == "test" and "retest_supp" in ra.TEST_STAGES
+          and ("TS", "RS") in ra.REPRO_PAIRS, "run_all: 시험셋 네 번째·재현 행이 빠짐")
+    check(ra.EXP["ET"]["stage"] == "supp" and not ra.EXP["ET"]["opts"]["sets"] and ra.EXP["ET"]["opts"]["tau_curve"],
+          "run_all ET: 지금 config의 τ 곡선 행이 아님")
+    check("병렬" in ra.FINAL_PROMPT and "supp_final" in ra.FINAL_STAGES, "run_all supp_final: 병렬 금지 안내가 없음")
+
+
+def test_run_all_retest_supp_refuse():
+    """시험셋 네 번째(retest_supp)는 한 번만 돈다(10/13 사용자, 0-1과 같은 방식). supp_final의 E5(e5_supp_dev)가 없거나 config가 다르면 거부,
+    test_supp 폴더가 있으면 거부, 그리고 저장소 안 기록 파일(docs/test_supp_done.txt)이 있으면 results/가 하나도 없어도 거부한다(끝 코드 2,
+    실행 전 확인까지 가지 않음). 처음 돌 때는 시험 실험을 돌리기 전에 기록 파일을 쓰고, 그 뒤 다시 부르면 거부한다.
+    retest_supp_repro는 test_supp 결과가 없으면 거부한다."""
+    from tools import run_all as ra
+
+    def must_not_run(*args):
+        raise AssertionError("거부에서 멈춰야 하는데 더 감")
+
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", must_not_run):
+        results, marker = Path(tmp) / "results", Path(tmp) / "repo" / "docs" / "test_supp_done.txt"
+        paths = {**ra.default_paths(), "results": str(results), "test_marker": str(marker)}
+        text = ra.stage_refusal("retest_supp", results, str(marker)) or ""
+        check("supp_final을 먼저" in text, f"run_all retest_supp: 보완 최종 결과 없이 거부하지 않음 ({text})")
+        e5 = results / "e5_supp_dev"
+        e5.mkdir(parents=True)
+        rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
+        check(ra.stage_refusal("retest_supp", results, str(marker)) is None, "run_all retest_supp: config가 같은데 거부함")
+        with patched(C, "SCORE_TAU_CRACK", 9.9):
+            text = ra.stage_refusal("retest_supp", results, str(marker)) or ""
+        check("SCORE_TAU_CRACK" in text, f"run_all retest_supp: config가 다른데 거부하지 않음 ({text})")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_supp_repro"], paths)
+        check(code == 2 and "retest_supp 뒤에" in printed.getvalue(), "run_all retest_supp_repro: test_supp 없이도 돌았음")
+        marker.parent.mkdir(parents=True)
+        marker.write_text("2026-10-14 10:00:00 커밋 abc\n", encoding="utf-8")
+        shutil.rmtree(results)                       # results/를 지워도 기록 파일로 거부
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_supp", "--yes"], paths)
+        check(code == 2 and "이미 쟀습니다" in printed.getvalue() and not results.exists(),
+              f"run_all retest_supp: 기록 파일이 있는데 거부하지 않음 ({code})")
+        marker.unlink()
+        (results / "test_supp").mkdir(parents=True)
+        check("한 번만" in (ra.stage_refusal("retest_supp", results, str(marker)) or ""), "run_all retest_supp: test_supp가 있는데 거부하지 않음")
+
+    calls = []
+
+    def fake_run(exp, opts, paths, ready, context, source=""):
+        calls.append((exp["id"], marker.exists()))
+        return "완료", 0.0, []
+
+    with tempfile.TemporaryDirectory() as tmp, patched(ra, "precheck", lambda paths: [("확인", True, "", True)]), \
+            patched(ra, "readiness", lambda force=(): {"mask": True, "dark": True, "notes": [], "forced": set()}), \
+            patched(ra, "run_one", fake_run):
+        results, marker = Path(tmp) / "results", Path(tmp) / "repo" / "docs" / "test_supp_done.txt"
+        paths = {**ra.default_paths(), "results": str(results), "test_marker": str(marker)}
+        e5 = results / "e5_supp_dev"
+        e5.mkdir(parents=True)
+        rx.write_config(e5 / "config_used_train.txt", ["# 끝 줄"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            ra.main(["retest_supp", "--yes"], paths)
+        check(calls == [("TS", True)] and "커밋" in marker.read_text(encoding="utf-8").splitlines()[0],
+              f"run_all retest_supp: 시험 실험 전에 기록 파일을 쓰지 않음 ({calls})")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = ra.main(["retest_supp", "--yes"], paths)
+        check(code == 2 and "이미 쟀습니다" in printed.getvalue() and len(calls) == 1, "run_all retest_supp: 두 번째 실행을 거부하지 않음")
+
+
+def test_run_all_et_tau_lines():
+    """6단계 ET: 판정 행(끔) fp2 점 τ를 config에 쓸 줄로 알려 준다. tau_points.csv는 소수 여섯째 자리로 반올림돼 있으므로 1e-6을 빼 내림해,
+    τ와 같은 점수의 후보(예: 포트홀 최고 점수 5.1368717)가 빠지지 않게 한다. −∞는 float("-inf"). 결과가 없으면 빈 list."""
+    from tools import evaluate_train as et
+    from tools import run_all as ra
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {**ra.default_paths(), "results": os.path.join(tmp, "results")}
+        exp = ra.EXP["ET"]
+        check(ra.et_tau_lines(paths, {"ET": {"done": False}}) == [], "et_tau_lines: 결과가 없는데 줄을 냄")
+        folder = Path(paths["results"]) / exp["name"]
+        folder.mkdir(parents=True)
+        pd.DataFrame([{"preprocess": "off", "point": "fp2", "tau_crack": 0.255938, "tau_pothole": 5.136872},
+                      {"preprocess": "on", "point": "fp2", "tau_crack": 1.3, "tau_pothole": 2.6}]).to_csv(
+            folder / et.TAU_POINTS_NAME, encoding="utf-8-sig", index=False)
+        lines = ra.et_tau_lines(paths, {"ET": {"done": True}})
+        check(lines == ["SCORE_TAU_CRACK = 0.255937", "SCORE_TAU_POTHOLE = 5.136871"], f"et_tau_lines: 내림이 틀림 ({lines})")
+        pd.DataFrame([{"preprocess": "off", "point": "fp2", "tau_crack": -math.inf, "tau_pothole": 1.5}]).to_csv(
+            folder / et.TAU_POINTS_NAME, encoding="utf-8-sig", index=False)
+        check(ra.et_tau_lines(paths, {"ET": {"done": True}})[0] == 'SCORE_TAU_CRACK = float("-inf")', "et_tau_lines: −∞를 못 씀")
 
 
 def test_run_all_done_tests_blocked():
