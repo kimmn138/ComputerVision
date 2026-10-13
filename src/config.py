@@ -58,17 +58,6 @@ ROAD_EDGE_DENSITY = False   # 8c 켬·끔. True면 창 안 Canny 에지 밀도�
 ROAD_EDGE_KSIZE = 15        # px, 8c 에지 밀도를 잴 창 (Plan.md 3.3 (5) 15×15)
 ROAD_EDGE_QUANTILE = 0.95   # 분위, 8c 씨앗 영역 에지 밀도의 이 분위보다 크면 노면 아님 (Plan.md 95백분위)
 ROAD_EDGE_CANNY = (50, 150) # Canny 낮은·높은 문턱, 8c 에지 (B 구역 CANNY_LOW·HIGH와 같은 값, 구역을 넘지 않으려고 따로 둠)
-# 아래는 10/13 v5 (3)① 시드 다시 고르기(C가 A 동의로 넣음, docs/part_C.md 'v12 뒤 남은 문제'). 기본값이면 그 전과 같다
-ROAD_SEED_MODE = "box"      # 시드 영역: "box" = ROAD_SEED_BOX 한 상자(지금), "cells" = 칸 가운데 색·밝기가 서로 비슷한 칸이 가장 많은 묶음
-ROAD_SEED_CELLS_BOX = (0.10, 0.35, 0.90, 0.85)  # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), "cells"가 칸을 나눌 범위. 맨 아래 보닛 몫 0.15는 뺌
-ROAD_SEED_GRID = (4, 3)     # 칸 수 (가로, 세로), "cells". 640px 띠 240행이면 칸 하나 약 128 × 40px(차선 폭 8~40px보다 넓어 칸 중앙값이 차선에 끌려가지 않음)
-ROAD_L_RANGE_MAX = 0        # 밝기 단계(L, 0~255), 노면 밝기 범위 ±ROAD_L_K × (1.4826 × MAD + 2)의 상한(ab_L 색 기준과 칸 시드에만 쓰임). 0 = 끔. 개발셋 ROI 범위 중앙값 55·90백분위 133(측정 C)
-# 아래는 10/13 v5 (3)③ 마할라노비스 색 거리(C가 A 동의로 넣음). 기본 "ab_L"이면 그 전과 같다
-ROAD_COLOR_DIST = "mahal"   # 노면 색 기준: "ab_L" = a·b 거리 < ROAD_CHROMA_MAX 그리고 L 범위(v12까지), "mahal" = 시드 Lab 분포의 마할라노비스 거리² < ROAD_MAHAL_D2. 10/13 V5a 채택(규칙 1~3 + 마스크 안 정답 95.66%, part_C)
-ROAD_MAHAL_D2 = 11.34       # 마할라노비스 거리², χ²(자유도 3) 99% 점. 시드 노면 색이 정규분포라면 노면 픽셀의 99%가 들어옴
-ROAD_MAHAL_SIGMA_MIN = (2.4, 3.0, 3.0)  # (L, a, b) 표준편차 하한(Lab 0~255 단위). √11.34 = 3.37배가 기존 기준의 최소 범위 L ±8(= 4 × 2)·a·b 10과 맞게
-# 아래는 10/13 밤 v5 V6a 시드 검사(C가 A 동의로 넣음). 끄면 그 전과 같다
-ROAD_SEED_CHECK = True      # V6a 켬·끔. 10/13 밤 채택(규칙 1~3 + 마스크 안 정답 96.10%, part_C). True면 상자 시드를 2×2로 나눈 칸끼리 a·b 거리가 ROAD_CHROMA_MAX 이상일 때(색이 다른 면이 섞임)만 그 사진에서 칸 시드로 바꿈. 개발셋 92장이 걸림
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
@@ -114,8 +103,8 @@ SCORE_LEN_REF = 90          # px, shape 식 균열 길이(둘레 ÷ 2)가 이 �
 SCORE_AREA_REF = 80         # 픽셀 수, shape 식 포트홀 넓이가 이 값 이상이면 넓이 항 1. 개발셋 포트홀 후보 넓이 중앙값 79
 SCORE_MARGIN_SCALE_POT = 0.72   # 비원형도 단위, margin 식 포트홀 여유 1 − e^(−(2.5 − ci)/k)의 k. 개발셋 포트홀 후보 (2.5 − ci) 중앙값 0.716(10/12 밤 측정). 균열과 범위가 달라 따로 둠
 USE_SCORE_TAU = True        # 점수 문턱 켬·끔. 10/13 E4 예외 채택(규칙 3 미달, docs/part_C.md)으로 켬. True면 dark 방식에서 score ≥ SCORE_TAU_<종류>인 후보만 남김(SCORE_FORMULA가 none이면 ValueError)
-SCORE_TAU_CRACK = float("-inf")  # 균열 점수 문턱. v5 운영점 ETX(e5_v7_tau_dev, V5a·V6a·V1c·V1d 채택 뒤 설정) 개발셋 전처리 끔 τ 곡선의 fp2 점(영상당 오검출 ≤ 2에서 민감도 최대). −∞ = 균열 후보를 모두 남김(노면 마스크만으로 균열 후보 오검출이 2개 이하, 개발셋 균열 후보 2,009개 점수에 NaN 없음 10/14 확인). ETW·ETV 값 −∞, 보완 최종(ET) 0.255937, E4 때 1.537689
-SCORE_TAU_POTHOLE = 2.792216  # 포트홀 점수 문턱. 정하는 법은 위와 같음(ETX fp2 점, tau_points.csv 값을 소수 여섯째 자리로 내림). ETW 값 2.783392, ETV 3.391713, 보완 최종(ET) 5.136871, E4 때 6.002551
+SCORE_TAU_CRACK = 0.255937  # 균열 점수 문턱. 6단계 ET(e4_final_tau_dev, 마지막 채택 설정 E4 + S12 + S13 + S6c) 개발셋 전처리 끔 τ 곡선의 fp2 점(영상당 오검출 ≤ 2에서 민감도 최대), 소수 여섯째 자리 내림. E4 때 값 1.537689(S1a)
+SCORE_TAU_POTHOLE = 5.136871  # 포트홀 점수 문턱. 정하는 법은 위와 같음(내림이라 최고 점수 5.1368717인 포트홀 후보 1개가 남음, fp2 점과 같게). E4 때 값 6.002551
 DARK_SIGMA_LOCAL = True     # 보완 2-1(12번) 켬·끔. True면 잡음 σ를 위치마다 주변 창에서 밝은 쪽 잔차로 재어(국소 σ, 하한 = 전역 σ) 결이 거친 노면에서 문턱을 올림. 10/13 양쪽 잔차 판은 큰 포트홀 시험 실패로 되돌리고, 밝은 쪽 잔차 판(안 A)을 채택: 개발셋 fp2 점 E4s 대비 규칙 1~3 통과(균형 33.6 → 38.5%, 우연 뺀 균열 +12.2 → +17.1%p)
 DARK_SIGMA_LOCAL_FRAC = 0.25    # 비율, 국소 σ 창 = 띠 높이 × 0.25(배경 창 0.5의 절반). 골재 결 조각(넓이 40~100px)보다 충분히 크고 노면 한 구역의 결을 잼
 DARK_SIGMA_LOCAL_MIN_N = 50 # 개, 국소 σ 창 안 밝은 쪽 표본이 이보다 적으면 전역 σ. MAD로 잰 σ의 상대 표준오차 ≈ 1.17/√n이라 50개면 약 17%. 높이 240px 띠의 창(4px 간격 15×15 = 225개, 밝은 쪽 약 106개)에서는 창의 절반 이상이 어두운 손상일 때만 전역 σ로 돌아감
@@ -172,5 +161,3 @@ DRAW_TAU_REJECTED = False           # 보완 6단계 켬·끔. True면 시연 �
 REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상과 섞는 비율(0 = 안 보임, 1 = 진한 색)
 REJECTED_DASH = 4                  # px, 걸러진 후보 점선의 한 칸 길이(대각 줄무늬 주기의 절반)
 REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께(시연 창은 화면에 맞춰 줄어들어 1px는 거의 안 보임)
-AUTO_BAND_SEED_FIXED = True       # v5 V1c 켬·끔(10/13 밤). V6a 위에서 채택(규칙 1~3 + 마스크 안 정답 95.43%, part_C). True면 ROI가 넓어져도 노면 마스크 시드를 받은 ROI 상단 경계(top~bottom)의 ROAD_SEED_BOX 자리에 둠. 사진 전체 마스크(ROI 상단 경계 판단)도 같은 자리. Norway_007802(ROI가 넓어지자 시드가 숲에 떨어짐) 대응
-AUTO_BAND_TEX_REF = "below"         # v5 V1d(10/14). V7a 채택(규칙 1~3 + 마스크 안 정답 95.76%, part_C). "start" = 확장 구간 질감을 시작 ROI 노면과 비교(지금), "below" = 바로 아래(직전에 받아들인) 구간 노면과 비교. 비 범위는 AUTO_BAND_TEX_RATIO 그대로
