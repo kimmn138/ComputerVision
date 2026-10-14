@@ -1,4 +1,4 @@
-"""(파트 C) 전처리 전·후를 비교할 정량 지표(에지 수·해리스 코너 수·SIFT 매칭)를 잰다."""
+"""전처리 전·후를 비교할 정량 지표(에지 수·해리스 코너 수·SIFT 매칭)를 잰다."""
 import cv2 as cv
 import numpy as np
 
@@ -23,9 +23,8 @@ def count_harris(gray):
 
 
 def match_pair(g1, g2):
-    """두 흑백 영상을 SIFT로 매칭해 맞는 점 수와 inlier 비율을 잰다. 매칭이 안 돼도 오류 없이 0.
-    SIFT → 비율 검사(SIFT_RATIO) → RANSAC 호모그래피(RANSAC_THRESH). good이 RANSAC_MIN_GOOD 미만이면
-    RANSAC을 건너뛰고 inliers 0, mask None으로 둔다(matches에는 good을 그대로 남겨 그림으로 보이게 함)."""
+    """두 흑백 영상을 SIFT로 매칭해 맞는 점 수와 inlier 비율을 잰다(매칭이 안 돼도 오류 없이 0).
+    순서: SIFT 특징점 → 비율 검사로 좋은 매칭(good) → RANSAC 호모그래피로 inlier. good이 너무 적으면 RANSAC을 건너뛴다."""
     sift = cv.SIFT_create()
     k1, d1 = sift.detectAndCompute(g1, None)
     k2, d2 = sift.detectAndCompute(g2, None)

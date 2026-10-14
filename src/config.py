@@ -1,11 +1,10 @@
-"""모든 파라미터. 구역마다 주인이 있고, 자기 구역 안에서만 고친다.
-구역 사이의 빈 줄과 주석 줄은 지우지 않는다(Git이 구역별 수정을 자동으로 합치게 해 줌)."""
+"""파이프라인의 모든 파라미터 값. 코드에서는 from src import config as C로 불러 C.이름으로 읽는다."""
 
-# ===== 공통 (C 관리 · 바꾸려면 세 명 합의) =====
-TARGET_WIDTH = 640          # 모든 영상을 가로 640px로
-ROI_TOP_DEFAULT = 0.5       # roi.csv에 없는 사진의 노면 시작 비율
-ROI_BOTTOM_DEFAULT = 1.0
-TIME_REPEAT = 5             # 처리 시간은 5번 재서 중앙값
+# ===== 공통 =====
+TARGET_WIDTH = 640          # px, 모든 사진을 가로 640px로 맞춰 파라미터가 같은 뜻을 갖게
+ROI_TOP_DEFAULT = 0.5       # 비율, roi.csv에 없는 사진의 ROI 위쪽 경계(사진 높이 대비)
+ROI_BOTTOM_DEFAULT = 1.0    # 비율, roi.csv에 없는 사진의 ROI 아래쪽 경계
+TIME_REPEAT = 5             # 처리 시간은 이 횟수만큼 재서 중앙값을 씀
 
 # ===== 화질 분석·전처리 =====
 DAMAGE_TAGS = ("crack", "pothole", "both", "none")      # 직접 촬영 사진 이름의 '손상' 칸에 쓸 수 있는 값
@@ -140,39 +139,34 @@ BRIGHT_POTHOLE = False      # True면 질감이 노면보다 훨씬 거친 포�
 BRIGHT_POT_TEX_RATIO = 2.0  # 배, 질감이 노면의 이 배수를 넘으면 거친 영역
 BRIGHT_POT_TEX_KSIZE = 7    # px, 질감(국소 표준편차)을 잴 창 크기
 
-# ===== C: 정량 측정 =====
-HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01
-SIFT_RATIO = 0.7
-RANSAC_THRESH = 5.0
-HARRIS_NMS = 3              # 픽셀, 3×3 이웃 중 최댓값인 곳만 점 하나로 셈
-RANSAC_MIN_GOOD = 4         # 개, 호모그래피 계산에 필요한 최소 대응점 수. 이보다 적으면 RANSAC 생략
-COMPARE_FIGSIZE = (19.2, 9.0)   # 인치, 비교 그림 크기. 3열 × 640px을 dpi 100에서 거의 1:1로 보여 1px 에지가 뭉개지지 않게
+# ===== 측정·시각화·실행 =====
+HARRIS_BLOCK, HARRIS_KSIZE, HARRIS_K, HARRIS_REL = 2, 3, 0.04, 0.01     # 해리스 코너: 이웃 크기·Sobel 크기·k·최댓값 대비 임계 비율
+SIFT_RATIO = 0.7            # SIFT 비율 검사: 가장 가까운 점의 거리가 두 번째의 이 배수보다 작아야 좋은 매칭
+RANSAC_THRESH = 5.0         # px, RANSAC 호모그래피에서 inlier로 볼 최대 재투영 오차
+HARRIS_NMS = 3              # 픽셀, 3×3 이웃 중 최댓값인 곳만 코너 하나로 셈
+RANSAC_MIN_GOOD = 4         # 개, 호모그래피에 필요한 최소 대응점 수(이보다 적으면 RANSAC 생략)
+COMPARE_FIGSIZE = (19.2, 9.0)   # 인치, 비교 그림 크기(640px 3열을 거의 1:1로 보여 1px 에지가 뭉개지지 않게)
 COMPARE_DPI = 100               # 점/인치, 19.2 × 100 = 가로 1920px
-FONT_BY_PLATFORM = {"win32": "Malgun Gothic", "darwin": "AppleGothic"}  # sys.platform별 한글 글꼴(윈도 맑은 고딕, 맥 기본 탑재)
-FONT_DEFAULT = "DejaVu Sans"    # 그 밖 운영체제: matplotlib 기본 글꼴(한글은 □로 나옴)
-DEMO_SCREEN_FALLBACK = (1280, 720)  # px (가로, 세로), 시연 창: 화면 크기를 못 읽을 때(윈도 밖) 가정하는 가장 흔한 노트북·프로젝터 해상도
-DEMO_SCREEN_MARGIN = 0.9        # 비율, 시연 창이 화면의 90%까지만 쓰게. 작업 표시줄·창 제목 줄 몫
-DEMO_LABEL_HEIGHT = 40          # px, 시연 창 패널 위 제목 띠 높이. 영상 위에 글자를 덮어 쓰지 않게 띠를 따로 붙임
-DEMO_FONT_SIZE = 22             # px, 제목 글자 크기. 세로 사진이 463px까지 줄어도 '전처리 켬: 가우시안+감마 0.53'이 한 줄에 들어가게
-USE_ROAD_MASK = True            # 노면 마스크 켬·끔. True면 pipeline이 road를 검출 함수에 넘기고 노면 밖 후보를 지운 뒤 row를 셈. E3 채택(10/12)으로 켬 (Plan.md 3.3 (7), docs/part_C.md)
-ROAD_KEEP_RULE = "ratio"        # 노면 안 후보를 고르는 규칙. "center" = bbox 중심 픽셀이 노면 안, "ratio" = 후보 영역(윤곽 안쪽까지 채운 픽셀)의 ROAD_KEEP_RATIO_MIN 이상이 노면 안. 10/12 "ratio" 채택: 개발셋 규칙 2 미달(31.17%→31.05%, 652장 중 3장)이지만 영역 92%가 노면 밖인 후보를 노면 안으로 세던 한계를 고치는 수정이라 예외 채택 (3.3 (7), docs/part_C.md)
-DEGRADE_BLUR_SIGMA = 2.0        # px, 인위 저하 blur: 640px 컬러에 ROI 자르기 전 가우시안 σ. 상태 판정이 샤프닝을 골라야 함 (Plan.md 3.2 (6), E6)
-DEGRADE_DARK_GAMMA = 2.2        # 인위 저하 dark: 결과 = 입력^2.2 (0~1 밝기, 어두워짐). 감마 < 1(밝게)을 골라야 함
-DEGRADE_BRIGHT_GAMMA = 0.5      # 인위 저하 bright: 결과 = 입력^0.5 (밝아짐, 과노출 흉내). 감마 > 1(어둡게)을 골라야 함
-DEGRADE_NOISE_SIGMA = 10.0      # 밝기 단계(0~255), 인위 저하 noise: 가우시안 잡음 σ. 가우시안(잡티 제거)을 골라야 함
-DEGRADE_SEED = 0                # 인위 저하 잡음의 seed. 사진마다 이 값에 사진 바이트의 crc32를 더해 씀(사진마다 다른 무늬, 같은 사진은 늘 같음. CONTRIBUTING 3장 5번)
-ROAD_OVERLAY_COLOR = (0, 255, 0)    # BGR, 노면 마스크를 칠할 색: 초록. 균열(빨강)·포트홀(파랑)·노면 시작선(노랑) 윤곽과 헷갈리지 않는 색 (Plan.md 3.7)
-ROAD_OVERLAY_ALPHA = 0.35           # 비율(0~1), 노면 픽셀에 초록을 섞는 정도. 절반보다 옅게 해 노면 결과 후보 윤곽이 비쳐 보이게
-AUTO_BAND_TOP = True                # 자동 띠 높이 켬·끔. True면 pipeline이 사진 전체 노면 마스크를 보고 띠 위쪽 경계를 받은 top에서 위로 넓힘. '자동 띠 + 결 1.5'를 최종 방법으로 채택(10/12)해 켬. 끄면 띠 고정(E3) (docs/part_C.md)
-AUTO_BAND_STEP = 0.1                # 비율(사진 높이 대비), 한 번에 살펴보고 넓히는 구간 높이. 0.5에서 0.0까지 다섯 구간
-AUTO_BAND_ROAD_MIN = 0.95           # 비율, 바로 위 구간에서 노면 마스크 픽셀이 이 비율 이상이면 그 구간까지 넓힘. 후보 0.8·0.9·0.95 중 개발셋 652장에서 채택 규칙 2·3을 모두 넘은 값 (docs/part_C.md)
-AUTO_BAND_USE_TEXTURE = True       # 자동 띠의 결 조건 켬·끔. True면 넓힐 구간 노면 픽셀의 결이 시작 띠 노면과 비슷할 때만 넓힘(흐린 하늘·나무가 노면 마스크에 든 차량 시점을 막으려고). AUTO_BAND_TOP이 꺼져 있으면 효과 없음 (docs/part_C.md)
-AUTO_BAND_TEX_KSIZE = 7             # px, 결 = 흑백 640px 사진의 이 크기 창 안 표준편차(국소 표준편차). Plan.md 3.3의 보닛 규칙과 같은 7×7
-AUTO_BAND_TEX_RATIO = 1.5           # 배, 구간 결 중앙값 ÷ 시작 띠 노면 결 중앙값이 1/1.5 ~ 1.5 안이면 비슷함. 후보 1.25·1.5·2.0을 개발셋에서만 견줌 (docs/part_C.md)
-ROAD_KEEP_RATIO_MIN = 0.5           # 비율, ROAD_KEEP_RULE = "ratio"일 때 후보 영역 픽셀 중 노면 안 비율이 이 값 이상이면 남김. 경계가 비스듬해 상자 중심만 노면에 떨어지는 바깥 후보(Japan_000107 켬: 노면 안 8%)를 거름 (Plan.md 3.3 (7))
-AUTO_BAND_TEX_PERSPECTIVE = False   # 보완 4-4(14번) 켬·끔. True면 위로 한 구간 갈 때마다 결 비율의 아래 한계(1/AUTO_BAND_TEX_RATIO)에 AUTO_BAND_TEX_DECAY를 곱함. 원근 때문에 먼 노면은 결이 매끈해 보이므로. 위 한계(나무·건물)는 그대로
-AUTO_BAND_TEX_DECAY = 0.8          # 배, 4-4 한 구간(AUTO_BAND_STEP)마다 아래 한계에 곱하는 값(계획 7장 4-4 출발값)
-DRAW_TAU_REJECTED = False           # 보완 6단계 켬·끔. True면 시연 그림(demo)에 점수 문턱 τ로 걸러진 후보를 옅은 점선으로 함께 그림. 평가 숫자(row·요약)에는 쓰이지 않음
-REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상과 섞는 비율(0 = 안 보임, 1 = 진한 색)
-REJECTED_DASH = 4                  # px, 걸러진 후보 점선의 한 칸 길이(대각 줄무늬 주기의 절반)
-REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께(시연 창은 화면에 맞춰 줄어들어 1px는 거의 안 보임)
+FONT_BY_PLATFORM = {"win32": "Malgun Gothic", "darwin": "AppleGothic"}  # 운영체제별 한글 글꼴(윈도 맑은 고딕, 맥 애플고딕)
+FONT_DEFAULT = "DejaVu Sans"    # 그 밖 운영체제의 글꼴(한글은 □로 나옴)
+DEMO_SCREEN_FALLBACK = (1280, 720)  # px (가로, 세로), 시연 창: 화면 크기를 못 읽을 때 가정하는 해상도
+DEMO_SCREEN_MARGIN = 0.9        # 비율, 시연 창이 화면의 90%까지만 쓰게(작업 표시줄·제목 줄 몫)
+DEMO_LABEL_HEIGHT = 40          # px, 시연 창 패널 위 제목 띠 높이(영상 위에 글자를 덮어 쓰지 않게)
+DEMO_FONT_SIZE = 22             # px, 시연 창 제목 글자 크기
+USE_ROAD_MASK = True            # True면 노면 마스크를 검출에 쓰고 노면 밖 후보를 지움
+ROAD_KEEP_RULE = "ratio"        # 노면 안 후보 판정: "ratio" = 후보 영역의 ROAD_KEEP_RATIO_MIN 이상이 노면 안, "center" = 상자 중심이 노면 안
+ROAD_OVERLAY_COLOR = (0, 255, 0)    # BGR, 노면 마스크를 칠할 색(초록, 균열 빨강·포트홀 파랑·ROI 시작선 노랑과 구분)
+ROAD_OVERLAY_ALPHA = 0.35           # 비율(0~1), 노면에 초록을 섞는 정도(후보 윤곽이 비쳐 보이게 옅게)
+AUTO_BAND_TOP = True                # True면 노면이 위로 이어지는 만큼 ROI 상단 경계를 자동으로 올림(roi.csv로 정한 사진은 그대로)
+AUTO_BAND_STEP = 0.1                # 비율(사진 높이 대비), ROI 상단 경계를 한 번에 올려 볼 구간 높이
+AUTO_BAND_ROAD_MIN = 0.95           # 비율, 바로 위 구간의 노면 마스크 비율이 이 값 이상이면 그 구간까지 올림
+AUTO_BAND_USE_TEXTURE = True       # True면 위 구간의 노면 질감이 아래 ROI와 비슷할 때만 올림(흐린 하늘·나무가 노면으로 잡혀도 막게)
+AUTO_BAND_TEX_KSIZE = 7             # px, 질감 = 이 크기 창 안의 밝기 표준편차
+AUTO_BAND_TEX_RATIO = 1.5           # 배, 두 질감의 비가 1/1.5 ~ 1.5 안이면 비슷함
+ROAD_KEEP_RATIO_MIN = 0.5           # 비율, "ratio" 규칙에서 후보 영역 중 노면 안 비율이 이 값 이상이면 남김
+AUTO_BAND_TEX_PERSPECTIVE = False   # True면 위로 갈수록 질감 비의 아래 한계를 낮춤(먼 노면은 원근 때문에 매끈해 보여서)
+AUTO_BAND_TEX_DECAY = 0.8          # 배, 한 구간 올라갈 때마다 질감 비의 아래 한계에 곱하는 값
+DRAW_TAU_REJECTED = False           # True면 시연 그림에 점수 임계값으로 걸러진 후보를 옅은 점선으로 함께 그림(평가 숫자와는 무관)
+REJECTED_ALPHA = 0.5               # 비율, 걸러진 후보 점선을 영상과 섞는 정도(0 = 안 보임, 1 = 진함)
+REJECTED_DASH = 4                  # px, 걸러진 후보 점선 한 칸 길이
+REJECTED_THICKNESS = 2             # px, 걸러진 후보 점선 두께

@@ -1,29 +1,12 @@
-"""(파트 C) 제공·직접 촬영 영상 전체를 전처리 끔·켬으로 처리해 지표 표·비교 그림·요약 표를 저장한다.
-사용법: 맨 위 폴더에서  python run_experiment.py --name <이름>  [--only provided|own]
-                        [--roi csv|auto] [--mask on|off] [--detect legacy|dark] [--roi-top 0.3] [--auto-band on|off]
-                        [--band-texture on|off] [--set NAME=VALUE ...]
-결과: results/<name>/ (--name을 빼면 results/latest. 1차 결과 폴더 base·tuning·diagnosis에는 쓰지 않는다)
-- metrics.csv: 영상마다 끔·켬 2행 (영상 정보, 상태 지표, row 9열, 노면 안 에지 수 edges_road·노면 마스크 시간 t_road_ms·
-  자동 띠 경계 시간 t_band_ms(사진 전체 노면 마스크, 자동 띠 높이가 꺼져 있으면 0),
-  정답 비교 tp·fp·found·fn(IoU), 영상 단위 판정 has_gt·has_damage·n_pred·hit_same·hit_any·correct(중심 기준).
-  정답 파일이 없는 사진은 판정 칸(has_damage·hit_same·hit_any·correct)과 정답 비교 칸이 빈칸)
-- figures/<영상 이름>.png: 위 줄 끔·아래 줄 켬 비교 그림
-- table_by_image.csv, table_by_source.csv, table_by_condition.csv: 지표_off·지표_on·지표_diff(on − off) 요약 표.
-  source·condition 표에는 정답 있는 영상의 민감도·특이도·영상 단위 정답률과, 정답률 바로 옆에 기준선('검출 없음'의 정답률)을 둔다.
-  table_by_image에는 영상마다 판정(correct·hit_same·hit_any)의 끔·켬을 둔다(포트홀처럼 개수가 적은 것은 영상별 사례로 보고)
-- config_used.txt: 이번 실행에 쓴 config.py의 대문자 값과, 맨 끝에 실행 옵션·옵션으로 바꾼 값
-실행 옵션은 config.py 파일을 고치지 않고 실행 중에만 값을 바꾼 뒤 끝나면 되돌린다. 옵션을 주지 않으면 1차와 같은 조건이다.
-- --roi csv(기본): roi.csv에 사진마다 정한 띠. auto: roi.csv의 범위를 쓰지 않고 모든 사진에 기본 띠(ROI_TOP_DEFAULT~ROI_BOTTOM_DEFAULT)
-- --mask on|off: USE_ROAD_MASK, --detect legacy|dark: DETECT_MODE, --roi-top: ROI_TOP_DEFAULT(--roi auto와 함께만. csv에서는 39장에 효과가 없어 거부)
-- --auto-band on|off: AUTO_BAND_TOP(자동 띠 높이). 켜면 pipeline이 띠 위쪽 경계를 사진 전체 노면 마스크를 보고 기본 띠(0.5)에서 위로 넓힌다.
-  자동 띠는 기본 띠를 쓰는 사진에만 쓴다(--roi auto의 모든 사진, --roi csv에서 roi.csv에 없는 사진). roi.csv에 사람이 사진마다 정한 띠는
-  넓히지 않는다(band_overrides). 실제로 쓴 띠 높이는 metrics의 roi_pixels(띠 픽셀 수)로 알 수 있다
-- --band-texture on|off: AUTO_BAND_USE_TEXTURE(자동 띠의 결 조건). 자동 띠 높이가 켜져 있을 때만 효과가 있다
-- --set NAME=VALUE: 그 밖의 config 값 하나를 이번 실행에만 바꾼다(여러 번 가능, evaluate_train의 --set과 같은 모양).
-  예: --set ROAD_KEEP_RULE=ratio --set ROAD_LANE_BRIDGE=True
-- --roi auto와 노면 마스크는 따로 켠다(한 단계씩 끄고 켜며 비교하려고). 둘 다 쓰려면 --roi auto --mask on
-처리 시간(t_pre_ms·t_detect_ms·t_road_ms·t_band_ms)은 끔·켬을 각각 C.TIME_REPEAT번 돌린 중앙값이고, 나머지 값은 첫 결과다.
-영상 하나가 실패해도 나머지를 계속 처리하고, 실패가 있으면 끝에 같은 오류끼리 묶어 출력하고 종료 코드 1로 끝난다.
+"""제공·직접 촬영 사진 전체를 전처리 미적용·적용으로 처리해 지표 표·비교 그림·요약 표를 저장한다.
+사용법: 맨 위 폴더에서  python run_experiment.py --name <이름>  [--only provided|own] [--roi csv|auto] [--mask on|off]
+        [--detect legacy|dark] [--roi-top 0.3] [--auto-band on|off] [--band-texture on|off] [--set NAME=VALUE ...]
+결과: results/<name>/ (--name을 빼면 results/latest)
+- metrics.csv: 사진마다 미적용(off)·적용(on) 2행. 화질 지표, 고른 전처리, 후보 수·면적, 처리 시간, 정답 비교, 영상 단위 판정
+- figures/<사진 이름>.png: 위 줄 미적용·아래 줄 적용 비교 그림
+- table_by_image·table_by_source·table_by_condition.csv: 지표마다 _off·_on·_diff(on − off) 요약
+- config_used.txt: 이번 실행에 쓴 config 값과 실행 옵션
+실행 옵션은 config.py 파일을 고치지 않고 이번 실행에만 값을 바꾼다. 처리 시간은 TIME_REPEAT번 잰 중앙값이다.
 """
 import argparse
 import ast
@@ -40,7 +23,7 @@ from src import analyze, io_utils, pipeline, visualize
 from src import config as C
 
 try:
-    from src import evaluate  # B의 파일. 아직 없으면 정답 비교 열을 빈칸으로 둔다
+    from src import evaluate  # 없으면 정답 비교 열을 빈칸으로 둠
 except ImportError:
     evaluate = None
 
@@ -52,40 +35,39 @@ TIME_COLUMNS = ("t_pre_ms", "t_detect_ms")
 KINDS = ("crack", "pothole")
 COUNT_KEYS = ("tp", "fp", "found", "fn")
 GT_COLUMNS = [f"{kind}_{key}" for kind in KINDS for key in COUNT_KEYS]
-# row 9열 밖의 측정값: 노면 마스크 안의 에지 수, 노면 마스크 시간·자동 띠 경계 시간(반복 중앙값). row는 1차와 같은 뜻으로 두려고 따로 붙인다
+# row 9열 밖에 더 붙이는 측정값: 노면 안 에지 수, 노면 마스크 시간, ROI 상단 경계 조정 시간
 EXTRA_COLUMNS = ["edges_road", "t_road_ms", "t_band_ms"]
-RESULT_TIMES = ("t_road_ms", "t_band_ms")   # row 밖 결과 키인 처리 시간: row의 두 시간 열처럼 반복의 중앙값으로 바꾼다
-# 영상 단위 판정(evaluate.image_verdict, 중심 기준 = evaluate_train과 같음). has_gt·n_pred는 정답과 상관없이 채운다
+RESULT_TIMES = ("t_road_ms", "t_band_ms")   # row 밖의 처리 시간: 이것도 반복의 중앙값으로 바꿈
+# 영상 단위 판정 열(evaluate.image_verdict). has_gt·n_pred는 정답이 없어도 채움
 VERDICT_COLUMNS = ["has_gt", "has_damage", "n_pred", "hit_same", "hit_any", "correct"]
 VERDICT_BOOL = ["has_damage", "hit_same", "hit_any", "correct"]     # 정답 파일이 없으면 빈칸이 되는 판정 칸
-# table_by_image에 끔·켬으로 나란히 두는 판정(영상별 사례 보고용. 포트홀은 개수가 적어 비율보다 사례로 본다)
+# table_by_image에 미적용·적용으로 나란히 둘 판정
 VERDICT_PAIRS = ["correct", "hit_same", "hit_any"]
-# 요약 표에서 끔·켬을 비교하는 지표. 면적 %는 add_ratios가 더한다
+# 요약 표에서 미적용·적용을 비교할 지표(면적 %는 add_ratios가 더함)
 SUMMARY_METRICS = ["edges", "edges_road", "harris", "n_crack", "area_crack", "area_crack_pct",
                    "n_pothole", "area_pothole", "area_pothole_pct", "t_pre_ms", "t_detect_ms", "t_road_ms", "t_band_ms"]
 PR_METRICS = [f"{kind}_{name}" for kind in KINDS for name in ("precision", "recall")]
-# source·condition 표의 영상 단위 지표(정답 있는 영상만). 정답률(accuracy) 바로 뒤에는 기준선 열 baseline_none을 둔다
+# source·condition 표의 영상 단위 지표(정답 있는 사진만)
 IMAGE_METRICS = ["sensitivity", "specificity", "accuracy"]
-ROI_MODES = ("csv", "auto")         # 노면 띠: csv = roi.csv에 사진마다 정한 범위, auto = 모든 사진에 config 기본 띠
-DEFAULT_NAME = "latest"             # --name을 빼면 쓰는 결과 폴더(매번 덮어씀). run_matching·evaluate_train도 같은 기본값
-# 1차 실험 결과 폴더: 계획서·Plan.md 기준 수치의 출처라 어느 도구도 덮어쓰지 않는다
-# (base: Plan.md 1.3·1.4의 39장·매칭, tuning: 1.2·부록 B의 804장, diagnosis: 띠 밖 정답 비율·원인 분석)
+ROI_MODES = ("csv", "auto")         # ROI: csv = roi.csv에 사진마다 정한 범위, auto = 모든 사진에 config 기본 ROI
+DEFAULT_NAME = "latest"             # --name을 빼면 쓰는 결과 폴더(매번 덮어씀)
+# 이전 실험 결과를 보존하는 폴더 이름: 이 이름으로는 결과를 쓰지 않음
 PROTECTED_NAMES = ("base", "tuning", "diagnosis")
 
 
 def check_name(parser, name):
-    """결과 폴더가 1차 결과 폴더이거나 그 안이면 실행을 멈춘다. 덮어쓰면 계획서 숫자를 다시 셀 근거가 사라지기 때문이다.
-    윈도·맥 파일 시스템은 대소문자를 가리지 않으므로 소문자로 비교한다."""
+    """결과 폴더가 보존용 폴더(PROTECTED_NAMES)이거나 그 안이면 실행을 멈춘다(이전 결과를 덮어쓰지 않게).
+    윈도·맥은 대소문자를 가리지 않으므로 소문자로 비교한다."""
     target = os.path.abspath(os.path.join("results", name)).lower()
     for protected in PROTECTED_NAMES:
         root = os.path.abspath(os.path.join("results", protected)).lower()
         if target == root or target.startswith(root + os.sep):
-            parser.error(f"results/{protected}: 1차 결과(기준 수치의 출처)라 쓰지 않습니다. --name으로 다른 이름을 주세요.")
+            parser.error(f"results/{protected}: 이전 실험 결과를 보존하는 폴더라 쓰지 않습니다. --name으로 다른 이름을 주세요.")
 
 
 def parse_args(argv=None):
-    """결과 폴더 이름(--name)·사진 묶음(--only)·노면 띠 방식(--roi)과, 이번 실행에만 바꿀 config 값(--mask·--detect·--roi-top·--auto-band·--band-texture)을 읽는다.
-    1차 결과 폴더 이름과, 효과가 없는 조합(--roi csv에서 --roi-top)·범위 밖 값은 거부한다(마지막 일괄 실행에서 조용히 안 먹는 옵션이 없게)."""
+    """명령행 옵션을 읽는다: 결과 폴더 이름·사진 묶음·ROI 방식과, 이번 실행에만 바꿀 config 값.
+    보존용 폴더 이름, 효과가 없는 조합(--roi csv에서 --roi-top), 범위 밖 값은 거부한다."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬 비교 실험")
     parser.add_argument("--name", default=DEFAULT_NAME, help=f"결과 폴더 이름 (results/<name>/, 기본 {DEFAULT_NAME})")
     parser.add_argument("--only", choices=list(IMAGE_DIRS), help="한쪽 사진만 처리")
@@ -113,8 +95,8 @@ def parse_args(argv=None):
 
 
 def parse_set(item):
-    """'NAME=VALUE' 하나를 (이름, 값)으로 읽는다. 값은 파이썬 값(False·0.3·(3, 12))으로 읽고, 안 되면 글자 그대로(ratio).
-    config에 없는 이름은 오타일 수 있으므로 ValueError(조용히 안 먹는 옵션이 없게). evaluate_train.parse_set과 같은 규칙이다."""
+    """'NAME=VALUE' 하나를 (이름, 값)으로 읽는다. 값은 파이썬 값(False·0.3·(3, 12))으로, 안 되면 글자 그대로 읽는다.
+    config에 없는 이름은 오타일 수 있으므로 ValueError."""
     name, sep, text = item.partition("=")
     name = name.strip()
     if not sep or not name.isupper() or not hasattr(C, name):
@@ -136,8 +118,7 @@ def check_sets(parser, items):
 
 
 def runtime_overrides(args):
-    """명령행 옵션을 이번 실행에만 쓸 config 값 {이름: 값}으로 바꾼다. 옵션이 없으면 빈 dict라 1차와 같은 조건으로 돈다.
-    --roi는 config 값이 아니라 get_roi의 방식이라 여기 들어가지 않는다."""
+    """명령행 옵션을 이번 실행에만 쓸 config 값 {이름: 값}으로 바꾼다(옵션이 없으면 빈 dict라 config 그대로)."""
     overrides = {}
     if args.mask is not None:
         overrides["USE_ROAD_MASK"] = args.mask == "on"
@@ -186,9 +167,8 @@ def list_images(only=None, image_dirs=IMAGE_DIRS):
 
 
 def get_roi(file_name, roi_table, mode="csv"):
-    """사진의 노면 범위를 정한다. (ROI dict, 기본 띠를 썼는지)를 돌려준다.
-    mode "csv": roi.csv에 있으면 그 값, 없으면 config 기본 띠. "auto": roi.csv의 범위는 쓰지 않고 모든 사진에 기본 띠
-    (손으로 정한 ROI 없이 도는지 보는 실험용, Plan.md 3.7). 상태 태그(condition)는 사진의 성질이라 어느 방식이든 roi.csv에서 가져온다."""
+    """사진의 ROI 범위를 정해 (ROI dict, 기본 ROI를 썼는지)를 돌려준다.
+    "csv": roi.csv에 있으면 그 값, 없으면 config 기본 ROI. "auto": 모든 사진에 기본 ROI(촬영 조건은 늘 roi.csv에서 읽음)."""
     entry = roi_table.get(file_name)
     if mode == "csv" and entry is not None:
         return entry, False
@@ -197,21 +177,19 @@ def get_roi(file_name, roi_table, mode="csv"):
 
 
 def band_overrides(used_default):
-    """사진 1장에만 쓸 config 값: roi.csv에 사람이 정한 띠(used_default 거짓)는 자동 띠 높이로 넓히지 않도록 AUTO_BAND_TOP을 끈다.
-    자동 띠는 자동 ROI(기본 띠)의 기능이고, 손으로 정한 띠는 그 사진에 맞춘 값이라 그대로 둔다. 기본 띠면 빈 dict(config 그대로)."""
+    """사진 1장에만 쓸 config 값: roi.csv에 사람이 정한 ROI는 자동으로 넓히지 않도록 AUTO_BAND_TOP을 끈다."""
     return {} if used_default else {"AUTO_BAND_TOP": False}
 
 
 def repeat_pipeline(bgr, roi, use_preprocess):
-    """한 설정(끔 또는 켬)을 C.TIME_REPEAT번 돌린 결과 list. 처리 시간의 중앙값을 내려고 반복한다."""
+    """한 설정(전처리 미적용 또는 적용)을 TIME_REPEAT번 돌린 결과 list(처리 시간의 중앙값을 내려고)."""
     return [pipeline.run_pipeline(bgr, roi["top"], roi["bottom"], use_preprocess)
             for _ in range(max(1, C.TIME_REPEAT))]
 
 
 def median_times(outs):
     """첫 결과를 쓰되 처리 시간만 반복 전체의 중앙값으로 바꾼 새 결과를 돌려준다.
-    한 번 잰 시간은 캐시·다른 프로그램 때문에 튀므로 중앙값으로 튀는 값을 버린다(받은 결과는 바꾸지 않음).
-    row의 두 시간 열과, row 밖 결과 키인 노면 마스크 시간 t_road_ms·자동 띠 경계 시간 t_band_ms를 같은 규칙으로 바꾼다(인계 메모 4.4)."""
+    한 번 잰 시간은 캐시·다른 프로그램 때문에 튀므로 중앙값을 쓴다."""
     row = dict(outs[0]["row"])
     for key in TIME_COLUMNS:
         row[key] = round(statistics.median(o["row"][key] for o in outs), 2)
@@ -230,7 +208,7 @@ def unstable_keys(outs):
 
 
 def to_full_boxes(regions, y0):
-    """노면 기준 후보 bbox를 640px 전체 영상 좌표로 옮긴다. 정답 박스와 같은 좌표에서 비교하려고 y에 y0를 더한다."""
+    """ROI 기준 후보 bbox를 640px 전체 영상 좌표로 옮긴다(정답 상자와 같은 좌표에서 비교하려고 y에 y0를 더함)."""
     return [(x, y + y0, w, h) for x, y, w, h in (r["bbox"] for r in regions)]
 
 
@@ -248,22 +226,20 @@ def gt_counts(out, gt, count_fn, thr):
 
 
 def load_gt_for(file_name):
-    """사진 이름에 맞는 정답 파일 gt/<이름>.csv를 읽는다. evaluate가 아직 없거나 정답 파일이 없으면 None."""
+    """사진 이름에 맞는 정답 파일 gt/<이름>.csv를 읽는다(파일이 없으면 None)."""
     if evaluate is None:
         return None
     return evaluate.load_gt(f"gt/{os.path.splitext(file_name)[0]}.csv")
 
 
 def edges_on_road(edges, road):
-    """노면 마스크 안의 에지 픽셀 수. 띠 전체 에지 수(row의 edges)는 1차와 비교하려고 그대로 두고, 노면 밖 배경의 에지를 뺀 값을 따로 낸다.
-    edges·road는 둘 다 노면 띠 좌표의 0/255 영상이다. 받은 영상은 바꾸지 않는다."""
+    """노면 마스크 안의 에지 픽셀 수. ROI 전체 에지 수(row의 edges)와 따로, 노면 밖 배경의 에지를 뺀 값을 낸다."""
     return int(np.count_nonzero((edges > 0) & (road > 0)))
 
 
 def verdict_columns(out, gt):
-    """영상 단위 판정 열: 후보를 640px 전체 좌표로 옮겨 evaluate.image_verdict(중심 기준, evaluate_train과 같음)로 정답과 견준다.
-    정답 파일이 없으면 판정 칸(has_damage·hit_same·hit_any·correct)은 빈칸(NaN)으로 두어 '정답 없음'과 '틀림'을 구별한다.
-    has_gt와 n_pred(모든 후보 수)는 정답과 상관없는 값이라 늘 채운다."""
+    """영상 단위 판정 열: 후보를 640px 전체 좌표로 옮겨 evaluate.image_verdict로 정답과 견준다.
+    정답 파일이 없으면 판정 칸은 빈칸(NaN)으로 두어 '정답 없음'과 '틀림'을 구별한다."""
     pred_by_kind = {kind: to_full_boxes(regions, out["y0"])
                     for kind, regions in (("crack", out["cracks"]), ("pothole", out["potholes"]))}
     if gt is None or evaluate is None:
@@ -273,7 +249,7 @@ def verdict_columns(out, gt):
 
 
 def make_row(file_name, info, roi, use_preprocess, out, quality, counts, verdict):
-    """metrics.csv 한 행: 영상 정보 + 상태 지표 + row 9열 + 노면 안 에지 수·노면 마스크 시간·자동 띠 경계 시간 + 정답 비교 개수 + 영상 단위 판정."""
+    """metrics.csv 한 행: 사진 정보 + 화질 지표 + row 9열 + 노면 안 에지 수·처리 시간 + 정답 비교 개수 + 영상 단위 판정."""
     return {"file": file_name, "source": info["source"],
             "condition": info.get("condition") or roi["condition"],
             "preprocess": "on" if use_preprocess else "off",
@@ -284,9 +260,8 @@ def make_row(file_name, info, roi, use_preprocess, out, quality, counts, verdict
 
 
 def save_figure(path, file_name, off, on):
-    """끔(위 줄)·켬(아래 줄)마다 후보 그림·노면 흑백·캐니 에지 3칸을 한 장으로 저장한다.
-    후보 그림에는 노면 마스크를 반투명 초록으로 먼저 칠하고 그 위에 후보 윤곽을 그린다.
-    save_comparison은 6칸이라 노면 표시는 7번째 칸이 아니라 후보 칸에 겹쳐 그린다."""
+    """미적용(위 줄)·적용(아래 줄)마다 후보 그림·전처리 영상·Canny 에지 3칸을 한 장으로 저장한다.
+    후보 그림에는 노면 마스크를 반투명 초록으로 먼저 칠하고 그 위에 후보 윤곽을 그린다."""
     panels = []
     for label, out in (("끔", off), ("켬", on)):
         road = visualize.draw_road(out["small"], out["road"], out["y0"])
@@ -296,9 +271,8 @@ def save_figure(path, file_name, off, on):
 
 
 def process_image(path, roi_table, fig_dir, roi_mode="csv"):
-    """사진 1장을 끔·켬으로 반복 처리해 metrics 2행을 만들고 비교 그림을 저장한다. 오류는 main이 잡는다.
-    (행 2개, 기본 띠를 썼는지)를 돌려준다. --roi auto면 모든 사진이 일부러 기본 띠를 쓰므로 경고하지 않는다.
-    roi.csv의 띠를 쓰는 사진은 자동 띠 높이를 끄고 돈다(band_overrides)."""
+    """사진 1장을 전처리 미적용·적용으로 반복 처리해 metrics 2행을 만들고 비교 그림을 저장한다.
+    (행 2개, 기본 ROI를 썼는지)를 돌려준다. 오류는 main이 잡는다."""
     file_name = os.path.basename(path)
     roi, used_default = get_roi(file_name, roi_table, roi_mode)
     if used_default and roi_mode == "csv":
@@ -306,9 +280,9 @@ def process_image(path, roi_table, fig_dir, roi_mode="csv"):
     info = io_utils.parse_name(path)
     bgr = io_utils.load_image(path)
 
-    backup = apply_overrides(band_overrides(used_default))    # roi.csv 띠는 자동 띠로 넓히지 않음
+    backup = apply_overrides(band_overrides(used_default))    # roi.csv로 정한 ROI는 자동으로 넓히지 않음
     try:
-        runs = {use: repeat_pipeline(bgr, roi, use) for use in (False, True)}   # 끔 n번 → 켬 n번
+        runs = {use: repeat_pipeline(bgr, roi, use) for use in (False, True)}   # 미적용 n번 → 적용 n번
     finally:
         restore_overrides(backup)
     for use, outs in runs.items():
@@ -317,7 +291,7 @@ def process_image(path, roi_table, fig_dir, roi_mode="csv"):
             print(f"경고: 반복마다 값이 다름 ({'켬' if use else '끔'}: {', '.join(bad)}): {file_name}")
     off, on = median_times(runs[False]), median_times(runs[True])
 
-    quality = on["quality"]          # 상태 지표는 입력 영상의 성질이라 끔 행도 켬에서 잰 값(전처리 전 노면)을 쓴다
+    quality = on["quality"]          # 화질 지표는 입력 사진의 성질이라 미적용 행에도 같은 값(전처리 전에 잰 값)을 씀
     gt = load_gt_for(file_name)
     count_fn = evaluate.count_matches if evaluate else None
     rows = [make_row(file_name, info, roi, use, out, quality, gt_counts(out, gt, count_fn, C.IOU_THRESH), verdict_columns(out, gt))
@@ -327,16 +301,15 @@ def process_image(path, roi_table, fig_dir, roi_mode="csv"):
 
 
 def quality_columns(rows):
-    """metrics.csv의 상태 지표 열 이름. measure_quality의 키 순서를 따라 사진이 0장이어도 머리글이 남고,
-    A가 키를 더하면 열도 자동으로 늘어난다."""
+    """metrics.csv의 화질 지표 열 이름. measure_quality의 키 순서를 따르므로 사진이 0장이어도 머리글이 남는다."""
     keys = list(analyze.measure_quality(np.zeros((32, 32), np.uint8)))
     known = set(INFO_COLUMNS + ROW_COLUMNS + EXTRA_COLUMNS + GT_COLUMNS + VERDICT_COLUMNS + keys)
     return keys + list(dict.fromkeys(k for r in rows for k in r if k not in known))
 
 
 def metrics_frame(rows):
-    """행 list를 열 순서가 정해진 표로 만든다: 영상 정보 → 상태 지표 → row 9열 → edges_road·t_road_ms·t_band_ms → 정답 비교 개수 → 영상 단위 판정.
-    개수는 빈칸을 허용하는 정수형(Int64)이라 1.0이 아닌 1로, 판정은 빈칸을 허용하는 boolean이라 정답 파일이 없으면 빈칸으로 저장된다."""
+    """행 list를 열 순서가 정해진 표로 만든다: 사진 정보 → 화질 지표 → row 9열 → 추가 측정값 → 정답 비교 개수 → 영상 단위 판정.
+    빈칸을 허용하는 정수형(Int64)·불형(boolean)을 써서, 정답 파일이 없는 칸은 빈칸으로 저장된다."""
     columns = INFO_COLUMNS + quality_columns(rows) + ROW_COLUMNS + EXTRA_COLUMNS + GT_COLUMNS + VERDICT_COLUMNS
     types = {col: "Int64" for col in GT_COLUMNS + ["edges_road", "n_pred"]}
     types.update({col: "boolean" for col in ["has_gt"] + VERDICT_BOOL})
@@ -362,7 +335,7 @@ def pr_from_counts(df, kind, pr_fn):
 
 
 def off_on_diff(name, off, on):
-    """한 지표의 끔·켬 값과 차이(on − off)를 지표_off·지표_on·지표_diff 열로 만든다."""
+    """한 지표의 미적용·적용 값과 차이(on − off)를 지표_off·지표_on·지표_diff 열로 만든다."""
     return {f"{name}_off": off, f"{name}_on": on, f"{name}_diff": on - off}
 
 
@@ -372,7 +345,7 @@ def triple_names(names):
 
 
 def pr_columns(off, on, pr_fn):
-    """끔 행 묶음과 켬 행 묶음에서 균열·포트홀 정밀도·재현율의 _off·_on·_diff 열을 만든다."""
+    """미적용 행 묶음과 적용 행 묶음에서 균열·포트홀 정밀도·재현율의 _off·_on·_diff 열을 만든다."""
     cols = {}
     for kind in KINDS:
         (p_off, r_off), (p_on, r_on) = pr_from_counts(off, kind, pr_fn), pr_from_counts(on, kind, pr_fn)
@@ -382,8 +355,7 @@ def pr_columns(off, on, pr_fn):
 
 
 def table_by_image(df, pr_fn):
-    """영상 1장 = 1행: 켬의 steps와 상태 지표, 정답 유무·손상 유무와 영상 단위 판정(correct·hit_same·hit_any)의 끔·켬,
-    지표마다 끔·켬·차이, 그 영상 하나의 정밀도·재현율. 판정은 영상별 사례 보고용이고 정답 파일이 없으면 빈칸이다."""
+    """사진 1장 = 1행: 고른 전처리·화질 지표, 영상 단위 판정의 미적용·적용, 지표마다 미적용·적용·차이, 정밀도·재현율."""
     df = add_ratios(df)
     known = set(INFO_COLUMNS + ROW_COLUMNS + GT_COLUMNS + VERDICT_COLUMNS + SUMMARY_METRICS)
     head = ["file", "source", "condition", "steps"] + [c for c in df.columns if c not in known] + ["roi_pixels"]
@@ -403,8 +375,7 @@ def table_by_image(df, pr_fn):
 
 
 def verdict_summary(sub):
-    """정답 있는 영상의 판정만 모아 evaluate.summarize_verdicts로 손상·무손상 수, 민감도·특이도·정답률·기준선을 낸다.
-    정답 파일이 없는 영상은 빼고(판정이 빈칸), 정답 있는 영상이 없거나 evaluate가 없으면 비율은 NaN이다."""
+    """정답 있는 사진의 판정만 모아 evaluate.summarize_verdicts로 민감도·특이도·정답률·기준선을 낸다."""
     has_gt = sub["has_gt"].fillna(False).astype(bool)
     verdicts = [{"has_damage": bool(d), "correct": bool(c)}
                 for d, c in zip(sub.loc[has_gt, "has_damage"], sub.loc[has_gt, "correct"])]
@@ -414,9 +385,8 @@ def verdict_summary(sub):
 
 
 def table_by_group(df, key, pr_fn):
-    """key(source 또는 condition)의 값마다 1행 + 전체(all) 1행: 영상 수, 정답 있는 영상 수와 그중 손상·무손상 수,
-    정답 있는 영상의 민감도·특이도·영상 단위 정답률(끔·켬·차이)과 정답률 바로 옆의 기준선('검출 없음'의 정답률),
-    지표 평균의 끔·켬·차이, 개수 합계로 낸 정밀도·재현율. 빈 조건은 unknown으로 묶는다."""
+    """key(source 또는 condition)의 값마다 1행 + 전체(all) 1행: 사진 수, 정답 있는 사진의 민감도·특이도·정답률과 기준선,
+    지표 평균과 정밀도·재현율의 미적용·적용·차이. 빈 조건은 unknown으로 묶는다."""
     df = add_ratios(df)
     df[key] = df[key].fillna("").replace("", "unknown")
     rows = []
@@ -427,7 +397,7 @@ def table_by_group(df, key, pr_fn):
                "n_damage": v_on["n_damage"], "n_none": v_on["n_none"]}
         for m in IMAGE_METRICS:
             row.update(off_on_diff(m, v_off[m], v_on[m]))
-        row["baseline_none"] = v_on["baseline_none"]                   # 정답(기준선)은 끔·켬이 같다
+        row["baseline_none"] = v_on["baseline_none"]                   # 기준선은 정답만으로 정해져 미적용·적용이 같음
         for m in SUMMARY_METRICS:
             row.update(off_on_diff(m, pd.to_numeric(off[m]).mean(), pd.to_numeric(on[m]).mean()))
         row.update(pr_columns(off, on, pr_fn))
@@ -447,8 +417,7 @@ def write_config(path, notes=()):
 
 
 def failure_lines(failures):
-    """실패 목록 [(사진 이름, 오류)]을 같은 오류끼리 묶어 한 줄씩 만든다.
-    모든 사진이 같은 이유로 실패할 때(예: 아직 구현되지 않은 dark 방식) 같은 줄이 수십 번 나오지 않게 한다."""
+    """실패 목록 [(사진 이름, 오류)]을 같은 오류끼리 묶어 한 줄씩 만든다(같은 줄이 수십 번 나오지 않게)."""
     groups = {}
     for name, msg in failures:
         groups.setdefault(msg, []).append(name)
@@ -458,8 +427,7 @@ def failure_lines(failures):
 
 def main(argv=None, image_dirs=IMAGE_DIRS, roi_path="data/roi.csv", results_dir="results"):
     """사진 전체를 처리해 results/<name>/에 표·그림을 저장한다. 실패한 사진이 있으면 1, 없으면 0을 돌려준다.
-    실행 옵션은 config_used.txt를 쓰기 전에 적용하고(파일에 바뀐 값이 남게), 실패해도 finally에서 되돌린다.
-    image_dirs·roi_path·results_dir는 시험에서 임시 폴더를 쓰려고 둔 인자이고, 명령행 실행은 기본값을 쓴다."""
+    image_dirs·roi_path·results_dir는 다른 폴더로 돌려 볼 때 쓰는 인자이고, 명령행 실행은 기본값을 쓴다."""
     args = parse_args(argv)
     overrides = runtime_overrides(args)
     files = list_images(args.only, image_dirs)
@@ -480,7 +448,7 @@ def main(argv=None, image_dirs=IMAGE_DIRS, roi_path="data/roi.csv", results_dir=
             except Exception as e:                      # 한 장이 실패해도 나머지는 계속 처리
                 failures.append((os.path.basename(path), f"{type(e).__name__}: {e}"))
                 continue
-            rows += image_rows                          # 끔·켬 두 행이 모두 만들어진 사진만 넣는다
+            rows += image_rows                          # 미적용·적용 두 행이 모두 만들어진 사진만 넣음
             n_default += used_default
 
         df = metrics_frame(rows)

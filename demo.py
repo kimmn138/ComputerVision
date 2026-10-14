@@ -1,18 +1,10 @@
-"""(파트 C) 발표 시연: 영상 1장을 전처리 끔·켬으로 처리해 노면 마스크와 검출 결과를 한 창에 나란히 띄운다.
-사용법: 맨 위 폴더에서  python demo.py [영상 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark]
-                                        [--auto-band on|off] [--band-texture on|off] [--set NAME=VALUE ...] [--save 그림 경로] [--list]
-- 영상 경로를 빼면(VS Code ▶ 버튼) 파일 선택 창(맨 앞, 처음 폴더 data/)으로 사진을 고르고 --roi auto로 띄운다.
-  결과 창을 닫으면 다시 선택 창이 뜨고, 취소하면 끝난다. 못 읽는 사진(HEIC 등)은 안내 창을 띄우고 다음 사진을 고르게 한다.
-  tkinter를 쓸 수 없는 컴퓨터면 안내 문구를 낸 뒤 번호 목록으로 넘어간다.
-- --list: 선택 창 대신 data 아래 사진 목록을 번호로 보여 주고 고르게 한다(예전 방식).
-- ROI 비율을 빼면 data/roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다. --roi auto면 roi.csv 없이 기본 띠(run_experiment와 같음).
-- --mask·--detect·--auto-band·--band-texture(자동 띠의 결 조건)·--set NAME=VALUE(그 밖의 config 값, run_experiment와 같음)는 config 값을 이번 실행에만 바꾸고 끝나면 되돌린다. 빼면 config를 따른다(마지막에 정한 설정 그대로 시연).
-  자동 띠 높이(config AUTO_BAND_TOP, --auto-band)가 켜져 있으면 기본 띠(0.5)에서 시작해 노면만 이어지는 만큼 위로 넓히고, 화면 아래 띠에
-  넓힌 경계를 적는다. 명령행 비율이나 roi.csv로 정한 띠는 넓히지 않는다(run_experiment와 같음). 선택 창(--roi auto)은 config를 따른다.
-- 창: 끔·켬 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보. 위 띠에 고른 전처리, 아래 띠에 상태 판정 값과 설정.
-- 콘솔에도 상태 판정 값·고른 전처리·설정과 끔·켬의 row(9열)를 출력하고, 창은 아무 키나 누르거나 X로 닫는다.
-- --save를 주면 창을 띄우지 않고 같은 화면을 그림 파일로 저장한다(확인·보고서용).
-화면 표시는 이 파일에서만 한다(src/ 함수는 창을 띄우지 않음).
+"""시연: 사진 1장을 전처리 미적용·적용으로 처리해 노면 마스크와 검출 결과를 한 창에 나란히 띄운다.
+사용법: 맨 위 폴더에서  python demo.py [사진 경로 [roi_top roi_bottom]] [--roi csv|auto] [--mask on|off] [--detect legacy|dark]
+        [--auto-band on|off] [--band-texture on|off] [--set NAME=VALUE ...] [--save 그림 경로] [--list]
+- 사진 경로를 빼면 파일 선택 창으로 고른다(기본 --roi auto, 결과 창을 닫으면 다시 고르고 취소하면 끝). --list면 번호 목록으로 고른다.
+- ROI 비율을 빼면 roi.csv의 값, 거기에도 없으면 config 기본값을 쓴다(--roi auto면 모든 사진에 기본 ROI).
+- 창: 미적용·적용 두 칸에 노면 마스크(반투명 초록)와 균열(빨강)·포트홀(파랑) 후보, 위 띠에 고른 전처리, 아래 띠에 화질 지표와 설정.
+- 콘솔에도 같은 내용과 row(9열)를 출력한다. 창은 아무 키나 누르거나 X로 닫고, --save를 주면 창 대신 그림 파일로 저장한다.
 """
 import argparse
 import glob
@@ -29,27 +21,25 @@ from src import analyze, io_utils, pipeline, visualize
 from src import config as C
 
 ROI_PATH = "data/roi.csv"
-DEFAULT_SOURCES = ("config 기본값", "기본 띠, --roi auto")    # choose_roi가 기본 띠를 골랐을 때의 출처 글. 자동 띠 높이는 이때만 쓴다
+DEFAULT_SOURCES = ("config 기본값", "기본 띠, --roi auto")    # choose_roi가 기본 ROI를 골랐을 때의 출처 글(ROI 상단 경계 자동 조정은 이때만)
 WINDOW_NAME = "demo"            # 윈도 HighGUI에서 한글 창 제목이 깨질 수 있어 ASCII로
 KEY_POLL_MS = 100               # 키·창 닫힘을 확인하는 간격
 FONT_NAME = "sans"              # OpenCV 5 내장 유니코드 글꼴
 LABEL_COLOR = (255, 255, 255)   # 제목 띠 글자: 흰색 (BGR)
-LABEL_X = 8
+LABEL_X = 8                     # px, 제목 글자의 왼쪽 여백
 DATA_DIR = "data"
-EXCLUDE_DIRS = ("train",)       # data/train은 B의 훈련 사진 804장이라 고르는 목록에서 뺌
+EXCLUDE_DIRS = ("train",)       # 고르는 목록에서 뺄 폴더(훈련용 사진 폴더)
 DIALOG_TITLE = "시연할 사진 고르기 (취소하면 끝)"
 DIALOG_TYPES = [("사진", "*.jpg *.jpeg *.png *.bmp *.heic *.heif"), ("모든 파일", "*.*")]
 HEIC_EXTS = (".heic", ".heif")  # 아이폰 기본 형식. 이 OpenCV는 읽지 못함
-# 아래 띠에 적을 상태 판정 값의 이름(한글, 한글을 못 쓸 때의 영문). measure_quality에 키가 늘면 키 이름 그대로 붙는다
+# 아래 띠에 적을 화질 지표 이름(한글, 한글을 못 쓸 때의 영문)
 QUALITY_NAMES = {"mean": ("평균", "mean"), "std": ("표준편차", "std"), "lap_var": ("라플라시안 분산", "lap_var"),
                  "noise": ("잡티", "noise"), "blur_ratio": ("재흐림 비율", "blur_ratio"), "blur_dir": ("방향 비율", "blur_dir")}
 
 
 def parse_args(argv=None):
-    """영상 경로, 선택 ROI 비율 2개, 노면 띠 방식(--roi), 이번 실행에만 바꿀 config 값(--mask·--detect·--auto-band·--band-texture), 저장 경로(--save)를 읽는다.
-    비율이 1개이거나 0 <= top < bottom <= 1이 아니면, 또는 비율과 --roi auto를 함께 주면 사용법과 함께 멈춘다.
-    영상 경로를 빼면 path는 None(main이 선택 창이나 --list 목록에서 고르게 함). --roi를 빼면 선택 창은 auto, 경로·--list는 csv.
-    --list와 경로를 함께 주거나, 선택 창(경로·--list 없음)에 --save를 주면(고를 때마다 같은 파일을 덮어씀) 멈춘다."""
+    """명령행 옵션을 읽는다: 사진 경로, ROI 비율 2개, ROI 방식, 이번 실행에만 바꿀 config 값, 저장 경로.
+    비율이 잘못됐거나 서로 맞지 않는 옵션을 함께 주면 사용법과 함께 멈춘다."""
     parser = argparse.ArgumentParser(description="전처리 끔·켬의 노면 마스크와 검출 결과를 한 창에 띄우는 발표 시연")
     parser.add_argument("path", nargs="?", help="영상 경로. 빼면 파일 선택 창(--list면 번호 목록)에서 고름")
     parser.add_argument("roi", nargs="*", type=float, metavar="roi_top roi_bottom",
@@ -67,7 +57,7 @@ def parse_args(argv=None):
                         help="config 값 하나를 이번 실행에만 바꿈(여러 번 가능). 예: --set ROAD_LANE_BRIDGE=True. 빼면 config")
     parser.add_argument("--save", metavar="그림 경로", help="창을 띄우지 않고 같은 화면을 그림 파일(.png)로 저장")
     parser.add_argument("--list", action="store_true", help="선택 창 대신 data 아래 사진 목록에서 번호로 고름(예전 방식)")
-    parser.set_defaults(roi_top=None)       # run_experiment.runtime_overrides와 같은 모양(시연은 띠를 ROI 비율로 정함)
+    parser.set_defaults(roi_top=None)       # run_experiment.runtime_overrides를 같이 쓰려고 둠(시연은 ROI를 비율로 정함)
     args = parser.parse_args(argv)
     rx.check_sets(parser, args.set)
     if args.list and args.path is not None:
@@ -113,9 +103,8 @@ def pick_image(root=DATA_DIR, input_fn=input):
 
 
 def make_chooser(root_dir=DATA_DIR):
-    """파일 선택 창 도구 (choose, warn, close)를 만든다. tkinter를 쓸 수 없으면(설치 안 됨·화면 없음) None.
-    선택 창이 VS Code 뒤에 숨지 않게 숨긴 부모 창을 맨 앞(-topmost)으로 두고, 처음 폴더는 root_dir, 다음부터는 마지막에 고른 폴더.
-    choose()는 고른 경로(취소면 None), warn(글)은 안내 창, close()는 부모 창을 닫는다."""
+    """파일 선택 창 도구 (choose, warn, close)를 만든다. tkinter를 쓸 수 없으면 None.
+    선택 창이 다른 창 뒤에 숨지 않게 맨 앞에 띄우고, 다음부터는 마지막에 고른 폴더에서 연다."""
     try:
         import tkinter
         from tkinter import filedialog, messagebox
@@ -154,8 +143,8 @@ def read_error_text(path):
 
 
 def choose_roi(path, roi_args, roi_table, mode="csv"):
-    """명령행 비율 → roi.csv → config 기본값 순서로 노면 범위를 정한다. mode가 auto면 roi.csv 없이 config 기본 띠
-    (run_experiment --roi auto와 같음). (top, bottom, 출처 글)을 돌려준다."""
+    """명령행 비율 → roi.csv → config 기본값 순서로 ROI 범위를 정해 (top, bottom, 출처 글)을 돌려준다.
+    mode가 auto면 roi.csv를 쓰지 않고 config 기본 ROI."""
     if roi_args:
         return roi_args[0], roi_args[1], "명령행"
     roi, used_default = rx.get_roi(os.path.basename(path), roi_table, mode)
@@ -220,8 +209,7 @@ def add_label(img, text, unicode_ok):
 
 
 def build_view(off_img, on_img, labels, screen, unicode_ok, footer=()):
-    """끔·켬 그림을 같은 비율로 화면에 맞게 줄이고 각각 제목 띠를 붙여 가로로 잇는다. footer 줄이 있으면 아래에 띠로 붙인다.
-    라벨은 줄인 뒤에 붙여 화면 크기와 상관없이 글자 크기가 같고, 아래 띠 높이까지 화면 안에 들어가게 줄인다."""
+    """미적용·적용 그림을 화면에 맞게 같은 비율로 줄이고 제목 띠를 붙여 가로로 잇는다(footer 줄은 아래 띠로 붙임)."""
     max_w = screen[0] * C.DEMO_SCREEN_MARGIN / 2
     max_h = screen[1] * C.DEMO_SCREEN_MARGIN - C.DEMO_LABEL_HEIGHT * (1 + len(footer))
     panels = [add_label(fit_to_screen(img, max_w, max_h), text, unicode_ok)
@@ -239,8 +227,7 @@ def text_width(text, unicode_ok):
 
 
 def wrap_footer(lines, width, unicode_ok):
-    """아래 띠 줄이 그림 폭(width)을 넘으면 항목 구분자(' · ', 영문 ' / ')에서 나눠 여러 줄로 만든다. 이어지는 줄은 두 칸 들여 쓴다.
-    세로 사진처럼 패널이 좁으면 설정 줄 끝이 잘리던 것을 막는다(보고서 그림 4). 넘지 않으면 그대로."""
+    """아래 띠 줄이 그림 폭(width)을 넘으면 항목 구분자에서 나눠 여러 줄로 만든다(세로 사진처럼 패널이 좁을 때 글자가 잘리지 않게)."""
     sep = " · " if unicode_ok else " / "
     out = []
     for line in lines:
@@ -257,22 +244,21 @@ def wrap_footer(lines, width, unicode_ok):
 
 
 def make_labels(steps_text, unicode_ok):
-    """끔·켬 패널 제목 2개. 한글을 못 쓰면 영문으로(고른 전처리 이름은 콘솔에서 봄)."""
+    """미적용·적용 패널 제목 2개. 한글을 못 쓰면 영문으로(고른 전처리 이름은 콘솔에서 봄)."""
     if unicode_ok:
         return "전처리 끔", f"전처리 켬: {steps_text}"
     return "Preprocess OFF", "Preprocess ON"
 
 
 def format_value(value):
-    """상태 판정 값 한 개를 짧은 글로: 아직 계산하지 않는 값(NaN)은 '-', 100 이상은 정수, 그 밖은 소수 한 자리."""
+    """화질 지표 값 한 개를 짧은 글로: NaN은 '-', 100 이상은 정수, 그 밖은 소수 한 자리."""
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "-"
     return f"{value:.0f}" if abs(value) >= 100 else f"{value:.1f}"
 
 
 def make_footer(quality, top, bottom, roi_source, unicode_ok):
-    """화면 아래 띠 두 줄: 상태 판정 값(전처리를 고른 근거)과 이번 시연의 설정(ROI·노면 마스크·검출 방식).
-    설정은 실행 옵션을 적용한 뒤의 config 값을 읽어 적으므로 화면만 보고도 어떤 조건인지 안다. 한글을 못 쓰면 영문으로."""
+    """화면 아래 띠 두 줄: 화질 지표(전처리를 고른 근거)와 이번 시연의 설정(ROI·노면 마스크·검출 방식). 한글을 못 쓰면 영문으로."""
     lang = 0 if unicode_ok else 1
     values = [f"{QUALITY_NAMES.get(key, (key, key))[lang]} {format_value(value)}" for key, value in quality.items()]
     mask = C.USE_ROAD_MASK
@@ -287,8 +273,7 @@ def make_footer(quality, top, bottom, roi_source, unicode_ok):
 
 
 def road_extra():
-    """설정 줄에 덧붙일 노면 마스크 보완 [(한글, 영문)]: 노면 마스크를 켰으면 남기기 규칙(center·ratio)을 늘 적고,
-    차선 스위치(A 구역 (가)·(나))는 켰을 때만 적는다. 고치기 전·후 시연 그림을 화면만 보고 가르려고 둔다."""
+    """설정 줄에 덧붙일 노면 마스크 설정 [(한글, 영문)]: 후보 남기기 규칙과, 켜져 있으면 차선 처리 스위치."""
     extra = []
     if C.USE_ROAD_MASK:
         extra.append((f"남기기 {C.ROAD_KEEP_RULE}", f"keep {C.ROAD_KEEP_RULE}"))
@@ -310,16 +295,14 @@ def save_image(path, img):
 
 
 def report_table(row_off, row_on):
-    """끔·켬 row를 약속된 9열 순서로 놓고 차이(켬 − 끔) 줄을 더한 표.
-    차이 줄을 열마다 따로 계산해 붙여야 개수 열이 정수로 남는다(.loc로 한 줄을 넣으면 시간 열 때문에 모두 실수가 됨)."""
+    """미적용·적용 row를 9열 순서로 놓고 차이(적용 − 미적용) 줄을 더한 표(차이를 열마다 계산해 개수 열이 정수로 남게)."""
     diff = {k: row_on[k] - row_off[k] for k in rx.ROW_COLUMNS}
     return pd.DataFrame([row_off, row_on, diff], index=["끔", "켬", "차이"])[rx.ROW_COLUMNS]
 
 
 def show(img):
-    """창을 띄우고 아무 키나 누르거나 X로 닫을 때까지 기다린다.
-    waitKey(0)만 쓰면 X로 닫았을 때 윈도에서 영원히 기다리므로, 짧게 기다리며 창이 보이는지 같이 본다.
-    VS Code 뒤에 숨지 않게 맨 앞(WND_PROP_TOPMOST)으로 띄운다(지원하지 않는 OpenCV면 그냥 띄움)."""
+    """창을 맨 앞에 띄우고, 아무 키나 누르거나 X로 닫을 때까지 기다린다.
+    waitKey(0)만 쓰면 X로 닫았을 때 윈도에서 계속 기다리므로, 짧게 기다리며 창이 열려 있는지 같이 본다."""
     cv.namedWindow(WINDOW_NAME, cv.WINDOW_AUTOSIZE)
     cv.imshow(WINDOW_NAME, img)
     try:
@@ -333,8 +316,8 @@ def show(img):
 
 
 def tau_rejected(bgr, top, bottom, use_preprocess, out):
-    """점수 문턱 τ에 걸러진 후보: 같은 설정에서 τ만 끄고(USE_SCORE_TAU) 다시 검출한 후보 가운데 out(τ 켬)에 없는 것(상자로 견줌).
-    → (균열 list, 포트홀 list). τ가 꺼져 있으면 걸러진 후보가 없으므로 빈 list 둘. 시연 그림에만 쓰고 결과 숫자는 out 그대로다."""
+    """점수 임계값에 걸러진 후보를 찾는다: 임계값만 끄고 다시 검출한 후보 가운데 out에 없는 것 → (균열 list, 포트홀 list).
+    시연 그림에만 쓰고 결과 숫자는 바꾸지 않는다."""
     if not C.USE_SCORE_TAU:
         return [], []
     backup = rx.apply_overrides({"USE_SCORE_TAU": False})
@@ -347,8 +330,7 @@ def tau_rejected(bgr, top, bottom, use_preprocess, out):
 
 
 def draw_panel(out, rejected=None):
-    """시연 패널 한 장: 노면 마스크(반투명 초록) → (DRAW_TAU_REJECTED면) τ에 걸러진 후보 옅은 점선 → 남은 후보 윤곽과 노면 시작선.
-    rejected가 None이면 지금까지의 그림과 같다."""
+    """시연 패널 한 장: 노면 마스크(반투명 초록) → (rejected가 있으면) 걸러진 후보 점선 → 남은 후보 윤곽과 ROI 시작선."""
     base = visualize.draw_road(out["small"], out["road"], out["y0"])
     if rejected is not None:
         base = visualize.draw_rejected(base, rejected[0], rejected[1], out["y0"])
@@ -356,12 +338,9 @@ def draw_panel(out, rejected=None):
 
 
 def demo_one(path, args, show_fn=None, warn=None, decorate=None, screen=None, wrap=False):
-    """사진 1장을 끔·켬으로 처리해 콘솔에 상태 판정 값·전처리·설정·row를 출력하고, 노면 마스크와 후보를 그린 두 장을 한 창에 띄운다
-    (--save면 창 대신 그림 파일로 저장). --mask·--detect·--auto-band·--band-texture는 실행 중에만 config를 바꾸고 끝나면(실패해도) 되돌린다.
-    자동 띠 높이가 켜져 있으면 콘솔과 아래 띠의 ROI를 실제로 쓴 위쪽 경계로 적고, 출처에 시작 경계를 덧붙인다.
-    못 읽는 사진·설정 오류는 알기 쉬운 문구를 콘솔(과 warn이 있으면 안내 창)에 내고 1을 돌려준다. 끝 코드를 돌려준다.
-    보고서 그림용(tools/report_figures.py) 선택 인자: decorate(패널 영상, 결과) → 영상(정답 상자·번호판 가림을 640px 패널에 더함),
-    screen(화면 크기 대신 쓸 (가로, 세로)), wrap(아래 띠 줄이 그림 폭을 넘으면 나눔). 모두 기본값이면 지금 화면과 같다."""
+    """사진 1장을 전처리 미적용·적용으로 처리해 콘솔에 결과를 출력하고, 두 결과 그림을 한 창에 띄운다(--save면 파일로 저장).
+    못 읽는 사진·설정 오류는 알기 쉬운 문구를 내고 1을 돌려준다(정상이면 0).
+    decorate·screen·wrap은 그림을 달리 만들 때 쓰는 선택 인자다(패널에 덧그리기, 화면 크기 지정, 아래 띠 줄바꿈)."""
     def report(text):
         print(text)
         if warn is not None:
@@ -378,17 +357,17 @@ def demo_one(path, args, show_fn=None, warn=None, decorate=None, screen=None, wr
         report(f"{ROI_PATH} 형식 오류: {e}")
         return 1
 
-    used_default = roi_source in DEFAULT_SOURCES             # roi.csv·명령행으로 정한 띠는 자동 띠로 넓히지 않음(run_experiment와 같음)
+    used_default = roi_source in DEFAULT_SOURCES             # roi.csv·명령행으로 정한 ROI는 자동으로 넓히지 않음
     backup = rx.apply_overrides({**rx.runtime_overrides(args), **rx.band_overrides(used_default)})
     try:
         try:
             outs = {use: pipeline.run_pipeline(bgr, top, bottom, use) for use in (False, True)}
-        except NotImplementedError as e:            # 예: 아직 구현 전인 검출 방식
+        except NotImplementedError as e:            # 구현되지 않은 설정을 고른 경우
             report(f"아직 구현되지 않은 설정이라 시연할 수 없음: {e}")
             return 1
         unicode_ok = has_unicode_text()
         steps_text = analyze.steps_to_text(outs[True]["steps"])
-        if C.AUTO_BAND_TOP:                         # 넓힌 경계는 컬러 사진만 보고 정해 끔·켬이 같다
+        if C.AUTO_BAND_TOP:                         # 자동으로 올린 경계는 컬러 사진만 보고 정해 미적용·적용이 같음
             texture = "+결" if C.AUTO_BAND_USE_TEXTURE else ""
             roi_source, top = f"{roi_source}, 자동 띠{texture} {top:.2f}에서", outs[True]["top"]
         footer = make_footer(outs[True]["quality"], top, bottom, roi_source, unicode_ok)
@@ -449,8 +428,7 @@ def dialog_loop(args, tools, show_fn=None):
 
 def main(argv=None, chooser_factory=None, show_fn=None):
     """사진을 고르는 방식(경로 → 그 사진, --list → 번호 목록, 둘 다 없으면 파일 선택 창 반복)을 정해 시연한다. 끝 코드를 돌려준다.
-    선택 창을 쓸 수 없으면(tkinter 없음) 안내 문구를 낸 뒤 번호 목록으로 넘어간다.
-    chooser_factory·show_fn은 시험에서 가짜 선택 창·결과 창을 쓰려고 둔 인자이고, 실행은 기본값(make_chooser·show)을 쓴다."""
+    chooser_factory·show_fn은 선택 창·결과 창을 바꿔 끼울 때 쓰는 인자이고, 실행은 기본값을 쓴다."""
     args = parse_args(argv)
     if args.path is not None:
         return demo_one(args.path, args, show_fn)
