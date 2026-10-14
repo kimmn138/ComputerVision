@@ -1,22 +1,20 @@
-"""(파트 A) 노면 영상의 상태(밝기·대비·흐림·잡티)를 재고, 그 상태에 맞는 전처리 단계를 고른다."""
+"""ROI 영상의 화질(밝기·대비·흐림·잡음)을 재고, 그 상태에 맞는 전처리 단계를 고른다."""
 import cv2 as cv
 import numpy as np
 
 from src import config as C
 
-# 전처리 끔: 아무 단계도 적용하지 않는다. 실험의 '전처리 끔'과 약속 검사가 이 값을 쓴다.
+# 전처리 미적용: 아무 단계도 적용하지 않는 설정
 NO_STEPS = {"denoise": False, "tone": None, "gamma": 1.0, "sharpen": False}
 
 
 def _estimate_noise(gray):
-    """Immerkær 방식으로 잡음 표준편차를 어림하되, 결·경계가 없는 평평한 블록에서만 잰다.
-    영상 전체로 재면 나뭇잎·경계선·노면 결까지 잡음으로 세어, 깨끗한 사진에도 가우시안을 골라 영상이 뿌예진다.
-    NOISE_BLOCK px 블록마다 잰 값 중 가장 평평한 쪽(하위 NOISE_FLAT_QUANTILE)을 쓰고,
-    0·255에 붙은 픽셀이 NOISE_SAT_MAX보다 많은 블록은 잡음이 잘려 낮게 나오므로 뺀다."""
+    """잡음 표준편차를 어림한다(Immerkær 방식). 질감·경계를 잡음으로 세지 않도록 가장 평평한 블록들에서만 잰다.
+    0·255에 붙은 픽셀이 많은 블록은 잡음이 잘려 낮게 나오므로 뺀다."""
     kernel = np.array([[ 1, -2,  1],
                        [-2,  4, -2],
                        [ 1, -2,  1]], dtype=np.float32)
-    # 순수 잡음 σ에서 |응답|의 평균이 6σ·√(2/π)이므로 √(π/2)/6을 곱하면 σ. 가장자리 1px은 커널이 걸쳐 뺌
+    # 응답 크기에 √(π/2)/6을 곱하면 잡음 σ가 됨(가장자리 1px은 커널이 걸쳐 뺌)
     resp = np.abs(cv.filter2D(gray.astype(np.float32), -1, kernel))[1:-1, 1:-1] * (np.sqrt(0.5 * np.pi) / 6.0)
     if resp.size == 0:
         return 0.0
@@ -61,10 +59,8 @@ def _mean_gradient(gray):
     return float(magnitude.mean())
 
 def _direction_ratio(gray):
-    """방향별 에지 세기의 최소 ÷ 최대(blur_dir)를 잰다. 흔들림(움직임 흐림)은 움직인 방향의 경계만 뭉개므로 이 값이 작아진다.
-    방향 θ의 기울기 = gx·cosθ + gy·sinθ의 제곱 평균을 BLUR_DIR_ANGLES(도)마다 낸다. 제곱 평균은 gx², gy², gx·gy의 평균
-    세 개로 바로 계산되므로 방향마다 영상을 다시 만들지 않는다. 가우시안 흐림은 모든 방향을 같이 뭉개 비율이 거의 그대로다.
-    기울기가 거의 없는 평평한 영상은 비율을 정할 수 없어 NaN."""
+    """방향별 에지 세기의 최소 ÷ 최대(blur_dir)를 잰다. 흔들림은 한 방향의 경계만 뭉개서 이 값이 작아진다.
+    평평해서 기울기가 거의 없는 영상은 NaN."""
     gray_f = gray.astype(np.float32)
     gx = cv.Sobel(gray_f, cv.CV_32F, 1, 0, ksize=3)
     gy = cv.Sobel(gray_f, cv.CV_32F, 0, 1, ksize=3)
@@ -76,14 +72,13 @@ def _direction_ratio(gray):
     return float(energy.min() / energy.max())
 
 def measure_quality(gray):
-    """전처리를 고르는 근거로 밝기·대비·흐림·잡티를 측정한다.
-    blur_ratio는 원본과 재흐림 영상의 Sobel 기울기 평균 비율로 계산하며,
-    기존 라플라시안 분산과 함께 흐림 판정에 사용한다. blur_dir은 방향별 에지 세기의 최소 ÷ 최대(흔들림 판정, USE_BLUR_DIR)."""
+    """전처리를 고르는 근거가 되는 화질 지표를 잰다.
+    mean(밝기)·std(대비)·lap_var(라플라시안 분산, 선명도)·noise(잡음)·blur_ratio(재흐림 비율, 흐림)·blur_dir(방향 비율, 흔들림)"""
 
     mean_val = float(gray.mean())
     std_val = float(gray.std())
 
-    # 기존 흐림 지표
+    # 흐림 지표 1: 라플라시안 분산(작을수록 흐림)
     lap_var = float(
         cv.Laplacian(
             gray,
@@ -97,7 +92,7 @@ def measure_quality(gray):
     # 원본의 Sobel 평균
     grad_original = _mean_gradient(gray)
 
-    # 일부러 한 번 더 흐리게
+    # 흐림 지표 2: 일부러 한 번 더 흐려 봄(이미 흐린 사진은 기울기가 별로 줄지 않음)
     reblurred = cv.GaussianBlur(
         gray,
         (0, 0),
@@ -106,8 +101,7 @@ def measure_quality(gray):
 
     grad_reblurred = _mean_gradient(reblurred)
 
-    # 평평한 영상은 gradient가 거의 0이라
-    # 의미 있는 비율을 구할 수 없음
+    # 평평한 영상은 기울기가 거의 0이라 비율을 구할 수 없음
     if grad_reblurred <= 1e-6:
         blur_ratio = float("nan")
     else:
@@ -125,18 +119,15 @@ def measure_quality(gray):
     }
 
 def choose_steps(q):
-    """상태 지표를 config A 구역의 기준값과 비교해 적용할 전처리 단계를 고른다.
-    잡티 > NOISE_SIGMA_MAX → 가우시안, 평균 < DARK_MEAN_MAX 또는 > BRIGHT_MEAN_MIN → 감마,
-    (밝기는 괜찮고) 표준편차 < CONTRAST_STD_MIN → 평활화(USE_CLAHE면 CLAHE), 라플라시안 분산 < BLUR_VAR_MAX
-    또는 재흐림 비율 < BLUR_RATIO_MAX 또는 (USE_BLUR_DIR이면) 방향 비율 < BLUR_DIR_MIN → 샤프닝.
-    감마는 평균 밝기를 가운데(0.5)로 옮기는 값 log(0.5) / log(평균/255)이고, preprocess가 결과 = 입력^감마로 적용한다
-    (감마 < 1이면 밝게, > 1이면 어둡게). GAMMA_RANGE 밖이면 끝값으로 자른다."""
+    """화질 지표를 config 기준값과 비교해 적용할 전처리 단계를 고른다.
+    잡음이 크면 가우시안, 너무 어둡거나 밝으면 감마, 대비가 낮으면 평활화(또는 CLAHE), 흐리면 샤프닝.
+    감마는 평균 밝기를 가운데(0.5)로 옮기는 값이다(감마 < 1이면 밝게, > 1이면 어둡게)."""
     steps = dict(NO_STEPS)
 
-    # 1. 노이즈 제거 여부
+    # 1. 잡음 제거 여부
     steps["denoise"] = bool(q["noise"] > C.NOISE_SIGMA_MAX)
 
-    # 2. 톤/조도 보정 (tone)
+    # 2. 밝기·대비 보정
     if q["mean"] < C.DARK_MEAN_MAX or q["mean"] > C.BRIGHT_MEAN_MIN:
         steps["tone"] = "gamma"
         # 평균이 0이나 255이면 log가 -inf·0이 되므로 한 단계 안쪽(1~254)으로 제한
@@ -145,11 +136,11 @@ def choose_steps(q):
     elif q["std"] < C.CONTRAST_STD_MIN:
         steps["tone"] = "clahe" if C.USE_CLAHE else "equalize"
     # 3. 샤프닝 여부
-    # 기존 Laplacian 기준
+    # 라플라시안 분산 기준
     blur_by_laplacian = (
         q["lap_var"] < C.BLUR_VAR_MAX
     )
-    # 새로운 재흐림 비율 기준
+    # 재흐림 비율 기준
     blur_ratio = q.get(
         "blur_ratio",
         float("nan")
@@ -165,7 +156,7 @@ def choose_steps(q):
         and np.isfinite(blur_dir)
         and blur_dir < C.BLUR_DIR_MIN
     )
-    # 하나라도 흐림으로 판단하면 sharpening
+    # 하나라도 흐림이면 샤프닝
     steps["sharpen"] = bool(
         blur_by_laplacian or blur_by_ratio or blur_by_dir
     )

@@ -1,4 +1,4 @@
-"""(파트 A) 고른 전처리 단계(잡티 제거·밝기/대비 보정·샤프닝)만 흑백 노면 영상에 적용한다."""
+"""고른 전처리 단계(잡음 제거·밝기/대비 보정·샤프닝)만 흑백 ROI 영상에 적용한다."""
 import cv2 as cv
 import numpy as np
 
@@ -6,13 +6,11 @@ from src import config as C
 
 
 def preprocess(gray, steps):
-    """검출이 잘 되도록 고른 단계만 적용한 흑백 영상을 돌려준다. NO_STEPS면 입력과 똑같은 영상.
-    순서: 가우시안(GAUSS_KSIZE·GAUSS_SIGMA, NIGHT_DENOISE면 야간 영상은 NLM) → 감마(결과 = 입력^감마, 감마 < 1이면 밝게)·평활화·CLAHE(CLAHE_CLIP·CLAHE_TILE)
-    → 샤프닝(언샤프 마스크: 결과 = 입력 + SHARPEN_AMOUNT × (입력 − 가우시안(SHARPEN_SIGMA)))."""
+    """검출이 잘 되도록 고른 단계만 적용한 흑백 영상을 돌려준다(NO_STEPS면 입력과 같은 영상).
+    순서: 잡음 제거(가우시안, 야간은 NLM) → 감마·평활화·CLAHE → 샤프닝(언샤프 마스크)."""
     out = gray.copy()
 
-    # 1. 잡티 제거 (Denoise). NIGHT_DENOISE가 켜져 있고 밝게 하는 감마(< 1)를 함께 고른 영상(어둡고 잡음 많은 야간)은
-    #    가우시안 대신 비국소 평균(NLM): 비슷한 무늬 조각끼리 평균해 경계를 덜 뭉갠다. 감마로 밝히기 전에 잡음을 줄인다
+    # 1. 잡음 제거: 야간 영상(NIGHT_DENOISE를 켜고 밝게 하는 감마를 함께 고름)은 경계를 덜 뭉개는 NLM, 나머지는 가우시안
     if steps.get("denoise"):
         night = C.NIGHT_DENOISE and steps.get("tone") == "gamma" and steps.get("gamma", 1.0) < 1
         if night:
@@ -21,11 +19,11 @@ def preprocess(gray, steps):
         else:
             out = cv.GaussianBlur(out, C.GAUSS_KSIZE, C.GAUSS_SIGMA)
 
-    # 2. 톤/조도 보정 (Tone)
+    # 2. 밝기·대비 보정
     tone = steps.get("tone")
     if tone == "gamma":
         g_val = steps.get("gamma", 1.0)
-        # 0~1로 나눈 밝기를 감마 제곱. analyze.choose_steps가 이 방향(입력^감마)에 맞춰 감마를 고른다
+        # 결과 = 입력^감마 (밝기를 0~1로 보고 계산, 256칸 표로 한 번에 적용)
         table = np.clip(np.round((np.arange(256) / 255.0) ** g_val * 255), 0, 255).astype(np.uint8)
         out = cv.LUT(out, table)
 
@@ -36,10 +34,10 @@ def preprocess(gray, steps):
         clahe = cv.createCLAHE(clipLimit=C.CLAHE_CLIP, tileGridSize=C.CLAHE_TILE)
         out = clahe.apply(out)
 
-    # 3. 샤프닝 (Sharpen)
+    # 3. 샤프닝
     if steps.get("sharpen"):
         blurred = cv.GaussianBlur(out, (0, 0), C.SHARPEN_SIGMA)
-        # 입력에 (입력 − 흐린 영상) 즉 경계 성분을 SHARPEN_AMOUNT배 더함. uint8 범위는 addWeighted가 0~255로 자름
+        # 언샤프 마스크: 입력 + AMOUNT × (입력 − 흐린 영상), 즉 경계 성분을 키움
         out = cv.addWeighted(out, 1 + C.SHARPEN_AMOUNT, blurred, -C.SHARPEN_AMOUNT, 0)
 
     return out

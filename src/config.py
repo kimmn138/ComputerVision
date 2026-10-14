@@ -7,74 +7,74 @@ ROI_TOP_DEFAULT = 0.5       # roi.csv에 없는 사진의 노면 시작 비율
 ROI_BOTTOM_DEFAULT = 1.0
 TIME_REPEAT = 5             # 처리 시간은 5번 재서 중앙값
 
-# ===== A: 데이터·상태 분석·전처리 =====
-DAMAGE_TAGS = ("crack", "pothole", "both", "none")
-CONDITION_TAGS = ("normal", "dark", "night", "bright", "shadow", "blur", "wet", "clutter", "none")
-PAIR_ROLES = ("A", "B", "C", "D")
-PAIR_CONDITIONS = ("ref", "dark", "blur", "view")
-BLUR_VAR_MAX = 50           # 라플라시안 분산 < 50 -> 흐림 -> 샤프닝
-NOISE_SIGMA_MAX = 3.0       # 잡티 지표 > 3 -> 가우시안
-CONTRAST_STD_MIN = 20       # 표준편차 < 20 -> 대비 부족 -> 평활화
-DARK_MEAN_MAX = 80          # 평균 < 80 -> 감마(밝게)
-BRIGHT_MEAN_MIN = 170       # 평균 > 170 -> 감마(어둡게)
-GAUSS_KSIZE, GAUSS_SIGMA = (5, 5), 1.0
-GAMMA_RANGE = (0.4, 2.5)    # 결과 = 입력^감마 (감마 < 1 밝게). 감마 = log0.5 / log(평균/255)를 이 범위로 자름
+# ===== 화질 분석·전처리 =====
+DAMAGE_TAGS = ("crack", "pothole", "both", "none")      # 직접 촬영 사진 이름의 '손상' 칸에 쓸 수 있는 값
+CONDITION_TAGS = ("normal", "dark", "night", "bright", "shadow", "blur", "wet", "clutter", "none")   # '조건' 칸 값
+PAIR_ROLES = ("A", "B", "C", "D")                       # 매칭 쌍 사진의 기호(A = 기준 사진)
+PAIR_CONDITIONS = ("ref", "dark", "blur", "view")       # 매칭 쌍 사진의 조건 칸 값
+BLUR_VAR_MAX = 50           # 라플라시안 분산이 이보다 작으면 흐림 → 샤프닝
+NOISE_SIGMA_MAX = 3.0       # 잡음 σ가 이보다 크면 가우시안으로 잡음 제거
+CONTRAST_STD_MIN = 20       # 밝기 표준편차가 이보다 작으면 대비 부족 → 평활화
+DARK_MEAN_MAX = 80          # 평균 밝기가 이보다 작으면 감마로 밝게
+BRIGHT_MEAN_MIN = 170       # 평균 밝기가 이보다 크면 감마로 어둡게
+GAUSS_KSIZE, GAUSS_SIGMA = (5, 5), 1.0      # 잡음 제거 가우시안의 커널 크기(px)·σ
+GAMMA_RANGE = (0.4, 2.5)    # 감마 값을 이 범위로 자름(결과 = 입력^감마, 1보다 작으면 밝게)
 SHARPEN_AMOUNT, SHARPEN_SIGMA = 3.0, 3.0    # 언샤프 마스크: 결과 = 입력 + AMOUNT × (입력 − 가우시안(σ px))
-USE_CLAHE = False           # True면 평활화 대신 CLAHE
-CLAHE_CLIP, CLAHE_TILE = 2.0, (8, 8)
-NOISE_BLOCK = 16            # px, 잡티는 이 크기 블록마다 재서
-NOISE_FLAT_QUANTILE = 0.05  # 가장 평평한 하위 5% 블록 값을 씀(10/13 보완 3-2 채택, v9 0.1). 전체로 재면 결·경계를 잡티로 세어 깨끗한 사진도 흐려짐. 개발셋 켬 규칙 1~3 통과(part_C)
-NOISE_SAT_MAX = 0.05        # 비율, 0·255 픽셀이 5%보다 많은 블록은 잡티가 잘려 낮게 나오므로 뺌
-# 아래 7개는 10/10 기반 작업(C)이 Plan.md 값으로 넣은 출발값. A가 WP1·WP4에서 확정하고 docs/part_A.md에 적는다
-ROAD_BLUR_SIGMA = 3         # px, 노면 마스크: 색을 재기 전 가우시안 σ. 골재 결·잡티가 색 거리를 흔들지 않게 (Plan.md 1.5 예비 측정 값)
-ROAD_SEED_BOX = (0.30, 0.40, 0.70, 0.80)    # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), 노면 띠 안의 씨앗 영역. 맨 아래 보닛·와이퍼는 피함 (Plan.md 1.5)
-ROAD_CHROMA_MAX = 10        # Lab a·b 거리, 씨앗 색 중앙값과 이보다 가까우면 노면 색 (Plan.md 1.5)
-ROAD_L_K = 4                # 배, |L − 씨앗 L 중앙값| < ROAD_L_K × (1.4826 × 씨앗 L의 MAD + 2)이면 노면 밝기 (Plan.md 1.5)
-ROAD_OPEN_KSIZE = 5         # px, 노면처럼 보이는 픽셀의 작은 점을 지우는 열림 커널 (Plan.md 1.5)
-ROAD_CLOSE_KSIZE = 31       # px, 노면 마스크의 틈(균열·차선 조각)을 메우는 닫힘 타원 커널 (Plan.md 1.5)
-BLUR_RATIO_MAX = 1.5        # 비율, 재흐림 비율 < 이 값이면 흐림 → 샤프닝 (임시값. C가 기반 작업 때 메모리에서 잰 값: 제공 13장 중 흐린 3장 1.13~1.18, 나머지 1.87 이상)
-BLUR_RATIO_SIGMA = 1.5
-# 아래는 10/12 차선 보완(C가 A 동의로 넣음, Plan.md 3.3 (5) 차선). 두 스위치 모두 끄면 v1과 같다
-ROAD_LANE_BRIDGE = False    # (가) 켬·끔. True면 밝고 가는 무채색·노란 픽셀(차선)을 연결 판정과 마스크에서 노면으로 다룸. 흰 차선·노란 중앙선이 노면을 가르는 문제
-ROAD_LANE_KSIZE = 41        # px, 차선 = 가로 또는 세로로 이 폭보다 가는 밝은 줄(흐린 L의 탑햇). 가까이 찍은 차선 폭(China_MotorBike_002209 약 40px)을 담고, 하늘·흰 벽·인도처럼 넓은 밝은 면은 빠짐
-ROAD_LANE_DELTA = 20        # 밝기 단계(L, 0~255), 탑햇(주변보다 밝은 정도)이 이 값 이상이면 밝은 줄. 차선은 노면보다 60~100 밝음(002209: 노면 140, 차선 233)
-ROAD_LANE_WHITE_CHROMA = 12 # Lab a·b 거리, 무채색(128, 128)과 이보다 가까우면 흰 차선 색
-ROAD_LANE_YELLOW_B = 20     # Lab b − 128, 이 값 이상이고 |a − 128|의 2배 이상이면 노란 중앙선 색
-ROAD_CLOSE_BEFORE_SEED = False  # (나) 켬·끔. True면 씨앗 연결 요소를 고르기 전에 ROAD_CLOSE_KSIZE 닫힘을 해, 닫힘 폭보다 가는 차선 건너편을 잇는다
-# 아래는 10/13 보완 3단계(C가 A 동의로 넣음, docs/tasks/supplement.md 3-1~3-5). 스위치를 모두 끄면 v9와 같다
-USE_BLUR_DIR = False        # 3-1 켬·끔. True면 방향별 에지 세기 비율(blur_dir) < BLUR_DIR_MIN일 때도 샤프닝(흔들림). 기존 두 흐림 기준과 '또는'
-BLUR_DIR_MIN = 0.5          # 비율(최소 방향 ÷ 최대 방향 기울기 제곱 평균), 출발값. 개발셋 원본 분포로 후보를 정함(part_C 보완 결과 3-1)
-BLUR_DIR_ANGLES = (0, 45, 90, 135)  # 도, 기울기 세기를 잴 방향. 0 = 가로(x), 90 = 세로(y)
-NIGHT_DENOISE = False       # 3-5 켬·끔. True면 잡티 제거와 밝게 하는 감마(< 1)를 함께 고른 영상(야간)에 가우시안 대신 NLM
-NIGHT_DENOISE_H = 10        # 밝기 단계, NLM 세기 h. 잡음 σ와 비슷하게 잡는다(인위 저하 night의 잡음 σ 10, 계획 3-5)
-NIGHT_NLM_TEMPLATE, NIGHT_NLM_SEARCH = 7, 21    # px, NLM 비교 조각·찾는 창 크기(OpenCV 기본값)
-# 아래는 10/13 보완 4-2 노면 마스크 v2(C가 A 동의로 넣음, Plan.md 3.3 (5)). 세 스위치를 모두 끄면 v1과 같다
-ROAD_SHADOW_L_K = 0         # 배, 8a 그림자·햇빛(0 = 끔). 색 거리가 ROAD_SHADOW_CHROMA보다 가까우면 밝기 범위를 이 배수로 넓힘
-ROAD_SHADOW_CHROMA = 5      # Lab a·b 거리, 8a에서 밝기를 넓혀 줄 '색이 아주 가까운' 기준(ROAD_CHROMA_MAX 10의 절반)
-ROAD_HOOD_CUT = False       # 8b 켬·끔. True면 아래 테두리부터 결이 씨앗보다 매끈한 행(보닛·와이퍼)을 뺌
-ROAD_HOOD_TEX_KSIZE = 7     # px, 8b 결 = 이 창의 흑백 국소 표준편차 (Plan.md 3.3 (5) 7×7)
-ROAD_HOOD_TEX_RATIO = 0.5   # 배, 8b 행의 결 중앙값이 씨앗 결 중앙값 × 이 값보다 작으면 매끈한 행
-ROAD_EDGE_DENSITY = False   # 8c 켬·끔. True면 창 안 Canny 에지 밀도가 씨앗의 상위 분위보다 큰 픽셀(건물·인도·비탈)을 노면 후보에서 뺌
-ROAD_EDGE_KSIZE = 15        # px, 8c 에지 밀도를 잴 창 (Plan.md 3.3 (5) 15×15)
-ROAD_EDGE_QUANTILE = 0.95   # 분위, 8c 씨앗 영역 에지 밀도의 이 분위보다 크면 노면 아님 (Plan.md 95백분위)
-ROAD_EDGE_CANNY = (50, 150) # Canny 낮은·높은 문턱, 8c 에지 (B 구역 CANNY_LOW·HIGH와 같은 값, 구역을 넘지 않으려고 따로 둠)
+USE_CLAHE = False           # True면 평활화 대신 CLAHE(구역별 평활화)
+CLAHE_CLIP, CLAHE_TILE = 2.0, (8, 8)        # CLAHE 대비 제한·격자 크기
+NOISE_BLOCK = 16            # px, 잡음을 잴 블록 크기
+NOISE_FLAT_QUANTILE = 0.05  # 가장 평평한 하위 5% 블록으로 잡음을 잼(질감·경계를 잡음으로 세지 않게)
+NOISE_SAT_MAX = 0.05        # 비율, 0·255 픽셀이 이보다 많은 블록은 잡음이 낮게 재져서 뺌
+# 노면 마스크
+ROAD_BLUR_SIGMA = 3         # px, 색을 비교하기 전 가우시안 σ(골재 질감이 색 비교를 흔들지 않게)
+ROAD_SEED_BOX = (0.30, 0.40, 0.70, 0.80)    # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), ROI 안 시드 영역(맨 아래 보닛은 피함)
+ROAD_CHROMA_MAX = 10        # Lab a·b 거리, 시드 색과 이보다 가까우면 노면 색
+ROAD_L_K = 4                # 배, 시드 밝기 ± ROAD_L_K × (1.4826 × MAD + 2) 안이면 노면 밝기
+ROAD_OPEN_KSIZE = 5         # px, 노면 후보의 작은 점을 지우는 열림 커널
+ROAD_CLOSE_KSIZE = 31       # px, 노면 마스크의 틈(균열·차선 조각)을 메우는 닫힘 커널
+BLUR_RATIO_MAX = 1.5        # 재흐림 비율이 이보다 작으면 흐림 → 샤프닝
+BLUR_RATIO_SIGMA = 1.5      # px, 재흐림 비율을 잴 때 일부러 거는 가우시안 σ
+# 노면 마스크: 차선 처리
+ROAD_LANE_BRIDGE = False    # True면 밝고 가는 흰·노란 줄(차선)을 모두 노면으로 다룸(차선이 노면을 둘로 가르지 않게)
+ROAD_LANE_KSIZE = 41        # px, 가로나 세로로 이 폭보다 가는 밝은 줄을 차선으로 봄(넓은 하늘·벽은 빠짐)
+ROAD_LANE_DELTA = 20        # 밝기 단계(0~255), 주변보다 이만큼 이상 밝아야 차선
+ROAD_LANE_WHITE_CHROMA = 12 # Lab a·b 거리, 무채색과 이보다 가까우면 흰 차선 색
+ROAD_LANE_YELLOW_B = 20     # Lab b − 128, 이 값 이상이면 노란 중앙선 색
+ROAD_CLOSE_BEFORE_SEED = False  # True면 시드와 이어진 영역을 고르기 전에 닫힘 연산으로 차선 건너편 노면을 이음
+# 흔들림 판정·야간 잡음 제거
+USE_BLUR_DIR = False        # True면 방향별 에지 비율(blur_dir)로 흔들림도 흐림으로 보고 샤프닝
+BLUR_DIR_MIN = 0.5          # 비율(가장 약한 방향 ÷ 가장 강한 방향), 이보다 작으면 흔들림
+BLUR_DIR_ANGLES = (0, 45, 90, 135)  # 도, 에지 세기를 잴 방향(0 = 가로, 90 = 세로)
+NIGHT_DENOISE = False       # True면 야간 영상(잡음 제거와 밝게 하는 감마를 함께 고름)에 가우시안 대신 NLM
+NIGHT_DENOISE_H = 10        # 밝기 단계, NLM 잡음 제거 세기(잡음 σ와 비슷하게)
+NIGHT_NLM_TEMPLATE, NIGHT_NLM_SEARCH = 7, 21    # px, NLM 비교 조각·탐색 창 크기(OpenCV 기본값)
+# 노면 마스크: 그림자·보닛·건물 처리
+ROAD_SHADOW_L_K = 0         # 배, 0보다 크면 색이 시드와 아주 가까운 픽셀의 밝기 허용 폭을 이 배수로 넓힘(그림자·햇빛)
+ROAD_SHADOW_CHROMA = 5      # Lab a·b 거리, 위에서 '색이 아주 가까움'의 기준
+ROAD_HOOD_CUT = False       # True면 ROI 아래 테두리의 매끈한 행(보닛·와이퍼)을 노면에서 뺌
+ROAD_HOOD_TEX_KSIZE = 7     # px, 보닛 판정에 쓸 질감(국소 표준편차) 창 크기
+ROAD_HOOD_TEX_RATIO = 0.5   # 배, 행의 질감이 시드 영역 질감 × 이 값보다 작으면 매끈한 행
+ROAD_EDGE_DENSITY = False   # True면 에지가 시드 영역보다 훨씬 빽빽한 곳(건물·인도)을 노면에서 뺌
+ROAD_EDGE_KSIZE = 15        # px, 에지 밀도를 잴 창 크기
+ROAD_EDGE_QUANTILE = 0.95   # 분위, 시드 영역 에지 밀도의 이 분위보다 크면 노면 아님
+ROAD_EDGE_CANNY = (50, 150) # 에지 밀도에 쓸 Canny 낮은·높은 임계값
 
-# 아래는 10/14 노면 마스크 두 결함(C가 A 동의로 넣음, docs/part_C.md '10/14 다시 시작'). 네 스위치를 모두 끄면 보완 최종과 같다
-ROAD_SEED_FILTER = True     # A2r 켬·끔. True면 시드 상자에서 노면답지 않은 픽셀(사진 안에서 유독 높은 채도·밝은 표시·노란 선 색)을 빼고 시드로 씀. 시드가 풀·차·흰 선에 찍히는 결함 A
-ROAD_SEED_CHROMA_REL = 8.3  # Lab a·b 채도 차, 픽셀 채도 − (그 사진 ROI 아래쪽 ROAD_SEED_REF_BOX 채도 중앙값)이 이보다 크면 빼는 픽셀. 깨끗한 시드 304장 픽셀의 99.5백분위(results/road_v6/calib.txt). 사진마다 상대적이라 빨간·푸른 아스팔트는 빠지지 않음
-ROAD_SEED_REF_BOX = (0.05, 0.35, 0.95, 0.90)    # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), 위 채도 중앙값을 잴 ROI 아래쪽 범위. 맨 아래 0.1(보닛)은 뺌
-ROAD_SEED_KEEP_MIN = 0.25   # 비율, 빼고 남은 시드 픽셀이 시드 상자의 이 비율보다 적으면 빼지 않음(시드가 사라지지 않게)
-ROAD_L_RANGE_MAX = 107.9    # 밝기 단계(L, 0~255), A3 밝기 허용 폭 ±ROAD_L_K × (1.4826 × MAD + 2)의 상한(0 = 끔). 깨끗한 시드 304장 ROI 허용 폭의 95백분위(calib.txt). 0~255를 덮던 71장 문제
-ROAD_KEEP_BLOBS = True      # B1 켬·끔. True면 시드와 이어진 덩어리에 더해, ROI 넓이 ROAD_BLOB_BIG 이상 덩어리와 (ROAD_BLOB_SMALL 이상이고 ROI 아래 ROAD_BLOB_BOTTOM에 닿은) 덩어리도 노면으로 남김. 흰 선에 막힌 건너편 노면(결함 B)
-ROAD_BLOB_SMALL = 0.005     # ROI 넓이 비율, B1 아래쪽 덩어리 최소 넓이
-ROAD_BLOB_BIG = 0.05        # ROI 넓이 비율, B1 위치와 상관없이 남길 덩어리 넓이(10/13 설계안 (3)②의 5%)
-ROAD_BLOB_BOTTOM = 0.25     # 높이 비율, B1 'ROI 아래쪽에 닿음'의 범위
-ROAD_LANE_AS_ROAD = True    # B2 켬·끔. True면 밝고 가는 흰·노란 줄(_lane_pixels) 가운데 가늘고 길며 둘레가 노면 색인 줄을 노면 후보에 더함(차선 (가)와 달리 노면 기준으로 고름)
-ROAD_LANE_MIN_AREA = 30     # px, B2 줄 덩어리 최소 넓이
-ROAD_LANE_ELONG = 3.0       # 배, B2 긴 변 ÷ 짧은 변 하한(가늘고 김)
-ROAD_LANE_RING = 9          # px, B2 줄 둘레 고리 폭(양옆 노면을 봄)
-ROAD_LANE_RING_ROAD = 0.5   # 비율, B2 둘레 고리에서 노면 색 픽셀이 이 이상이어야 노면 위의 차선
-ROAD_LANE_EDGE = 6          # px, B2로 더한 줄을 넓히는 폭 = 2 × ROAD_BLUR_SIGMA(흐림 때문에 줄 가장자리에 남는 틈을 메움)
+# 노면 마스크: 시드 영역 정리·끊긴 노면 잇기
+ROAD_SEED_FILTER = True     # True면 시드 영역에서 노면답지 않은 픽셀(채도가 유독 높은 풀·차, 흰 선, 노란 선)을 뺌
+ROAD_SEED_CHROMA_REL = 8.3  # Lab 채도 차, ROI 아래쪽 채도 중앙값보다 이만큼 넘게 높은 픽셀을 시드에서 뺌
+ROAD_SEED_REF_BOX = (0.05, 0.35, 0.95, 0.90)    # 비율 (가로 시작, 세로 시작, 가로 끝, 세로 끝), 위 채도 중앙값을 잴 ROI 아래쪽 범위
+ROAD_SEED_KEEP_MIN = 0.25   # 비율, 빼고 남은 시드가 이보다 적으면 빼지 않음(시드가 사라지지 않게)
+ROAD_L_RANGE_MAX = 107.9    # 밝기 단계(0~255), 노면 밝기 허용 폭의 상한(0이면 상한 없음)
+ROAD_KEEP_BLOBS = True      # True면 시드와 떨어진 덩어리도 크거나 ROI 아래쪽에 닿으면 노면으로 남김(흰 선에 막힌 건너편)
+ROAD_BLOB_SMALL = 0.005     # ROI 넓이 비율, 아래쪽에 닿은 덩어리를 남길 최소 넓이
+ROAD_BLOB_BIG = 0.05        # ROI 넓이 비율, 위치와 상관없이 남길 덩어리 넓이
+ROAD_BLOB_BOTTOM = 0.25     # 높이 비율, 'ROI 아래쪽에 닿음'으로 볼 범위
+ROAD_LANE_AS_ROAD = True    # True면 노면 위의 가늘고 긴 흰·노란 줄(차선)을 노면에 더함
+ROAD_LANE_MIN_AREA = 30     # px, 차선으로 볼 줄 덩어리의 최소 넓이
+ROAD_LANE_ELONG = 3.0       # 배, 긴 변 ÷ 짧은 변이 이 이상이어야 가늘고 긴 줄
+ROAD_LANE_RING = 9          # px, 줄 양옆의 노면을 확인할 둘레 고리 폭
+ROAD_LANE_RING_ROAD = 0.5   # 비율, 둘레 고리의 이 이상이 노면 색이어야 노면 위의 차선
+ROAD_LANE_EDGE = 6          # px, 더한 줄을 넓혀 흐린 줄 가장자리의 틈을 메우는 폭
 
 # ===== B: 균열·포트홀·평가 =====
 CANNY_LOW, CANNY_HIGH = 50, 150
