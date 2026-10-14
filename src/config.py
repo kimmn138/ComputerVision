@@ -119,11 +119,11 @@ SCORE_MARGIN_SCALE_POT = 0.72   # margin 식 포트홀 여유 1 − e^(−(2.5 �
 USE_SCORE_TAU = True        # True면 점수가 임계값보다 낮은 후보를 버림(dark 방식에서만, 점수 식이 none이면 오류)
 SCORE_TAU_CRACK = 0.304508  # 균열 점수 임계값: 개발용 데이터에서 영상당 오검출 2개 이하로 민감도가 가장 높은 운영점
 SCORE_TAU_POTHOLE = 7.822985  # 포트홀 점수 임계값: 정한 방법은 균열과 같음(값이 높아 포트홀 후보는 거의 남지 않음)
-# dark 방식 보완: 지역 잡음 추정·밝은 표시 주변 보정·덩어리 나누기·경계 날카로움
+# dark 방식 세부 처리: 지역 잡음 추정·밝은 표시 주변 보정·덩어리 나누기·경계 날카로움
 DARK_SIGMA_LOCAL = True     # True면 지역 잡음 추정: 잡음 σ를 위치마다 주변에서 재, 질감이 거친 노면에서 임계값을 올림
 DARK_SIGMA_LOCAL_FRAC = 0.25    # 비율, 지역 잡음을 잴 창 = ROI 높이 × 0.25
 DARK_SIGMA_LOCAL_MIN_N = 50 # 개, 창 안 표본이 이보다 적으면 전역 σ를 씀
-DARK_BRIGHT_DILATE = 6      # px, 밝은 표시를 이만큼 넓혀 샤프닝이 그 옆에 만든 어두운 테두리까지 메움(0이면 끔)
+DARK_BRIGHT_DILATE = 6      # px, 밝은 표시를 이만큼 넓혀 샤프닝이 그 옆에 만든 어두운 테두리까지 메움(0이면 쓰지 않음)
 DARK_BRIGHT_DILATE_DELTA = 80   # 밝기 단계, 넓힐 '아주 밝은 픽셀'의 기준(기준 밝기 + 이 값, 균열 옆 밝은 테두리는 빠짐)
 DARK_BRIGHT_SEED_KSIZE = 5  # px, 아주 밝은 픽셀을 고르기 전 중앙값 필터 창(작은 점은 빼고 차선은 남김)
 DARK_SPLIT_BLOB = False     # True면 원판 열림으로 굵은 덩어리(포트홀)와 가는 선(균열)을 나눔
